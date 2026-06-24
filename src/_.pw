@@ -1089,6 +1089,11 @@ export struct ExternAst {
     pub val abiSpan: Span
     pub val fns: Array[SigAst]
     pub val structNames: Array[String]
+    // per-struct generic type-parameter names (parallel to structNames; empty = a
+    // non-generic opaque type). Lets a generic opaque intrinsic — `struct Buffer[T]` —
+    // be registered as a real generic struct (so its `Buffer[E]` uses are generic
+    // instances dispatched uniformly), distinct from non-generic `struct Ref`.
+    pub val structTypeParams: Array[Array[String]] = []
     // per-struct source span covering `struct Name` (the whole item), so a `@[...]`
     // derive on an extern struct can feed `parseItem` the item's source (spec/16).
     pub val structSpans: Array[Span]
@@ -2586,6 +2591,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
     }
     mut val fns: Array[SigAst] = []
     mut val structNames: Array[String] = []
+    mut val structTypeParams: Array[Array[String]] = []
     mut val structSpans: Array[Span] = []
     mut val structDirectives: Array[DirectiveAst] = []
     // a `@[...]` directive seen since the last item — attached to the next struct/type
@@ -2613,6 +2619,9 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                 structDirectives.append(pendingDir)
                 pendingDir = <DirectiveAst reqs=[] />
                 p.advance()
+                // optional generic params `[T, …]` (`extern { struct Buffer[T] }`): a
+                // generic opaque intrinsic. Non-generic structs get an empty list.
+                structTypeParams.append(value: parseTypeParamNames(p: inout p))
             }
             _ => {
                 // `type Name` — opaque foreign type (spec/15 FFI: `extern(c) { type
@@ -2623,6 +2632,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                     p.advance()
                     val tTok: Tok = p.curTok()
                     structNames.append(p.text(t: tTok))
+                    structTypeParams.append(value: [])
                     structSpans.append(<Span start=kwSpan.start end=p.spanOf(t: tTok).end />)
                     structDirectives.append(pendingDir)
                     pendingDir = <DirectiveAst reqs=[] />
@@ -2639,7 +2649,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
             }
         }
     }
-    return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
+    return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structTypeParams=structTypeParams structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
 }
 
 // `import <path> [with { name [as Q], ... }]` or `part <path>` (spec/15). The cursor
