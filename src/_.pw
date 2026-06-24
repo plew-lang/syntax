@@ -1432,8 +1432,8 @@ fn parseType(p: inout P) -> TypeAst {
                             Kind.Colon => { p.advance() }
                             _ => { p.fail(off: p.base + p.curTok().start, msg: "an anonymous record field needs a `label: Type` (every field is labelled)") }
                         }
-                        fieldNames.append(value: label)
-                        fieldTypes.append(value: parseType(p: inout p))
+                        fieldNames.append(label)
+                        fieldTypes.append(parseType(p: inout p))
                     }
                 }
             }
@@ -2621,7 +2621,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                 p.advance()
                 // optional generic params `[T, …]` (`extern { struct Buffer[T] }`): a
                 // generic opaque intrinsic. Non-generic structs get an empty list.
-                structTypeParams.append(value: parseTypeParamNames(p: inout p))
+                structTypeParams.append(parseTypeParamNames(p: inout p))
             }
             _ => {
                 // `type Name` — opaque foreign type (spec/15 FFI: `extern(c) { type
@@ -2632,7 +2632,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                     p.advance()
                     val tTok: Tok = p.curTok()
                     structNames.append(p.text(t: tTok))
-                    structTypeParams.append(value: [])
+                    structTypeParams.append([])
                     structSpans.append(<Span start=kwSpan.start end=p.spanOf(t: tTok).end />)
                     structDirectives.append(pendingDir)
                     pendingDir = <DirectiveAst reqs=[] />
@@ -3105,7 +3105,7 @@ fn stripUnderscoresAst(s: String) -> String {
     mut val i: U64 = 0
     while i < s.bytes.count {
         if s.bytes[i] != '_' {
-            out.append(value: s.bytes[i])
+            out.append(s.bytes[i])
         }
         i += 1
     }
@@ -3409,13 +3409,13 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                                     // explicit `label: value`.
                                     p.advance()
                                     val fv: ExprAst = parseExprAst(p: inout p)
-                                    fields.append(value: <MakeFieldAst name=label value=fv span=<Span start=fStart end=p.prevEnd() /> />)
+                                    fields.append(<MakeFieldAst name=label value=fv span=<Span start=fStart end=p.prevEnd() /> />)
                                 }
                                 _ => {
                                     // punning `(x, …)`: the identifier is both the field
                                     // name and the value (`x` => `x: x`).
                                     val pv: ExprAst = <ExprAst.Ident name=label span=<Span start=fStart end=p.prevEnd() /> />
-                                    fields.append(value: <MakeFieldAst name=label value=pv span=<Span start=fStart end=p.prevEnd() /> />)
+                                    fields.append(<MakeFieldAst name=label value=pv span=<Span start=fStart end=p.prevEnd() /> />)
                                 }
                             }
                         }
@@ -4404,7 +4404,7 @@ fn parseForAst(p: inout P) -> StmtAst {
                     if field.bytes.count == 0U64 {
                         field = nm
                     }
-                    recBinds.append(value: <BindAst field=field name=nm span=<Span start=bStart end=p.prevEnd() /> />)
+                    recBinds.append(<BindAst field=field name=nm span=<Span start=bStart end=p.prevEnd() /> />)
                 }
             }
         }
@@ -4593,7 +4593,7 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
                 if field.bytes.count == 0U64 {
                     field = name
                 }
-                binds.append(value: <BindAst field=field name=name span=<Span start=bStart end=p.prevEnd() /> />)
+                binds.append(<BindAst field=field name=name span=<Span start=bStart end=p.prevEnd() /> />)
             }
         }
     }
