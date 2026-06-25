@@ -10,7 +10,7 @@ pub impl Src {
     inout fn put(text~: String) {
         val b: Array[U8] = text.bytes()
         mut val i: U64 = 0
-        while i < b.count {
+        while i < b.count() {
             self.bytes.append(b[i])
             i += 1
         }
@@ -30,7 +30,7 @@ pub impl Src {
             digits.append(srcDigitByte(d: m % 10))
             m = m / 10
         }
-        mut val i: U64 = digits.count
+        mut val i: U64 = digits.count()
         while i > 0 {
             i = i - 1
             self.bytes.append(digits[i])

@@ -60,7 +60,7 @@ pub impl Hash as Derive {
                 s.put(d.name)
                 s.put(" as Hash {\n    fn hash[H](hasher: inout H) where H: Hasher {\n")
                 mut val i: U64 = 0
-                while i < d.fields.count {
+                while i < d.fields.count() {
                     s.put("        self.")
                     s.put(d.fields[i].name)
                     s.put(".hash(hasher: inout hasher)\n")
@@ -94,7 +94,7 @@ pub impl IntTryFrom as ParameterizedDerive {
             TopItemAst.Decl(val d) => {
                 mut val s: Src = newSrc()
                 mut val i: U64 = 0
-                while i < self.sources.count {
+                while i < self.sources.count() {
                     val src: String = self.sources[i]
                     s.put("pub impl ")
                     s.put(d.name)
@@ -270,7 +270,7 @@ fn isAlnum(b: U8) -> Bool {
 
 export fn rangeEquals(bytes: Array[U8], start: U64, len: U64, kw: String) -> Bool {
     val kb: Array[U8] = kw.bytes()
-    if len != kb.count {
+    if len != kb.count() {
         return false
     }
     mut val j: U64 = 0
@@ -366,7 +366,7 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
 }
 
 export fn lex(lx: inout Lexer) {
-    while lx.pos < lx.bytes.count {
+    while lx.pos < lx.bytes.count() {
         val b: U8 = lx.at(off: 0)
         if b == ' ' {
             lx.pos += 1
@@ -398,7 +398,7 @@ export fn lex(lx: inout Lexer) {
         }
         if b == '/' {
             if lx.at(off: 1) == '/' {
-                while lx.pos < lx.bytes.count {
+                while lx.pos < lx.bytes.count() {
                     if lx.at(off: 0) == '\n' {
                         break
                     }
@@ -410,7 +410,7 @@ export fn lex(lx: inout Lexer) {
             if lx.at(off: 1) == '*' {
                 lx.pos += 2
                 mut val depth: U64 = 1
-                while lx.pos < lx.bytes.count {
+                while lx.pos < lx.bytes.count() {
                     if depth == 0U64 {
                         break
                     }
@@ -435,7 +435,7 @@ export fn lex(lx: inout Lexer) {
             // base-prefixed integer literal: `0x…` (hex) / `0o…` (octal) / `0b…`
             // (binary), with `_` digit separators (spec/02). Always an integer.
             if b == '0' {
-                if j + 1U64 < lx.bytes.count {
+                if j + 1U64 < lx.bytes.count() {
                     val p1: U8 = lx.bytes[j + 1U64]
                     mut val base: I64 = 0
                     if p1 == 'x' { base = 16 }
@@ -446,7 +446,7 @@ export fn lex(lx: inout Lexer) {
                     if p1 == 'B' { base = 2 }
                     if base != 0 {
                         j += 2U64
-                        while j < lx.bytes.count {
+                        while j < lx.bytes.count() {
                             if isBaseDigit(b: lx.bytes[j], base: base) || lx.bytes[j] == '_' {
                                 j += 1
                             } else {
@@ -459,7 +459,7 @@ export fn lex(lx: inout Lexer) {
                 }
             }
             // decimal integer part (allow `_` digit separators)
-            while j < lx.bytes.count {
+            while j < lx.bytes.count() {
                 if isDigit(b: lx.bytes[j]) || lx.bytes[j] == '_' {
                     j += 1
                 } else {
@@ -467,13 +467,13 @@ export fn lex(lx: inout Lexer) {
                 }
             }
             mut val isFloat: Bool = false
-            if j < lx.bytes.count {
+            if j < lx.bytes.count() {
                 if lx.bytes[j] == 46U8 {
-                    if j + 1U64 < lx.bytes.count {
+                    if j + 1U64 < lx.bytes.count() {
                         if isDigit(b: lx.bytes[j + 1U64]) {
                             isFloat = true
                             j += 1U64
-                            while j < lx.bytes.count {
+                            while j < lx.bytes.count() {
                                 if isDigit(b: lx.bytes[j]) || lx.bytes[j] == '_' {
                                     j += 1
                                 } else {
@@ -487,19 +487,19 @@ export fn lex(lx: inout Lexer) {
             // optional exponent `[eE][+-]?digits` — makes the number a float even
             // without a fractional part (`1e10`, `2E8`, `1.5e-3`). The `e` is consumed
             // only when (optional sign and) a digit follow.
-            if j < lx.bytes.count {
+            if j < lx.bytes.count() {
                 if lx.bytes[j] == 101U8 || lx.bytes[j] == 69U8 {
                     mut val k: U64 = j + 1U64
-                    if k < lx.bytes.count {
+                    if k < lx.bytes.count() {
                         if lx.bytes[k] == 43U8 || lx.bytes[k] == 45U8 {
                             k += 1U64
                         }
                     }
-                    if k < lx.bytes.count {
+                    if k < lx.bytes.count() {
                         if isDigit(b: lx.bytes[k]) {
                             isFloat = true
                             j = k + 1U64
-                            while j < lx.bytes.count {
+                            while j < lx.bytes.count() {
                                 if isDigit(b: lx.bytes[j]) || lx.bytes[j] == '_' {
                                     j += 1
                                 } else {
@@ -520,7 +520,7 @@ export fn lex(lx: inout Lexer) {
         if isAlpha(b: b) {
             val start: U64 = lx.pos
             mut val j: U64 = lx.pos
-            while j < lx.bytes.count {
+            while j < lx.bytes.count() {
                 if isAlnum(b: lx.bytes[j]) {
                     j += 1
                 } else {
@@ -535,7 +535,7 @@ export fn lex(lx: inout Lexer) {
         if b == '"' {
             val start: U64 = lx.pos
             mut val j: U64 = lx.pos + 1
-            while j < lx.bytes.count {
+            while j < lx.bytes.count() {
                 // a backslash escapes the next byte (so `\"` does not close)
                 if lx.bytes[j] == '\\' {
                     j += 2
@@ -554,7 +554,7 @@ export fn lex(lx: inout Lexer) {
             // character literal `'…'` (one scalar; backslash escapes the next byte)
             val start: U64 = lx.pos
             mut val j: U64 = lx.pos + 1
-            while j < lx.bytes.count {
+            while j < lx.bytes.count() {
                 if lx.bytes[j] == '\\' {
                     j += 2
                     continue
@@ -1500,7 +1500,7 @@ fn parseType(p: inout P) -> TypeAst {
             mut val fargLabels: Array[String] = []
             fargLabels.append("")
             mut val fk: U64 = 0
-            while fk < fparams.count {
+            while fk < fparams.count() {
                 fargs.append(fparams[fk])
                 fargLabels.append(flabels[fk])
                 fk += 1
@@ -2350,7 +2350,7 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAs
                             val fparams: Array[ParamAst] = parseParamAsts(p: inout p)
                             val fbody: BlockAst = parseBlockAst(p: inout p)
                             mut val anonName: String = ""
-                            if fparams.count > 0 {
+                            if fparams.count() > 0 {
                                 anonName = fparams[0].name
                             }
                             members.append(<MemberAst kind=<MemberKind.AssocFn /> name=anonName nameSpan=fSpan typeParams=[] params=fparams hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=fbody assocTy=emptyTypeAst() isFactory=true factoryKind=facKind factoryErr=facErr />)
@@ -3103,7 +3103,7 @@ fn tokenU64Ast(p: inout P, t: Tok) -> U64 {
 fn stripUnderscoresAst(s: String) -> String {
     mut val out: Array[U8] = []
     mut val i: U64 = 0
-    while i < s.bytes().count {
+    while i < s.bytes().count() {
         if s.bytes()[i] != '_' {
             out.append(s.bytes()[i])
         }
@@ -3972,7 +3972,7 @@ fn parseMatchStmtAst(p: inout P) -> StmtAst {
                 p.skipNewlines()
                 val body: BlockAst = parseArmBodyAst(p: inout p)
                 mut val pi: U64 = 0
-                while pi < pats.count {
+                while pi < pats.count() {
                     arms.append(<MatchArmAst pattern=pats[pi] body=body span=<Span start=armStart end=p.prevEnd() /> />)
                     pi += 1
                 }
@@ -4037,7 +4037,7 @@ fn parseMatchExprAst(p: inout P) -> ExprAst {
                 val pats: Array[PatternAst] = parseArmPatternsAst(p: inout p)
                 val body: BlockAst = parseExprArmBodyAst(p: inout p, armStart: armStart)
                 mut val pi: U64 = 0
-                while pi < pats.count {
+                while pi < pats.count() {
                     arms.append(<MatchArmAst pattern=pats[pi] body=body span=<Span start=armStart end=p.prevEnd() /> />)
                     pi += 1
                 }
@@ -4199,7 +4199,7 @@ fn parseCondChain(p: inout P) -> Array[CondClause] {
 fn buildCondChainStmt(clauses: Array[CondClause], idx: U64, thenBlk: BlockAst, elseBlk: BlockAst, span: Span) -> StmtAst {
     val clause: CondClause = clauses[idx]
     mut val inner: BlockAst = thenBlk
-    if idx + 1U64 < clauses.count {
+    if idx + 1U64 < clauses.count() {
         mut val one: Array[StmtAst] = []
         one.append(buildCondChainStmt(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span))
         inner = <BlockAst stmts=one />
@@ -4218,7 +4218,7 @@ fn buildCondChainStmt(clauses: Array[CondClause], idx: U64, thenBlk: BlockAst, e
 fn buildCondChainExpr(clauses: Array[CondClause], idx: U64, thenBlk: BlockAst, elseBlk: BlockAst, span: Span) -> ExprAst {
     val clause: CondClause = clauses[idx]
     mut val inner: BlockAst = thenBlk
-    if idx + 1U64 < clauses.count {
+    if idx + 1U64 < clauses.count() {
         val innerExpr: ExprAst = buildCondChainExpr(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
         mut val one: Array[StmtAst] = []
         one.append(<StmtAst.Give value=innerExpr span=span />)
@@ -4401,7 +4401,7 @@ fn parseForAst(p: inout P) -> StmtAst {
                     val nameTok: Tok = p.curTok()
                     val nm: String = p.text(t: nameTok)
                     p.advance()
-                    if field.bytes().count == 0U64 {
+                    if field.bytes().count() == 0U64 {
                         field = nm
                     }
                     recBinds.append(<BindAst field=field name=nm span=<Span start=bStart end=p.prevEnd() /> />)
@@ -4590,7 +4590,7 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
                 val nameTok: Tok = p.curTok()
                 val name: String = p.text(t: nameTok)
                 p.advance()
-                if field.bytes().count == 0U64 {
+                if field.bytes().count() == 0U64 {
                     field = name
                 }
                 binds.append(<BindAst field=field name=name span=<Span start=bStart end=p.prevEnd() /> />)
@@ -4633,10 +4633,10 @@ fn parseStmtsUntilBrace(p: inout P) -> Array[StmtAst] {
 // Used to enforce that a `guard` else block diverges (spec/11). A structural, AST-level
 // check (the guard's "marker" is lost once it desugars to if/match).
 fn blockDivergesAst(b: BlockAst) -> Bool {
-    if b.stmts.count == 0U64 {
+    if b.stmts.count() == 0U64 {
         return false
     }
-    return stmtDivergesAst(s: b.stmts[b.stmts.count - 1U64])
+    return stmtDivergesAst(s: b.stmts[b.stmts.count() - 1U64])
 }
 
 fn stmtDivergesAst(s: StmtAst) -> Bool {
@@ -4655,13 +4655,13 @@ fn stmtDivergesAst(s: StmtAst) -> Bool {
         }
         StmtAst.Match(scrut: _, val arms, span: _) => {
             mut val i: U64 = 0
-            while i < arms.count {
+            while i < arms.count() {
                 if !(blockDivergesAst(b: arms[i].body)) {
                     return false
                 }
                 i += 1
             }
-            return arms.count > 0U64
+            return arms.count() > 0U64
         }
         _ => { return false }
     }
