@@ -269,7 +269,7 @@ fn isAlnum(b: U8) -> Bool {
 }
 
 export fn rangeEquals(bytes: Array[U8], start: U64, len: U64, kw: String) -> Bool {
-    val kb: Array[U8] = kw.bytes
+    val kb: Array[U8] = kw.bytes()
     if len != kb.count {
         return false
     }
@@ -2050,7 +2050,7 @@ export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
 // `end` (= start + source length) is informational. An item the M1 subset doesn't
 // model yet yields an empty struct decl (logged: traits/impls/newtypes additive).
 export fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
-    val sb: Array[U8] = source.bytes
+    val sb: Array[U8] = source.bytes()
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
     mut val p: P = <P bytes=sb toks=lx.toks pos=0 base=start />
@@ -3103,9 +3103,9 @@ fn tokenU64Ast(p: inout P, t: Tok) -> U64 {
 fn stripUnderscoresAst(s: String) -> String {
     mut val out: Array[U8] = []
     mut val i: U64 = 0
-    while i < s.bytes.count {
-        if s.bytes[i] != '_' {
-            out.append(s.bytes[i])
+    while i < s.bytes().count {
+        if s.bytes()[i] != '_' {
+            out.append(s.bytes()[i])
         }
         i += 1
     }
@@ -4401,7 +4401,7 @@ fn parseForAst(p: inout P) -> StmtAst {
                     val nameTok: Tok = p.curTok()
                     val nm: String = p.text(t: nameTok)
                     p.advance()
-                    if field.bytes.count == 0U64 {
+                    if field.bytes().count == 0U64 {
                         field = nm
                     }
                     recBinds.append(<BindAst field=field name=nm span=<Span start=bStart end=p.prevEnd() /> />)
@@ -4590,7 +4590,7 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
                 val nameTok: Tok = p.curTok()
                 val name: String = p.text(t: nameTok)
                 p.advance()
-                if field.bytes.count == 0U64 {
+                if field.bytes().count == 0U64 {
                     field = name
                 }
                 binds.append(<BindAst field=field name=name span=<Span start=bStart end=p.prevEnd() /> />)
@@ -4739,7 +4739,7 @@ export fn parseBlockAst(p: inout P) -> BlockAst {
 // offset in the original file (the span base, for original coordinates).
 // Lex `source` and parse a single expression.
 export fn parseExprFrom(source: String, start: U64) -> ExprAst {
-    val sb: Array[U8] = source.bytes
+    val sb: Array[U8] = source.bytes()
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
     mut val p: P = <P bytes=sb toks=lx.toks pos=0 base=start />
@@ -4748,7 +4748,7 @@ export fn parseExprFrom(source: String, start: U64) -> ExprAst {
 
 // Lex `source` and parse a brace-delimited block `{ ... }`.
 export fn parseBlockFrom(source: String, start: U64) -> BlockAst {
-    val sb: Array[U8] = source.bytes
+    val sb: Array[U8] = source.bytes()
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
     mut val p: P = <P bytes=sb toks=lx.toks pos=0 base=start />

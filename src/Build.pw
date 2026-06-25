@@ -8,7 +8,7 @@
 pub impl Src {
     // Append a string's bytes.
     inout fn put(text~: String) {
-        val b: Array[U8] = text.bytes
+        val b: Array[U8] = text.bytes()
         mut val i: U64 = 0
         while i < b.count {
             self.bytes.append(b[i])
