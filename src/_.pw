@@ -1284,6 +1284,10 @@ export enum ExprAst {
     OptChain(base: ExprAst, member: String, span: Span)
     Try(operand: ExprAst, span: Span)
     Arrow(base: ExprAst, name: String, span: Span)
+    // `base->name(args)` (spec/03): a method call on the POINTEE of a `Ref` (the `->`
+    // counterpart of `Method`'s `.`). Distinct from `Arrow` (pointee FIELD access) so the
+    // backend dispatches `name` on the pointee struct with the cell as the receiver place.
+    ArrowMethod(recv: ExprAst, name: String, nameSpan: Span, args: Array[ArgAst], span: Span)
     Closure(params: Array[ParamAst], hasRet: Bool, ret: TypeAst, body: BlockAst, span: Span)
     Move(operand: ExprAst, isBorrow: Bool, span: Span)
     Await(operand: ExprAst, span: Span)
@@ -3697,7 +3701,17 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                 val nameTok: Tok = p.curTok()
                 val nm: String = p.text(t: nameTok)
                 p.advance()
-                e = <ExprAst.Arrow base=e name=nm span=<Span start=sStart end=p.prevEnd() /> />
+                match p.curKind() {
+                    Kind.LParen => {
+                        // `base->name(args)`: a method call on the pointee (mirrors `.method()`).
+                        p.advance()
+                        val args: Array[ArgAst] = parseCallArgsAst(p: inout p)
+                        e = <ExprAst.ArrowMethod recv=e name=nm nameSpan=p.spanOf(t: nameTok) args=args span=<Span start=sStart end=p.prevEnd() /> />
+                    }
+                    _ => {
+                        e = <ExprAst.Arrow base=e name=nm span=<Span start=sStart end=p.prevEnd() /> />
+                    }
+                }
             }
             Kind.KwAs => {
                 p.advance()
