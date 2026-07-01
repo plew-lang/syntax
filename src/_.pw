@@ -3762,10 +3762,49 @@ fn parseBinAst(p: inout P, minPrec: I64) -> ExprAst {
     return left
 }
 
+// A range expression `a..<b` (half-open) / `a..=b` (closed) — spec/02. Weakest
+// precedence (below `||`) and NON-ASSOCIATIVE (`a..<b..<c` is a syntax error). It is
+// FIXED SUGAR (non-trait, non-overridable) for constructing the ambient prelude range
+// structs: `a..<b` = `<HalfOpenRange start=a end=b />`, `a..=b` = `<ClosedRange start=a
+// end=b />`. Endpoints parse ABOVE range (parseBinAst), so arithmetic binds tighter
+// (`0..<n + 1` = `0..<(n + 1)`). The for-loop head keeps its own endpoint parse (a fast
+// path lowered to a C loop), so this only produces a value in an ordinary expression.
+fn parseRangeAst(p: inout P) -> ExprAst {
+    val sStart: U64 = p.base + p.curTok().start
+    val lo: ExprAst = parseBinAst(p: inout p, minPrec: 1)
+    mut val inclusive: Bool = false
+    mut val isRange: Bool = false
+    match p.curKind() {
+        Kind.DotDotLt => { p.advance()  isRange = true }
+        Kind.DotDotEq => { p.advance()  isRange = true  inclusive = true }
+        _ => {}
+    }
+    if !isRange {
+        return lo
+    }
+    val hi: ExprAst = parseBinAst(p: inout p, minPrec: 1)
+    match p.curKind() {
+        Kind.DotDotLt => { p.fail(off: p.base + p.curTok().start, msg: "range is non-associative: write `a..<b` once (e.g. parenthesize: `a..<(b..<c)`)") }
+        Kind.DotDotEq => { p.fail(off: p.base + p.curTok().start, msg: "range is non-associative: write `a..=b` once") }
+        _ => {}
+    }
+    val sp: Span = <Span start=sStart end=p.prevEnd() />
+    mut val tyName: String = "HalfOpenRange"
+    if inclusive {
+        tyName = "ClosedRange"
+    }
+    mut val fields: Array[MakeFieldAst] = []
+    fields.append(<MakeFieldAst name="start" value=lo span=sp />)
+    fields.append(<MakeFieldAst name="end" value=hi span=sp />)
+    mut val noArgs: Array[TypeAst] = []
+    return <ExprAst.Make typeName=tyName typeArgs=noArgs variant="" isEnum=false fields=fields span=sp />
+}
+
 // Parse a full expression. Exported: the entry point for body parsing (and for
-// macros that read an expression position).
+// macros that read an expression position). Range (weakest, non-assoc) wraps the
+// binary-operator precedence climb.
 export fn parseExprAst(p: inout P) -> ExprAst {
-    return parseBinAst(p: inout p, minPrec: 1)
+    return parseRangeAst(p: inout p)
 }
 
 // ---- patterns ----
@@ -4470,7 +4509,10 @@ fn parseForAst(p: inout P) -> StmtAst {
         Kind.KwIn => { p.advance() }
         _ => {}
     }
-    val lo: ExprAst = parseExprAst(p: inout p)
+    // parse endpoints ABOVE range (parseBinAst, not parseExprAst) so `..<`/`..=` stay
+    // for THIS head to detect — the range for-loop is a fast path lowered to a C loop,
+    // not a HalfOpenRange value construction (spec/02: `for … in` fast path).
+    val lo: ExprAst = parseBinAst(p: inout p, minPrec: 1)
     mut val isRange: Bool = false
     mut val inclusive: Bool = false
     mut val hi: ExprAst = emptyExpr()
@@ -4478,13 +4520,13 @@ fn parseForAst(p: inout P) -> StmtAst {
         Kind.DotDotLt => {
             p.advance()
             isRange = true
-            hi = parseExprAst(p: inout p)
+            hi = parseBinAst(p: inout p, minPrec: 1)
         }
         Kind.DotDotEq => {
             p.advance()
             isRange = true
             inclusive = true
-            hi = parseExprAst(p: inout p)
+            hi = parseBinAst(p: inout p, minPrec: 1)
         }
         _ => {}
     }
