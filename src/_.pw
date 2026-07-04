@@ -284,6 +284,7 @@ pub impl IntTryFrom as ParameterizedDerive {
 // ---- AST value types + lexer/parser free functions (the module's public surface;
 // at the module root so the parts hold only `impl` blocks — spec/15 part=impl-only) ----
 
+@[Eq]
 export enum Kind {
     Eof
     Newline

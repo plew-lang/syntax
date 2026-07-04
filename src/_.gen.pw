@@ -1,0 +1,654 @@
+pub impl Kind as Eq {
+    assoc fn eq(lhs~: Kind, rhs~: Kind) -> Bool {
+        match lhs {
+            Kind.Eof => {
+                match rhs {
+                    Kind.Eof => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Newline => {
+                match rhs {
+                    Kind.Newline => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Int => {
+                match rhs {
+                    Kind.Int => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Float => {
+                match rhs {
+                    Kind.Float => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Str => {
+                match rhs {
+                    Kind.Str => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Char => {
+                match rhs {
+                    Kind.Char => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Ident => {
+                match rhs {
+                    Kind.Ident => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwFn => {
+                match rhs {
+                    Kind.KwFn => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwStruct => {
+                match rhs {
+                    Kind.KwStruct => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwEnum => {
+                match rhs {
+                    Kind.KwEnum => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwMatch => {
+                match rhs {
+                    Kind.KwMatch => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwIf => {
+                match rhs {
+                    Kind.KwIf => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwElse => {
+                match rhs {
+                    Kind.KwElse => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwWhile => {
+                match rhs {
+                    Kind.KwWhile => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwFor => {
+                match rhs {
+                    Kind.KwFor => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwBreak => {
+                match rhs {
+                    Kind.KwBreak => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwContinue => {
+                match rhs {
+                    Kind.KwContinue => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwReturn => {
+                match rhs {
+                    Kind.KwReturn => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwGive => {
+                match rhs {
+                    Kind.KwGive => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwVal => {
+                match rhs {
+                    Kind.KwVal => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwMut => {
+                match rhs {
+                    Kind.KwMut => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwIn => {
+                match rhs {
+                    Kind.KwIn => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwAs => {
+                match rhs {
+                    Kind.KwAs => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwInout => {
+                match rhs {
+                    Kind.KwInout => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwUnique => {
+                match rhs {
+                    Kind.KwUnique => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwDeinit => {
+                match rhs {
+                    Kind.KwDeinit => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwMove => {
+                match rhs {
+                    Kind.KwMove => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwBorrow => {
+                match rhs {
+                    Kind.KwBorrow => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwAsync => {
+                match rhs {
+                    Kind.KwAsync => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwAwait => {
+                match rhs {
+                    Kind.KwAwait => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwExtern => {
+                match rhs {
+                    Kind.KwExtern => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwTrue => {
+                match rhs {
+                    Kind.KwTrue => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwFalse => {
+                match rhs {
+                    Kind.KwFalse => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.LParen => {
+                match rhs {
+                    Kind.LParen => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.RParen => {
+                match rhs {
+                    Kind.RParen => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.LBracket => {
+                match rhs {
+                    Kind.LBracket => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.RBracket => {
+                match rhs {
+                    Kind.RBracket => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.LBrace => {
+                match rhs {
+                    Kind.LBrace => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.RBrace => {
+                match rhs {
+                    Kind.RBrace => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Comma => {
+                match rhs {
+                    Kind.Comma => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Colon => {
+                match rhs {
+                    Kind.Colon => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Dot => {
+                match rhs {
+                    Kind.Dot => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Eq => {
+                match rhs {
+                    Kind.Eq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.EqEq => {
+                match rhs {
+                    Kind.EqEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Ne => {
+                match rhs {
+                    Kind.Ne => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Lt => {
+                match rhs {
+                    Kind.Lt => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Le => {
+                match rhs {
+                    Kind.Le => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Gt => {
+                match rhs {
+                    Kind.Gt => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Ge => {
+                match rhs {
+                    Kind.Ge => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Plus => {
+                match rhs {
+                    Kind.Plus => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Minus => {
+                match rhs {
+                    Kind.Minus => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Star => {
+                match rhs {
+                    Kind.Star => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Slash => {
+                match rhs {
+                    Kind.Slash => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Percent => {
+                match rhs {
+                    Kind.Percent => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.AmpAmp => {
+                match rhs {
+                    Kind.AmpAmp => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.PipePipe => {
+                match rhs {
+                    Kind.PipePipe => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Bang => {
+                match rhs {
+                    Kind.Bang => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Amp => {
+                match rhs {
+                    Kind.Amp => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Pipe => {
+                match rhs {
+                    Kind.Pipe => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Caret => {
+                match rhs {
+                    Kind.Caret => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Shl => {
+                match rhs {
+                    Kind.Shl => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Shr => {
+                match rhs {
+                    Kind.Shr => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Tilde => {
+                match rhs {
+                    Kind.Tilde => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Arrow => {
+                match rhs {
+                    Kind.Arrow => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.FatArrow => {
+                match rhs {
+                    Kind.FatArrow => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.SlashGt => {
+                match rhs {
+                    Kind.SlashGt => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.PlusEq => {
+                match rhs {
+                    Kind.PlusEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.MinusEq => {
+                match rhs {
+                    Kind.MinusEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.StarEq => {
+                match rhs {
+                    Kind.StarEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.SlashEq => {
+                match rhs {
+                    Kind.SlashEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.PercentEq => {
+                match rhs {
+                    Kind.PercentEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.AmpEq => {
+                match rhs {
+                    Kind.AmpEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.PipeEq => {
+                match rhs {
+                    Kind.PipeEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.CaretEq => {
+                match rhs {
+                    Kind.CaretEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.ShlEq => {
+                match rhs {
+                    Kind.ShlEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.ShrEq => {
+                match rhs {
+                    Kind.ShrEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.DotDotLt => {
+                match rhs {
+                    Kind.DotDotLt => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.DotDotEq => {
+                match rhs {
+                    Kind.DotDotEq => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.OptChain => {
+                match rhs {
+                    Kind.OptChain => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Hash => {
+                match rhs {
+                    Kind.Hash => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.Unknown => {
+                match rhs {
+                    Kind.Unknown => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+        }
+    }
+}
