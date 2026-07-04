@@ -74,6 +74,173 @@ pub impl Hash as Derive {
     }
 }
 
+// Built-in `@[Eq]` derive (spec/16) as a real `impl Eq as Derive` — no compiler-
+// privileged synthesis. Generates `pub impl <T> as Eq { assoc fn eq(...) -> Bool }`:
+// a struct compares field-wise (`lhs.f == rhs.f && ...`, `true` when field-less); an
+// enum matches both operands (tags must agree, then payloads compare field-wise, else
+// `false`). Each field/payload `==` recurses into that type's own Eq. Generic types get
+// `impl[T] N[T] as Eq where T: Eq`. Auto-parted into the annotated type's module, so it
+// reads private fields.
+pub impl Eq as Derive {
+    assoc fn derive(input: TopItemAst) -> String {
+        match input {
+            TopItemAst.Decl(val d) => {
+                match d.kind {
+                    DeclKind.Struct => { return deriveEqStruct(d: d) }
+                    DeclKind.Enum => { return deriveEqEnum(d: d) }
+                    DeclKind.Func => { return "" }
+                }
+            }
+            _ => { return "" }
+        }
+    }
+}
+
+// `pub impl[<tps>] <Name>[<tps>] as <trait> where <tp>: <bound>, ... {\n` — or the
+// non-generic `pub impl <Name> as <trait> {\n` when there are no type parameters.
+fn putDeriveHeader(s: inout Src, d: DeclAst, traitName: String, bound: String) {
+    s.put("pub impl")
+    val n: U64 = d.typeParams.count()
+    if n > 0 {
+        s.put("[")
+        putCommaList(s: inout s, xs: d.typeParams)
+        s.put("] ")
+        s.put(d.name)
+        s.put("[")
+        putCommaList(s: inout s, xs: d.typeParams)
+        s.put("]")
+    } else {
+        s.put(" ")
+        s.put(d.name)
+    }
+    s.put(" as ")
+    s.put(traitName)
+    if n > 0 {
+        s.put(" where ")
+        mut val i: U64 = 0
+        while i < n {
+            if i > 0 { s.put(", ") }
+            s.put(d.typeParams[i])
+            s.put(": ")
+            s.put(bound)
+            i += 1
+        }
+    }
+    s.put(" {\n")
+}
+
+fn putCommaList(s: inout Src, xs: Array[String]) {
+    mut val i: U64 = 0
+    while i < xs.count() {
+        if i > 0 { s.put(", ") }
+        s.put(xs[i])
+        i += 1
+    }
+}
+
+// The concrete self-type spelling used for parameter types: `<Name>` or `<Name>[T, U]`.
+fn putSelfType(s: inout Src, d: DeclAst) {
+    s.put(d.name)
+    if d.typeParams.count() > 0 {
+        s.put("[")
+        putCommaList(s: inout s, xs: d.typeParams)
+        s.put("]")
+    }
+}
+
+// `    assoc fn eq(lhs~: <Self>, rhs~: <Self>) -> Bool {\n` — the shared witness signature.
+fn putEqSignature(s: inout Src, d: DeclAst) {
+    s.put("    assoc fn eq(lhs~: ")
+    putSelfType(s: inout s, d: d)
+    s.put(", rhs~: ")
+    putSelfType(s: inout s, d: d)
+    s.put(") -> Bool {\n")
+}
+
+fn deriveEqStruct(d: DeclAst) -> String {
+    mut val s: Src = newSrc()
+    putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
+    putEqSignature(s: inout s, d: d)
+    s.put("        return ")
+    if d.fields.count() == 0 {
+        s.put("true")
+    } else {
+        mut val i: U64 = 0
+        while i < d.fields.count() {
+            if i > 0 { s.put(" && ") }
+            s.put("lhs.")
+            s.put(d.fields[i].name)
+            s.put(" == rhs.")
+            s.put(d.fields[i].name)
+            i += 1
+        }
+    }
+    s.put("\n    }\n}\n")
+    return s.finish()
+}
+
+fn deriveEqEnum(d: DeclAst) -> String {
+    mut val s: Src = newSrc()
+    putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
+    putEqSignature(s: inout s, d: d)
+    s.put("        match lhs {\n")
+    mut val vi: U64 = 0
+    while vi < d.variants.count() {
+        val v: VariantAst = d.variants[vi]
+        s.put("            ")
+        s.put(d.name)
+        s.put(".")
+        s.put(v.name)
+        putVariantBinds(s: inout s, v: v, prefix: "l_")
+        s.put(" => {\n                match rhs {\n                    ")
+        s.put(d.name)
+        s.put(".")
+        s.put(v.name)
+        putVariantBinds(s: inout s, v: v, prefix: "r_")
+        s.put(" => {\n                        return ")
+        if v.fields.count() == 0 {
+            s.put("true")
+        } else {
+            mut val fi: U64 = 0
+            while fi < v.fields.count() {
+                if fi > 0 { s.put(" && ") }
+                s.put("l_")
+                s.put(v.fields[fi].name)
+                s.put(" == r_")
+                s.put(v.fields[fi].name)
+                fi += 1
+            }
+        }
+        s.put("\n                    }\n")
+        // the catch-all is only reachable (and thus only legal) when there is more
+        // than one variant; a single-variant enum's inner match is already exhaustive.
+        if d.variants.count() > 1 {
+            s.put("                    _ => { return false }\n")
+        }
+        s.put("                }\n            }\n")
+        vi += 1
+    }
+    s.put("        }\n    }\n}\n")
+    return s.finish()
+}
+
+// `(a: val <prefix>a, b: val <prefix>b)` for a payload variant, or nothing when the
+// variant carries no payload.
+fn putVariantBinds(s: inout Src, v: VariantAst, prefix: String) {
+    if v.fields.count() == 0 { return }
+    s.put("(")
+    mut val i: U64 = 0
+    while i < v.fields.count() {
+        if i > 0 { s.put(", ") }
+        s.put(v.fields[i].name)
+        s.put(": val ")
+        s.put(prefix)
+        s.put(v.fields[i].name)
+        i += 1
+    }
+    s.put(")")
+}
+
 // `@[IntTryFrom(sources: [...])]` — generate primitive integer narrowing TryFrom
 // witnesses (spec/12). A pure, branch-free renderer: it knows nothing about which
 // (target, source) pairs are fallible — the annotated declaration is the TARGET and
