@@ -2098,7 +2098,12 @@ fn parseParamAsts(p: inout P) -> Array[ParamAst] {
                         p.advance()
                         break
                     }
-                    Kind.Eof => { break }
+                    Kind.Eof => {
+                        // `fn main( {` — an unclosed parameter list swallowed the rest
+                        // of the file and was silently accepted.
+                        p.fail(off: p.base + p.curTok().start, msg: "expected `)` to close the parameter list before the end of input")
+                        break
+                    }
                     Kind.Comma => { p.advance() }
                     _ => {
                         params.append(parseParamAst(p: inout p))
@@ -3147,6 +3152,7 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
                                     if curIs(p: inout p, kw: "impl") {
                                         items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
                                     } else {
+                                        p.fail(off: p.base + p.curTok().start, msg: "expected `impl` after `pub` at the top level (top-level visibility is `export`, spec/15)")
                                         p.advance()
                                     }
                                 } else {
@@ -3159,6 +3165,10 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
                                             if curIs(p: inout p, kw: "newtype") {
                                                 items.append(parseNewtypeAst(p: inout p, isPub: false))
                                             } else {
+                                                // an identifier that starts no top-level item: reporting
+                                                // instead of skipping — a silently dropped token is
+                                                // hidden meaning (what was spoken did not manifest).
+                                                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
                                                 p.advance()
                                             }
                                         }
@@ -3174,6 +3184,9 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
                 if p.peekKind(off: 1) == <Kind.LBracket /> {
                     items.append(<TopItemAst.Directive dir=parseDirectiveAst(p: inout p) />)
                 } else {
+                    // a stray token at the top level (`}` from an over-closed block,
+                    // punctuation, garbage): report, don't silently swallow.
+                    p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
                     p.advance()
                 }
             }
@@ -4933,7 +4946,9 @@ fn checkGuardElseDiverges(p: inout P, elseBody: BlockAst, off: U64) {
 export fn parseBlockAst(p: inout P) -> BlockAst {
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => {}
+        _ => {
+            p.fail(off: p.base + p.curTok().start, msg: "expected `{` to open a block")
+        }
     }
     mut val stmts: Array[StmtAst] = []
     while true {
@@ -4943,7 +4958,12 @@ export fn parseBlockAst(p: inout P) -> BlockAst {
                 p.advance()
                 break
             }
-            Kind.Eof => { break }
+            Kind.Eof => {
+                // end of input inside a block: an unclosed `{` used to be silently
+                // accepted (the rest of the file was swallowed into this body).
+                p.fail(off: p.base + p.curTok().start, msg: "expected `}` to close this block before the end of input")
+                break
+            }
             _ => {
                 if curIs(p: inout p, kw: "guard") {
                     stmts.append(parseGuardStmt(p: inout p))
