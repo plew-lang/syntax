@@ -1461,6 +1461,38 @@ export enum ExprAst {
     Await(operand: ExprAst, span: Span)
 }
 
+// The source span of any expression node (every variant carries one).
+export fn exprAstSpan(e: ExprAst) -> Span {
+    match e {
+        ExprAst.IntLit(value: _, isBool: _, tySuffix: _, val span) => { return span }
+        ExprAst.FloatLit(text: _, tySuffix: _, val span) => { return span }
+        ExprAst.StrLit(raw: _, val span) => { return span }
+        ExprAst.Ident(name: _, val span) => { return span }
+        ExprAst.Unary(op: _, operand: _, val span) => { return span }
+        ExprAst.Binary(op: _, lhs: _, rhs: _, val span) => { return span }
+        ExprAst.Call(name: _, args: _, val span) => { return span }
+        ExprAst.Field(base: _, name: _, val span) => { return span }
+        ExprAst.Method(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
+        ExprAst.ExtMethod(recv: _, src: _, name: _, args: _, val span) => { return span }
+        ExprAst.ExtView(recv: _, src: _, strip: _, val span) => { return span }
+        ExprAst.Index(base: _, index: _, val span) => { return span }
+        ExprAst.Make(typeName: _, typeArgs: _, variant: _, isEnum: _, fields: _, val span) => { return span }
+        ExprAst.ArrayLit(elems: _, val span) => { return span }
+        ExprAst.DictLit(keys: _, vals: _, val span) => { return span }
+        ExprAst.RecordLit(fields: _, val span) => { return span }
+        ExprAst.Cast(operand: _, ty: _, val span) => { return span }
+        ExprAst.MatchExpr(scrut: _, arms: _, val span) => { return span }
+        ExprAst.IfExpr(cond: _, thenBlk: _, elseBlk: _, val span) => { return span }
+        ExprAst.OptChain(base: _, member: _, val span) => { return span }
+        ExprAst.Try(operand: _, val span) => { return span }
+        ExprAst.Arrow(base: _, name: _, val span) => { return span }
+        ExprAst.ArrowMethod(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
+        ExprAst.Closure(params: _, hasRet: _, ret: _, body: _, val span) => { return span }
+        ExprAst.Move(operand: _, isBorrow: _, val span) => { return span }
+        ExprAst.Await(operand: _, val span) => { return span }
+    }
+}
+
 // A statement.
 export enum StmtAst {
     Let(mutable: Bool, name: String, hasTy: Bool, ty: TypeAst, init: ExprAst, span: Span)
