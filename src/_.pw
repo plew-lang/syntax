@@ -1434,7 +1434,9 @@ export enum ExprAst {
     Unary(op: I64, operand: ExprAst, span: Span)
     Binary(op: I64, lhs: ExprAst, rhs: ExprAst, span: Span)
     Call(name: String, args: Array[ArgAst], span: Span)
-    Field(base: ExprAst, name: String, span: Span)
+    // `nameSpan` is the member name's own source span (the whole `span` starts at the
+    // base) — consumers reference the field by SOURCE bytes for precise diagnostics.
+    Field(base: ExprAst, name: String, nameSpan: Span, span: Span)
     // `nameSpan` is the method name's own source span (the whole-call `span` starts at
     // the receiver), needed to recover the name's original offset for a namespace call
     // `Namespace.fn(args)` (spec/15).
@@ -1458,9 +1460,9 @@ export enum ExprAst {
     Cast(operand: ExprAst, ty: TypeAst, span: Span)
     MatchExpr(scrut: ExprAst, arms: Array[MatchArmAst], span: Span)
     IfExpr(cond: ExprAst, thenBlk: BlockAst, elseBlk: BlockAst, span: Span)
-    OptChain(base: ExprAst, member: String, span: Span)
+    OptChain(base: ExprAst, member: String, memberSpan: Span, span: Span)
     Try(operand: ExprAst, span: Span)
-    Arrow(base: ExprAst, name: String, span: Span)
+    Arrow(base: ExprAst, name: String, nameSpan: Span, span: Span)
     // `base->name(args)` (spec/03): a method call on the POINTEE of a `Ref` (the `->`
     // counterpart of `Method`'s `.`). Distinct from `Arrow` (pointee FIELD access) so the
     // backend dispatches `name` on the pointee struct with the cell as the receiver place.
@@ -1480,7 +1482,7 @@ export fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.Unary(op: _, operand: _, val span) => { return span }
         ExprAst.Binary(op: _, lhs: _, rhs: _, val span) => { return span }
         ExprAst.Call(name: _, args: _, val span) => { return span }
-        ExprAst.Field(base: _, name: _, val span) => { return span }
+        ExprAst.Field(base: _, name: _, nameSpan: _, val span) => { return span }
         ExprAst.Method(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
         ExprAst.ExtMethod(recv: _, src: _, name: _, args: _, val span) => { return span }
         ExprAst.ExtView(recv: _, src: _, strip: _, val span) => { return span }
@@ -1492,9 +1494,9 @@ export fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.Cast(operand: _, ty: _, val span) => { return span }
         ExprAst.MatchExpr(scrut: _, arms: _, val span) => { return span }
         ExprAst.IfExpr(cond: _, thenBlk: _, elseBlk: _, val span) => { return span }
-        ExprAst.OptChain(base: _, member: _, val span) => { return span }
+        ExprAst.OptChain(base: _, member: _, memberSpan: _, val span) => { return span }
         ExprAst.Try(operand: _, val span) => { return span }
-        ExprAst.Arrow(base: _, name: _, val span) => { return span }
+        ExprAst.Arrow(base: _, name: _, nameSpan: _, val span) => { return span }
         ExprAst.ArrowMethod(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
         ExprAst.Closure(params: _, hasRet: _, ret: _, body: _, val span) => { return span }
         ExprAst.Move(operand: _, isBorrow: _, val span) => { return span }
@@ -3869,7 +3871,7 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                         e = <ExprAst.Method recv=e name=nm nameSpan=p.spanOf(t: nameTok) args=args span=<Span start=sStart end=p.prevEnd() /> />
                     }
                     _ => {
-                        e = <ExprAst.Field base=e name=nm span=<Span start=sStart end=p.prevEnd() /> />
+                        e = <ExprAst.Field base=e name=nm nameSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
                     }
                 }
             }
@@ -3880,7 +3882,7 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                 val nameTok: Tok = p.curTok()
                 val nm: String = p.text(t: nameTok)
                 p.advance()
-                e = <ExprAst.OptChain base=e member=nm span=<Span start=sStart end=p.prevEnd() /> />
+                e = <ExprAst.OptChain base=e member=nm memberSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
             }
             Kind.Hash => {
                 // `recv#Src...` / `recv#!Src...` (spec/09): an extension (or trait)
@@ -3950,7 +3952,7 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                         e = <ExprAst.ArrowMethod recv=e name=nm nameSpan=p.spanOf(t: nameTok) args=args span=<Span start=sStart end=p.prevEnd() /> />
                     }
                     _ => {
-                        e = <ExprAst.Arrow base=e name=nm span=<Span start=sStart end=p.prevEnd() /> />
+                        e = <ExprAst.Arrow base=e name=nm nameSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
                     }
                 }
             }
