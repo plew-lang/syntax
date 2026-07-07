@@ -1460,7 +1460,15 @@ export enum ExprAst {
     Cast(operand: ExprAst, ty: TypeAst, span: Span)
     MatchExpr(scrut: ExprAst, arms: Array[MatchArmAst], span: Span)
     IfExpr(cond: ExprAst, thenBlk: BlockAst, elseBlk: BlockAst, span: Span)
-    OptChain(base: ExprAst, member: String, memberSpan: Span, span: Span)
+    // `base?.<cont>` optional chaining (spec/12): `cont` is the trailing member-access
+    // chain applied to the UNWRAPPED base value, rooted at a `ChainHole` placeholder
+    // (`a?.b.c` -> cont = Field(Field(ChainHole, b), c)). Swift-style propagation — the
+    // whole `cont` is short-circuited when the base is empty. `memberSpan` is the first
+    // member's source token (diagnostics anchor).
+    OptChain(base: ExprAst, cont: ExprAst, memberSpan: Span, span: Span)
+    // The unwrapped-base placeholder at the root of an `OptChain`'s `cont`. Only ever
+    // appears inside an `OptChain`; the desugar substitutes the bound chain value for it.
+    ChainHole(span: Span)
     Try(operand: ExprAst, span: Span)
     Arrow(base: ExprAst, name: String, nameSpan: Span, span: Span)
     // `base->name(args)` (spec/03): a method call on the POINTEE of a `Ref` (the `->`
@@ -1494,7 +1502,8 @@ export fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.Cast(operand: _, ty: _, val span) => { return span }
         ExprAst.MatchExpr(scrut: _, arms: _, val span) => { return span }
         ExprAst.IfExpr(cond: _, thenBlk: _, elseBlk: _, val span) => { return span }
-        ExprAst.OptChain(base: _, member: _, memberSpan: _, val span) => { return span }
+        ExprAst.OptChain(base: _, cont: _, memberSpan: _, val span) => { return span }
+        ExprAst.ChainHole(val span) => { return span }
         ExprAst.Try(operand: _, val span) => { return span }
         ExprAst.Arrow(base: _, name: _, nameSpan: _, val span) => { return span }
         ExprAst.ArrowMethod(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
@@ -3854,6 +3863,70 @@ fn parseUnaryAst(p: inout P) -> ExprAst {
     }
 }
 
+// One member access in an optional-chain continuation: `member` or `member(args)`
+// applied to `base` (the running cont). `?.` already consumed the leading dot for the
+// first member; the caller consumes the dot for subsequent ones.
+fn parseOptChainMember(p: inout P, base: ExprAst, sStart: U64) -> ExprAst {
+    val nameTok: Tok = p.curTok()
+    val nm: String = p.text(t: nameTok)
+    p.advance()
+    match p.curKind() {
+        Kind.LParen => {
+            p.advance()
+            val args: Array[ArgAst] = parseCallArgsAst(p: inout p)
+            return <ExprAst.Method recv=base name=nm nameSpan=p.spanOf(t: nameTok) args=args span=<Span start=sStart end=p.prevEnd() /> />
+        }
+        _ => {
+            return <ExprAst.Field base=base name=nm nameSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
+        }
+    }
+}
+
+// The trailing member-access chain of a `?.` (`.field` / `.method(args)` / `[i]` / `->`),
+// rooted at a ChainHole standing for the unwrapped base value. Stops at the next `?.`
+// (a new chain the outer postfix loop wraps) or any non-member-access token.
+fn parseOptChainCont(p: inout P) -> ExprAst {
+    val holeStart: U64 = p.base + p.curTok().start
+    mut val e: ExprAst = <ExprAst.ChainHole span=<Span start=holeStart end=holeStart /> />
+    // the first member is mandatory (`?.` already ate the dot).
+    e = parseOptChainMember(p: inout p, base: e, sStart: holeStart)
+    while true {
+        match p.curKind() {
+            Kind.Dot => {
+                p.advance()
+                e = parseOptChainMember(p: inout p, base: e, sStart: holeStart)
+            }
+            Kind.LBracket => {
+                p.advance()
+                val idx: ExprAst = parseExprAst(p: inout p)
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() }
+                    _ => { p.fail(off: p.base + p.curTok().start, msg: "expected ']' to close an index") }
+                }
+                e = <ExprAst.Index base=e index=idx span=<Span start=holeStart end=p.prevEnd() /> />
+            }
+            Kind.Arrow => {
+                p.advance()
+                val nameTok: Tok = p.curTok()
+                val nm: String = p.text(t: nameTok)
+                p.advance()
+                match p.curKind() {
+                    Kind.LParen => {
+                        p.advance()
+                        val args: Array[ArgAst] = parseCallArgsAst(p: inout p)
+                        e = <ExprAst.ArrowMethod recv=e name=nm nameSpan=p.spanOf(t: nameTok) args=args span=<Span start=holeStart end=p.prevEnd() /> />
+                    }
+                    _ => {
+                        e = <ExprAst.Arrow base=e name=nm nameSpan=p.spanOf(t: nameTok) span=<Span start=holeStart end=p.prevEnd() /> />
+                    }
+                }
+            }
+            _ => { return e }
+        }
+    }
+    return e
+}
+
 fn parsePostfixAst(p: inout P) -> ExprAst {
     val sStart: U64 = p.base + p.curTok().start
     mut val e: ExprAst = parsePrimaryAst(p: inout p)
@@ -3876,13 +3949,16 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                 }
             }
             Kind.OptChain => {
-                // `base?.member` (optional chaining, spec/12). Member access only
-                // (no method-call chaining yet); short-circuits on a None base.
+                // `base?.<cont>` (optional chaining, spec/12): the `?.` absorbs the WHOLE
+                // trailing member-access chain (`.field` / `.method(args)` / `[i]` / `->`)
+                // applied to the unwrapped base, rooted at a ChainHole — Swift-style
+                // propagation. A subsequent `?.` starts a new chain (the outer postfix loop
+                // wraps this OptChain). `?.` already consumed the leading dot, so the first
+                // member has no `.` token.
                 p.advance()
-                val nameTok: Tok = p.curTok()
-                val nm: String = p.text(t: nameTok)
-                p.advance()
-                e = <ExprAst.OptChain base=e member=nm memberSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
+                val memberTok: Tok = p.curTok()
+                val cont: ExprAst = parseOptChainCont(p: inout p)
+                e = <ExprAst.OptChain base=e cont=cont memberSpan=p.spanOf(t: memberTok) span=<Span start=sStart end=p.prevEnd() /> />
             }
             Kind.Hash => {
                 // `recv#Src...` / `recv#!Src...` (spec/09): an extension (or trait)
