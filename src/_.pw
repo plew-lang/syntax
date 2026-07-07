@@ -1375,10 +1375,15 @@ export struct MakeFieldAst {
 }
 
 // One field bind inside a pattern. `field` is the variant/struct field read;
-// `name` is the local introduced (equal for punning `val x`).
+// `name` is the local introduced (equal for punning `val x`). `fieldStart` is
+// the absolute source offset of the token that spells the field name (the
+// explicit label, or the bound name when punned) — the source bytes there ARE
+// the field name, so consumers can reference the field by source span directly
+// (precise diagnostics, no interning).
 export struct BindAst {
     pub val field: String
     pub val name: String
+    pub val fieldStart: U64
     pub val span: Span
 }
 
@@ -4138,7 +4143,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
                         val bn: String = p.text(t: bTok)
                         val bStart: U64 = p.base + bTok.start
                         p.advance()
-                        binds.append(<BindAst field=bn name=bn span=<Span start=bStart end=p.prevEnd() /> />)
+                        binds.append(<BindAst field=bn name=bn fieldStart=bStart span=<Span start=bStart end=p.prevEnd() /> />)
                         match p.curKind() {
                             Kind.Comma => { p.advance() }
                             _ => {}
@@ -4158,7 +4163,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
                                 p.advance()
                                 val nm: String = p.text(t: p.curTok())
                                 p.advance()
-                                binds.append(<BindAst field=fname name=nm span=<Span start=bStart end=p.prevEnd() /> />)
+                                binds.append(<BindAst field=fname name=nm fieldStart=bStart span=<Span start=bStart end=p.prevEnd() /> />)
                             }
                             _ => {
                                 // `field: _` discard — record it (empty bind name) so the
@@ -4170,7 +4175,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
                                 // field then `match` on the binding (spec/11).
                                 val dTok: Tok = p.curTok()
                                 if rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
-                                    binds.append(<BindAst field=fname name="" span=<Span start=bStart end=p.prevEnd() /> />)
+                                    binds.append(<BindAst field=fname name="" fieldStart=bStart span=<Span start=bStart end=p.prevEnd() /> />)
                                     p.advance()
                                 } else {
                                     p.fail(off: p.base + dTok.start, msg: "a pattern field binds with `val name` or discards with `_`; patterns are single-level — to match a nested structure, bind the field then `match` on the binding (spec/11)")
@@ -4686,10 +4691,12 @@ fn parseForAst(p: inout P) -> StmtAst {
                     val nameTok: Tok = p.curTok()
                     val nm: String = p.text(t: nameTok)
                     p.advance()
+                    mut val fieldStart: U64 = bStart
                     if field.bytes().count() == 0U64 {
                         field = nm
+                        fieldStart = p.base + nameTok.start
                     }
-                    recBinds.append(<BindAst field=field name=nm span=<Span start=bStart end=p.prevEnd() /> />)
+                    recBinds.append(<BindAst field=field name=nm fieldStart=fieldStart span=<Span start=bStart end=p.prevEnd() /> />)
                 }
             }
         }
@@ -4878,10 +4885,12 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
                 val nameTok: Tok = p.curTok()
                 val name: String = p.text(t: nameTok)
                 p.advance()
+                mut val fieldStart: U64 = bStart
                 if field.bytes().count() == 0U64 {
                     field = name
+                    fieldStart = p.base + nameTok.start
                 }
-                binds.append(<BindAst field=field name=name span=<Span start=bStart end=p.prevEnd() /> />)
+                binds.append(<BindAst field=field name=name fieldStart=fieldStart span=<Span start=bStart end=p.prevEnd() /> />)
             }
         }
     }
