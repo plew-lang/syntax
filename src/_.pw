@@ -4684,15 +4684,27 @@ fn parseForAst(p: inout P) -> StmtAst {
                         }
                         _ => {}
                     }
+                    // `label: _` discards the field (see the record-destructuring
+                    // statement) — empty bind name, counted by the completeness check.
+                    mut val isDiscard: Bool = false
                     match p.curKind() {
                         Kind.KwVal => { p.advance() }
-                        _ => { p.fail(off: p.base + p.curTok().start, msg: "a record loop pattern needs `val name`") }
+                        _ => {
+                            val dTok: Tok = p.curTok()
+                            if field.bytes().count() > 0U64 && rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
+                                isDiscard = true
+                            } else {
+                                p.fail(off: p.base + dTok.start, msg: "a record loop pattern needs `val name` (or `label: _` to discard the field)")
+                            }
+                        }
                     }
                     val nameTok: Tok = p.curTok()
-                    val nm: String = p.text(t: nameTok)
+                    mut val nm: String = p.text(t: nameTok)
                     p.advance()
                     mut val fieldStart: U64 = bStart
-                    if field.bytes().count() == 0U64 {
+                    if isDiscard {
+                        nm = ""
+                    } else if field.bytes().count() == 0U64 {
                         field = nm
                         fieldStart = p.base + nameTok.start
                     }
@@ -4878,15 +4890,28 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
                     }
                     _ => {}
                 }
+                // `label: _` discards the field (spec/03: every field must be bound or
+                // discarded) — record it with an empty bind name so the completeness
+                // check sees the field as covered without creating a local.
+                mut val isDiscard: Bool = false
                 match p.curKind() {
                     Kind.KwVal => { p.advance() }
-                    _ => { p.fail(off: p.base + p.curTok().start, msg: "a record-destructuring binding needs `val name`") }
+                    _ => {
+                        val dTok: Tok = p.curTok()
+                        if field.bytes().count() > 0U64 && rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
+                            isDiscard = true
+                        } else {
+                            p.fail(off: p.base + dTok.start, msg: "a record-destructuring binding needs `val name` (or `label: _` to discard the field)")
+                        }
+                    }
                 }
                 val nameTok: Tok = p.curTok()
-                val name: String = p.text(t: nameTok)
+                mut val name: String = p.text(t: nameTok)
                 p.advance()
                 mut val fieldStart: U64 = bStart
-                if field.bytes().count() == 0U64 {
+                if isDiscard {
+                    name = ""
+                } else if field.bytes().count() == 0U64 {
                     field = name
                     fieldStart = p.base + nameTok.start
                 }
