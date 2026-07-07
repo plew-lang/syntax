@@ -1977,7 +1977,7 @@ fn parseVariantField(p: inout P) -> FieldAst {
 }
 
 // An enum declaration. The cursor is at `enum`.
-export fn parseEnumDecl(p: inout P) -> DeclAst {
+export fn parseEnumDecl(p: inout P, isUnique: Bool) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -2057,7 +2057,7 @@ export fn parseEnumDecl(p: inout P) -> DeclAst {
             _ => { p.advance() }
         }
     }
-    return <DeclAst kind=<DeclKind.Enum /> name=name nameSpan=nameSpan typeParams=typeParams span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=variants params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() defaultExts=defaultExts />
+    return <DeclAst kind=<DeclKind.Enum /> name=name nameSpan=nameSpan typeParams=typeParams span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique fields=[] hasDeinit=false deinitBody=emptyBlock() variants=variants params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() defaultExts=defaultExts />
 }
 
 // A function parameter `name[~]: [inout|move|borrow] Type [= expr]`. The cursor is
@@ -2270,10 +2270,16 @@ export fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
     match p.curKind() {
         Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: false) /> }
         Kind.KwUnique => {
+            // `unique` prefixes a nominal type declaration: struct or enum (spec/03) —
+            // dispatch on the following keyword instead of assuming struct (an
+            // assumed-struct parse silently swallowed `unique enum` as a junk struct).
             p.advance()
-            return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true) />
+            match p.curKind() {
+                Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: true) /> }
+                _ => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true) /> }
+            }
         }
-        Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p) /> }
+        Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: false) /> }
         Kind.KwFn => { return <TopItemAst.Decl d=parseFuncDecl(p: inout p, isAsync: false) /> }
         Kind.KwAsync => {
             p.advance()
@@ -2316,10 +2322,15 @@ export fn parseDecl(p: inout P) -> DeclAst {
     match p.curKind() {
         Kind.KwStruct => { return parseStructDecl(p: inout p, isUnique: false) }
         Kind.KwUnique => {
+            // `unique struct` / `unique enum` (spec/03): dispatch on the following
+            // keyword — assuming struct silently swallowed `unique enum` as junk.
             p.advance()
-            return parseStructDecl(p: inout p, isUnique: true)
+            match p.curKind() {
+                Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: true) }
+                _ => { return parseStructDecl(p: inout p, isUnique: true) }
+            }
         }
-        Kind.KwEnum => { return parseEnumDecl(p: inout p) }
+        Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: false) }
         Kind.KwFn => { return parseFuncDecl(p: inout p, isAsync: false) }
         Kind.KwAsync => {
             p.advance()
