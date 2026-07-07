@@ -3320,7 +3320,15 @@ fn tokenU64Ast(p: inout P, t: Tok) -> U64 {
         if ch == '_' {
             // a digit separator (`1_000`, `0xFF_FF`): ignored in the value.
         } else {
-            v = v * base + hexDigitValueAst(b: ch)
+            val d: U64 = hexDigitValueAst(b: ch)
+            // overflow check BEFORE accumulating (v*base+d fits U64 iff
+            // v <= (max-d)/base): a literal beyond 2^64-1 must be a clean parse
+            // error, not a checked-arithmetic panic inside the parser itself.
+            if v > (18446744073709551615U64 - d) / base {
+                p.fail(off: p.base + t.start, msg: "integer literal exceeds the 64-bit range (max 18446744073709551615)")
+                return 0
+            }
+            v = v * base + d
         }
         j += 1
     }
