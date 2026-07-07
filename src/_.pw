@@ -1385,6 +1385,10 @@ export struct BindAst {
     pub val name: String
     pub val fieldStart: U64
     pub val span: Span
+    // a destructure-statement element written WITHOUT `val` assigns the field to an
+    // EXISTING `mut val` binding instead of declaring a new one (`(x, val y) = r`,
+    // spec/03). Always false in match/for patterns, which only bind.
+    pub val isAssign: Bool = false
 }
 
 // A match pattern (everything before `=>`): wildcard `_`, an enum variant
@@ -1515,7 +1519,7 @@ export enum StmtAst {
     // a record-destructuring binding `(val x, val y) = expr` (spec/02,03): each bind is
     // a field of the record value `init`. Punning `(val x)` is field=name=x; explicit
     // `(a: val x)` is field=a name=x. Lowers to a temp binding plus one `val` per field.
-    Destructure(binds: Array[BindAst], init: ExprAst, span: Span)
+    Destructure(binds: Array[BindAst], typeName: String, init: ExprAst, span: Span)
 }
 
 // A placeholder expression (an absent value position, e.g. `return` with no value).
@@ -4839,12 +4843,20 @@ fn parseStmtAst(p: inout P) -> StmtAst {
             if curIs(p: inout p, kw: "panic") {
                 return parsePanicAst(p: inout p)
             }
+            // `P { … } = e` — a statement-position type name followed by `{` starts a
+            // struct destructure (spec/03); `{` never follows a bare ident in an
+            // expression statement, so this is unambiguous.
+            if p.peekKind(off: 1) == <Kind.LBrace /> {
+                return parseStructDestructureAst(p: inout p)
+            }
             return parseExprOrAssignAst(p: inout p)
         }
         Kind.LParen => {
-            // record destructuring `(val x, val y) = e` / `(a: val x) = e` (spec/02,03):
-            // a `(` whose first element binds (`val` punned, or `label : val`). Anything
-            // else starting with `(` is a parenthesized expression statement.
+            // record destructuring `(val x, val y) = e` / `(a: val x) = e` / mixed with
+            // bare assigns `(x, val y) = e` (spec/02,03): a `(` whose first element binds,
+            // or whose matching `)` is followed by `=` (the bare-assign form has no `val`
+            // to spot up front). Anything else starting with `(` is a parenthesized
+            // expression statement.
             mut val isDestructure: Bool = false
             if p.peekKind(off: 1) == <Kind.KwVal /> {
                 isDestructure = true
@@ -4852,6 +4864,26 @@ fn parseStmtAst(p: inout P) -> StmtAst {
             if p.peekKind(off: 1) == <Kind.Ident /> {
                 if p.peekKind(off: 2) == <Kind.Colon /> {
                     if p.peekKind(off: 3) == <Kind.KwVal /> {
+                        isDestructure = true
+                    }
+                }
+            }
+            if !isDestructure {
+                mut val depth: U64 = 1
+                mut val k: U64 = 1
+                while depth > 0U64 {
+                    val pk: Kind = p.peekKind(off: k)
+                    if pk == <Kind.LParen /> {
+                        depth += 1U64
+                    } else if pk == <Kind.RParen /> {
+                        depth -= 1U64
+                    } else if pk == <Kind.Eof /> {
+                        break
+                    }
+                    k += 1U64
+                }
+                if depth == 0U64 {
+                    if p.peekKind(off: k) == <Kind.Eq /> {
                         isDestructure = true
                     }
                 }
@@ -4865,7 +4897,59 @@ fn parseStmtAst(p: inout P) -> StmtAst {
     }
 }
 
-// Parse a record-destructuring statement `(val x, val y) = e` / `(a: val x, …) = e`.
+// One destructure-statement element (spec/03): `val name` (new binding, punned) /
+// `label: val name` (new binding, renamed) / bare `name` (assign the field to an
+// EXISTING `mut val`, punned) / `label: name` (assign, renamed) / `label: _`
+// (discard the field). A bare `_` without a label is rejected — a discard must
+// name which field it covers.
+fn parseDestructureBindAst(p: inout P) -> BindAst {
+    val bStart: U64 = p.base + p.curTok().start
+    mut val field: String = ""
+    // a leading `label :` (an Ident is a label only when `:` follows — a bare
+    // Ident followed by `,`/`)`/`}` is a punned assign element).
+    match p.curKind() {
+        Kind.Ident => {
+            if p.peekKind(off: 1) == <Kind.Colon /> {
+                field = p.text(t: p.curTok())
+                p.advance()
+                p.advance()
+            }
+        }
+        _ => {}
+    }
+    mut val isDiscard: Bool = false
+    mut val isAssign: Bool = false
+    match p.curKind() {
+        Kind.KwVal => { p.advance() }
+        Kind.Ident => {
+            val dTok: Tok = p.curTok()
+            if rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
+                if field.bytes().count() > 0U64 {
+                    isDiscard = true
+                } else {
+                    p.fail(off: p.base + dTok.start, msg: "a destructure discard names its field: `label: _` (a bare `_` does not say which field it covers)")
+                }
+            } else {
+                isAssign = true
+            }
+        }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "a destructuring element is `val name` (new binding), bare `name` (assign to an existing `mut val`), `label: val name`, `label: name`, or `label: _` (discard)") }
+    }
+    val nameTok: Tok = p.curTok()
+    mut val name: String = p.text(t: nameTok)
+    p.advance()
+    mut val fieldStart: U64 = bStart
+    if isDiscard {
+        name = ""
+    } else if field.bytes().count() == 0U64 {
+        field = name
+        fieldStart = p.base + nameTok.start
+    }
+    return <BindAst field=field name=name fieldStart=fieldStart isAssign=isAssign span=<Span start=bStart end=p.prevEnd() /> />
+}
+
+// Parse a record-destructuring statement `(val x, val y) = e` / `(a: val x, …) = e` /
+// mixed with bare assigns `(x, val y) = e` (spec/03).
 fn parseDestructureAst(p: inout P) -> StmtAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
@@ -4875,48 +4959,7 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
             Kind.RParen => { p.advance()  break }
             Kind.Eof => { break }
             Kind.Comma => { p.advance() }
-            _ => {
-                mut val field: String = ""
-                val bStart: U64 = p.base + p.curTok().start
-                // explicit `label: val name`, or punned `val name`.
-                match p.curKind() {
-                    Kind.Ident => {
-                        field = p.text(t: p.curTok())
-                        p.advance()
-                        match p.curKind() {
-                            Kind.Colon => { p.advance() }
-                            _ => { p.fail(off: p.base + p.curTok().start, msg: "a record-destructuring field is `label: val name` or punned `val name`") }
-                        }
-                    }
-                    _ => {}
-                }
-                // `label: _` discards the field (spec/03: every field must be bound or
-                // discarded) — record it with an empty bind name so the completeness
-                // check sees the field as covered without creating a local.
-                mut val isDiscard: Bool = false
-                match p.curKind() {
-                    Kind.KwVal => { p.advance() }
-                    _ => {
-                        val dTok: Tok = p.curTok()
-                        if field.bytes().count() > 0U64 && rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
-                            isDiscard = true
-                        } else {
-                            p.fail(off: p.base + dTok.start, msg: "a record-destructuring binding needs `val name` (or `label: _` to discard the field)")
-                        }
-                    }
-                }
-                val nameTok: Tok = p.curTok()
-                mut val name: String = p.text(t: nameTok)
-                p.advance()
-                mut val fieldStart: U64 = bStart
-                if isDiscard {
-                    name = ""
-                } else if field.bytes().count() == 0U64 {
-                    field = name
-                    fieldStart = p.base + nameTok.start
-                }
-                binds.append(<BindAst field=field name=name fieldStart=fieldStart span=<Span start=bStart end=p.prevEnd() /> />)
-            }
+            _ => { binds.append(parseDestructureBindAst(p: inout p)) }
         }
     }
     match p.curKind() {
@@ -4924,7 +4967,34 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
         _ => { p.fail(off: p.base + p.curTok().start, msg: "record destructuring must be initialized: `(val x, val y) = expr`") }
     }
     val init: ExprAst = parseExprAst(p: inout p)
-    return <StmtAst.Destructure binds=binds init=init span=<Span start=sStart end=p.prevEnd() /> />
+    return <StmtAst.Destructure binds=binds typeName="" init=init span=<Span start=sStart end=p.prevEnd() /> />
+}
+
+// Parse a struct-destructuring statement `P { val x, f: val y, n: _ } = e`
+// (spec/03): the statement-position type name disambiguates it from a block
+// (`{` start) and a record destructure (`(` start). Same element grammar as
+// the record form (val binds, bare assigns, labeled discards).
+fn parseStructDestructureAst(p: inout P) -> StmtAst {
+    val sStart: U64 = p.base + p.curTok().start
+    val typeName: String = p.text(t: p.curTok())
+    p.advance()
+    p.advance()
+    mut val binds: Array[BindAst] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance()  break }
+            Kind.Eof => { break }
+            Kind.Comma => { p.advance() }
+            _ => { binds.append(parseDestructureBindAst(p: inout p)) }
+        }
+    }
+    match p.curKind() {
+        Kind.Eq => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct { val x } = expr`") }
+    }
+    val init: ExprAst = parseExprAst(p: inout p)
+    return <StmtAst.Destructure binds=binds typeName=typeName init=init span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // Parse `{ stmt* }` into a BlockAst. Current token should be `{`. Exported for the
