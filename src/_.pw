@@ -2811,14 +2811,14 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
             p.advance()
             match p.curKind() {
                 Kind.RParen => { p.advance() }
-                _ => {}
+                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `)` after extern ABI selector") }
             }
         }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `(` after `extern` — write `extern(c)` or `extern(plewIntrinsic)`") }
     }
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after extern ABI selector") }
     }
     mut val fns: Array[SigAst] = []
     mut val structNames: Array[String] = []
