@@ -1213,7 +1213,7 @@ export struct MemberAst {
 }
 
 // A body-less function signature: a trait requirement (`fn req(...) -> T`) or an
-// `extern "plew-intrinsic"` declaration (spec/08,15). `name`/`nameSpan` keep the
+// `extern(plewIntrinsic)` declaration (spec/08,15). `name`/`nameSpan` keep the
 // original coordinates (an extern fn name feeds moduleOf for cross-module calls).
 export struct SigAst {
     pub val name: String
@@ -1244,15 +1244,15 @@ export struct TraitAst {
     pub val span: Span
 }
 
-// An `extern "abi" { fn ... ; struct ... }` block (spec/15 core-library boundary).
-// `abiOk` is true iff the ABI string is `"plew-intrinsic"` (the only one accepted);
-// `abiSpan` points at the `extern` keyword for the error. `fns` are body-less
-// intrinsic signatures; `structNames`/`structSpans` are opaque lang-item types.
+// An `extern(<abi>) { fn ... ; struct/type ... }` block (spec/15).
+// `abiOk` is true iff the bareword ABI is `plewIntrinsic` or `c`; `abiSpan`
+// points at the `extern` keyword for the error. `fns` are body-less signatures;
+// `structNames`/`structSpans` are opaque intrinsic or foreign-C types.
 export struct ExternAst {
     pub val abiOk: Bool
     // true iff the ABI is the C ABI (`extern(c)` — spec/15 FFI). Distinguishes a
     // foreign-C block (raw symbol names, emitted prototypes) from the intrinsic
-    // floor (`extern(plewIntrinsic)` / legacy `"plew-intrinsic"`, runtime `plew_*`).
+    // floor (`extern(plewIntrinsic)`, runtime `plew_*`).
     pub val abiC: Bool = false
     pub val abiSpan: Span
     pub val fns: Array[SigAst]
@@ -2786,8 +2786,8 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
     return <TraitAst name=name nameSpan=nameSpan typeParams=typeParams supertraits=supertraits reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
 }
 
-// An `extern "plew-intrinsic" { fn ... ; struct ... }` block (spec/15). The cursor
-// is at the `extern` keyword. Mirrors the compiler's parseExtern.
+// An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
+// block (spec/15). The cursor is at the `extern` keyword.
 export fn parseExternDecl(p: inout P) -> ExternAst {
     val externTok: Tok = p.curTok()
     val abiSpan: Span = p.spanOf(t: externTok)
@@ -2795,15 +2795,6 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
     mut val abiOk: Bool = false
     mut val abiC: Bool = false
     match p.curKind() {
-        Kind.Str => {
-            val t: Tok = p.curTok()
-            if t.len >= 2 {
-                if rangeEquals(bytes: p.bytes, start: t.start + 1, len: t.len - 2, kw: "plew-intrinsic") {
-                    abiOk = true
-                }
-            }
-            p.advance()
-        }
         Kind.LParen => {
             // bareword ABI selector `extern(c)` / `extern(plewIntrinsic)` (spec/15):
             // ABI is a compiler-closed set, written without quotes (like import paths).
