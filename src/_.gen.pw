@@ -201,6 +201,22 @@ pub impl Kind as Eq {
                     _ => { return false }
                 }
             }
+            Kind.KwSendable => {
+                match rhs {
+                    Kind.KwSendable => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwNonsendable => {
+                match rhs {
+                    Kind.KwNonsendable => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
             Kind.KwDeinit => {
                 match rhs {
                     Kind.KwDeinit => {
@@ -228,6 +244,14 @@ pub impl Kind as Eq {
             Kind.KwAsync => {
                 match rhs {
                     Kind.KwAsync => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.KwSpawn => {
+                match rhs {
+                    Kind.KwSpawn => {
                         return true
                     }
                     _ => { return false }

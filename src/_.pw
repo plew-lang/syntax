@@ -311,10 +311,13 @@ export enum Kind {
     KwAs
     KwInout
     KwUnique
+    KwSendable
+    KwNonsendable
     KwDeinit
     KwMove
     KwBorrow
     KwAsync
+    KwSpawn
     KwAwait
     KwExtern
     KwTrue
@@ -506,6 +509,12 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "unique") {
         return <Kind.KwUnique />
     }
+    if rangeEquals(bytes: bytes, start: start, len: len, kw: "sendable") {
+        return <Kind.KwSendable />
+    }
+    if rangeEquals(bytes: bytes, start: start, len: len, kw: "nonsendable") {
+        return <Kind.KwNonsendable />
+    }
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "deinit") {
         return <Kind.KwDeinit />
     }
@@ -517,6 +526,9 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
     }
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "async") {
         return <Kind.KwAsync />
+    }
+    if rangeEquals(bytes: bytes, start: start, len: len, kw: "spawn") {
+        return <Kind.KwSpawn />
     }
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "await") {
         return <Kind.KwAwait />
@@ -970,10 +982,13 @@ export fn kindCode(k: Kind) -> I64 {
         Kind.KwAs => 25
         Kind.KwInout => 26
         Kind.KwUnique => 29
+        Kind.KwSendable => 36
+        Kind.KwNonsendable => 37
         Kind.KwDeinit => 30
         Kind.KwMove => 31
         Kind.KwBorrow => 32
         Kind.KwAsync => 33
+        Kind.KwSpawn => 38
         Kind.KwAwait => 34
         Kind.KwExtern => 35
         Kind.KwTrue => 27
@@ -1034,6 +1049,11 @@ export struct Span {
     pub val end: U64
 }
 
+export struct TypeParamListAst {
+    pub val names: Array[String]
+    pub val isSendable: Array[Bool]
+}
+
 // A type expression. `Array[U8]` -> name="Array", args=[U8]; a bare `T` ->
 // name="T", args=[]. (Function types `fn(...)->T` are an additive follow-up.)
 export struct TypeAst {
@@ -1055,6 +1075,11 @@ export struct TypeAst {
     // label marks a named associated-type / type-parameter binding `Name=Type`.
     // Empty (or all "") for an ordinary generic type like `Array[I32]`.
     pub val argLabels: Array[String] = []
+    // A type-level sendability assertion/requirement written in the surface syntax:
+    // `[sendable T]` marks a type parameter, `any sendable P` marks an existential
+    // guarantee, and `sendable fn(...) -> R` marks a function value capability. This
+    // is representation only here; semantic checking is a later compiler phase.
+    pub val isSendable: Bool = false
     // a labelled anonymous record type `(x: I32, y: I32)` (spec/02): a structural,
     // nameless record. `args` holds the field types and `argLabels` the field names
     // (parallel). `name` is empty. The type lowers to a synthetic struct keyed by its
@@ -1127,9 +1152,11 @@ export struct DeclAst {
     // module visibility) attributes it to the right module.
     pub val nameSpan: Span
     pub val typeParams: Array[String]
+    pub val typeParamSendable: Array[Bool] = []
     pub val span: Span
-    // struct (`kind == Struct`)
+    // struct/enum (`kind == Struct` or `kind == Enum`)
     pub val isUnique: Bool
+    pub val isNonsendable: Bool = false
     pub val fields: Array[FieldAst]
     // struct `deinit { ... }` (spec/03): the parsed block, flagged by `hasDeinit`.
     // A macro can read it; the compiler lowers it to a synthetic `Type_deinit` method.
@@ -1180,6 +1207,7 @@ export struct MemberAst {
     pub val name: String
     pub val nameSpan: Span
     pub val typeParams: Array[String]
+    pub val typeParamSendable: Array[Bool] = []
     pub val params: Array[ParamAst]
     pub val hasRet: Bool
     pub val ret: TypeAst
@@ -1216,6 +1244,7 @@ export struct SigAst {
     pub val name: String
     pub val nameSpan: Span
     pub val typeParams: Array[String]
+    pub val typeParamSendable: Array[Bool] = []
     pub val params: Array[ParamAst]
     pub val hasRet: Bool
     pub val ret: TypeAst
@@ -1235,6 +1264,7 @@ export struct TraitAst {
     // parameter of operator traits and any other trait type args. Empty for a
     // non-parameterized trait (Eq/Ord/Hasher).
     pub val typeParams: Array[String]
+    pub val typeParamSendable: Array[Bool] = []
     pub val supertraits: Array[String]
     pub val reqs: Array[SigAst]
     pub val assocTypes: Array[String]
@@ -1259,6 +1289,7 @@ export struct ExternAst {
     // be registered as a real generic struct (so its `Buffer[E]` uses are generic
     // instances dispatched uniformly), distinct from non-generic `struct Ref`.
     pub val structTypeParams: Array[Array[String]] = []
+    pub val structTypeParamSendable: Array[Array[Bool]] = []
     // per-struct source span covering `struct Name` (the whole item), so a `@[...]`
     // derive on an extern struct can feed `parseItem` the item's source (spec/16).
     pub val structSpans: Array[Span]
@@ -1275,6 +1306,7 @@ export struct ExternAst {
 export struct ImplAst {
     pub val recvType: TypeAst
     pub val implParams: Array[String]
+    pub val implParamSendable: Array[Bool] = []
     pub val isTraitImpl: Bool
     pub val traitName: String
     // trait type arguments `impl V as Add[V]` (spec/12): bind the trait's type
@@ -1624,12 +1656,43 @@ fn parseType(p: inout P) -> TypeAst {
     // types are PascalCase) followed by a trait type. Parse the trait type and tag
     // it `isAny`. Unambiguous because `any` cannot head a real type.
     if curIs(p: inout p, kw: "any") {
-        if p.peekKind(off: 1) == <Kind.Ident /> {
+        if p.peekKind(off: 1) == <Kind.Ident /> || p.peekKind(off: 1) == <Kind.KwSendable /> {
             val anyStart: U64 = p.base + p.curTok().start
             p.advance()
+            mut val isSendableAny: Bool = false
+            match p.curKind() {
+                Kind.KwSendable => {
+                    p.advance()
+                    isSendableAny = true
+                    match p.curKind() {
+                        Kind.Ident => {}
+                        _ => {
+                            p.fail(off: p.base + p.curTok().start, msg: "`any sendable` must be followed by a trait type")
+                            return emptyTypeAst()
+                        }
+                    }
+                }
+                _ => {}
+            }
             val inner: TypeAst = parseType(p: inout p)
-            return <TypeAst name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView isAny=true argLabels=inner.argLabels />
+            return <TypeAst name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView isAny=true argLabels=inner.argLabels isSendable=isSendableAny />
         }
+    }
+    mut val isSendableFn: Bool = false
+    mut val sendableStart: U64 = 0
+    match p.curKind() {
+        Kind.KwSendable => {
+            if p.peekKind(off: 1) == <Kind.KwFn /> {
+                sendableStart = p.base + p.curTok().start
+                p.advance()
+                isSendableFn = true
+            } else {
+                p.fail(off: p.base + p.curTok().start, msg: "`sendable` in type syntax is only valid before `fn` or after `any`")
+                p.advance()
+                return emptyTypeAst()
+            }
+        }
+        _ => {}
     }
     // a labelled anonymous record type `(x: I32, y: I32)` / unit `()` (spec/02): a
     // structural record. Fields are `label: Type` pairs; `name` stays empty and the
@@ -1663,8 +1726,20 @@ fn parseType(p: inout P) -> TypeAst {
         _ => {}
     }
     val head: Tok = p.curTok()
+    match head.kind {
+        Kind.Ident => {}
+        Kind.KwFn => {}
+        _ => {
+            p.fail(off: p.base + head.start, msg: "expected a type name")
+            p.advance()
+            return emptyTypeAst()
+        }
+    }
     val name: String = p.text(t: head)
-    val sStart: U64 = p.base + head.start
+    mut val sStart: U64 = p.base + head.start
+    if isSendableFn {
+        sStart = sendableStart
+    }
     p.advance()
     match head.kind {
         Kind.KwFn => {
@@ -1726,7 +1801,7 @@ fn parseType(p: inout P) -> TypeAst {
                 fargLabels.append(flabels[fk])
                 fk += 1
             }
-            return <TypeAst name=name args=fargs argLabels=fargLabels span=<Span start=sStart end=p.prevEnd() /> />
+            return <TypeAst name=name args=fargs argLabels=fargLabels span=<Span start=sStart end=p.prevEnd() /> isSendable=isSendableFn />
         }
         _ => {}
     }
@@ -1797,11 +1872,12 @@ fn parseNewtypeAst(p: inout P, isPub: Bool) -> TopItemAst {
     return <TopItemAst.NewType name=name ty=ty isPub=isPub span=<Span start=sStart end=p.prevEnd() /> />
 }
 
-// An optional generic parameter list `[T, U]` -> the parameter names. Capability
-// markers (noLocal/allowUnique) precede the name and are dropped (the name is the
-// last ident of an entry), mirroring parseTypeParams.
-fn parseTypeParamNames(p: inout P) -> Array[String] {
+// An optional generic parameter list `[T, sendable U]` -> names plus per-parameter
+// sendability requirements. Old ambient markers are not recognized; `sendable` is
+// a keyword and is the only accepted marker in this position.
+fn parseTypeParamList(p: inout P) -> TypeParamListAst {
     mut val ps: Array[String] = []
+    mut val flags: Array[Bool] = []
     match p.curKind() {
         Kind.LBracket => {
             p.advance()
@@ -1819,26 +1895,49 @@ fn parseTypeParamNames(p: inout P) -> Array[String] {
                         p.fail(off: p.base + p.curTok().start, msg: "inline trait constraint is not allowed in `[...]`; use a `where` clause")
                         p.advance()
                     }
-                    Kind.Ident => {
-                        mut val name: String = ""
-                        while true {
-                            match p.curKind() {
-                                Kind.Ident => {
-                                    name = p.text(t: p.curTok())
-                                    p.advance()
+                    Kind.KwSendable => {
+                        p.advance()
+                        match p.curKind() {
+                            Kind.Ident => {
+                                ps.append(p.text(t: p.curTok()))
+                                flags.append(true)
+                                p.advance()
+                                match p.curKind() {
+                                    Kind.Ident => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                                    Kind.KwSendable => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                                    _ => {}
                                 }
-                                _ => { break }
+                            }
+                            _ => {
+                                p.fail(off: p.base + p.curTok().start, msg: "`sendable` in a generic parameter list must be followed by a parameter name")
                             }
                         }
-                        ps.append(name)
                     }
-                    _ => { p.advance() }
+                    Kind.Ident => {
+                        val name: String = p.text(t: p.curTok())
+                        p.advance()
+                        ps.append(name)
+                        flags.append(false)
+                        match p.curKind() {
+                            Kind.Ident => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                            Kind.KwSendable => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                            _ => {}
+                        }
+                    }
+                    _ => {
+                        p.fail(off: p.base + p.curTok().start, msg: "unexpected token in generic parameter list; expected a parameter name or `sendable Name`")
+                        p.advance()
+                    }
                 }
             }
         }
         _ => {}
     }
-    return ps
+    return <TypeParamListAst names=ps isSendable=flags />
+}
+
+fn parseTypeParamNames(p: inout P) -> Array[String] {
+    return parseTypeParamList(p: inout p).names
 }
 
 // A struct field: `[pub[(get)]] [mut] val name [: Type] [= expr]`. The cursor is
@@ -1906,16 +2005,16 @@ fn parseStructField(p: inout P) -> FieldAst {
     return <FieldAst name=name ty=ty isMut=isMut vis=vis hasDefault=hasDefault defaultVal=defaultVal span=<Span start=fStart end=p.prevEnd() /> />
 }
 
-// A struct declaration. The cursor is at `struct` (the `unique` modifier, if any,
-// is already consumed and passed as `isUnique`).
-export fn parseStructDecl(p: inout P, isUnique: Bool) -> DeclAst {
+// A struct declaration. The cursor is at `struct` (modifiers before it are already
+// consumed and passed in).
+export fn parseStructDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
     val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
-    val typeParams: Array[String] = parseTypeParamNames(p: inout p)
+    val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     match p.curKind() {
         Kind.LBrace => { p.advance() }
         _ => {}
@@ -1956,7 +2055,7 @@ export fn parseStructDecl(p: inout P, isUnique: Bool) -> DeclAst {
             }
         }
     }
-    return <DeclAst kind=<DeclKind.Struct /> name=name nameSpan=nameSpan typeParams=typeParams span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
+    return <DeclAst kind=<DeclKind.Struct /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
 }
 
 // An enum variant payload field `name: Type` (no modifiers). The cursor is at the
@@ -1978,14 +2077,14 @@ fn parseVariantField(p: inout P) -> FieldAst {
 }
 
 // An enum declaration. The cursor is at `enum`.
-export fn parseEnumDecl(p: inout P, isUnique: Bool) -> DeclAst {
+export fn parseEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
     val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
-    val typeParams: Array[String] = parseTypeParamNames(p: inout p)
+    val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     match p.curKind() {
         Kind.LBrace => { p.advance() }
         _ => {}
@@ -2043,7 +2142,7 @@ export fn parseEnumDecl(p: inout P, isUnique: Bool) -> DeclAst {
             _ => { p.advance() }
         }
     }
-    return <DeclAst kind=<DeclKind.Enum /> name=name nameSpan=nameSpan typeParams=typeParams span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique fields=[] hasDeinit=false deinitBody=emptyBlock() variants=variants params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
+    return <DeclAst kind=<DeclKind.Enum /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique isNonsendable=isNonsendable fields=[] hasDeinit=false deinitBody=emptyBlock() variants=variants params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
 }
 
 // A function parameter `name[~]: [inout|move|borrow] Type [= expr]`. The cursor is
@@ -2218,7 +2317,7 @@ export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
     val name: String = p.text(t: nameTok)
     val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
-    val typeParams: Array[String] = parseTypeParamNames(p: inout p)
+    val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     val params: Array[ParamAst] = parseParamAsts(p: inout p)
     mut val hasRet: Bool = false
     mut val ret: TypeAst = emptyTypeAst()
@@ -2235,7 +2334,7 @@ export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits)
     p.skipNewlines()
     val body: BlockAst = parseBlockAst(p: inout p)
-    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=typeParams span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits body=body />
+    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits body=body />
 }
 
 // Parse an item's source into a `DeclAst` (struct / enum / fn). `source` is the
@@ -2255,18 +2354,48 @@ export fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
     // the macro's `derive` matches on.
     match p.curKind() {
         Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: false) /> }
+        Kind.KwNonsendable => {
+            p.advance()
+            match p.curKind() {
+                Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: false, isNonsendable: true) /> }
+                Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: false, isNonsendable: true) /> }
+                _ => {
+                    p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `nonsendable`")
+                    return emptyTopItem(off: p.base + p.curTok().start)
+                }
+            }
+        }
         Kind.KwUnique => {
             // `unique` prefixes a nominal type declaration: struct or enum (spec/03) —
             // dispatch on the following keyword instead of assuming struct (an
             // assumed-struct parse silently swallowed `unique enum` as a junk struct).
             p.advance()
             match p.curKind() {
+                Kind.KwNonsendable => {
+                    p.advance()
+                    match p.curKind() {
+                        Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true, isNonsendable: true) /> }
+                        Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: true, isNonsendable: true) /> }
+                        _ => {
+                            p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique nonsendable`")
+                            return emptyTopItem(off: p.base + p.curTok().start)
+                        }
+                    }
+                }
+                Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true) /> }
                 Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: true) /> }
-                _ => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true) /> }
+                _ => {
+                    p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique`")
+                    return emptyTopItem(off: p.base + p.curTok().start)
+                }
             }
         }
         Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: false) /> }
         Kind.KwFn => { return <TopItemAst.Decl d=parseFuncDecl(p: inout p, isAsync: false) /> }
+        Kind.KwSpawn => {
+            p.fail(off: p.base + p.curTok().start, msg: "`spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            return emptyTopItem(off: p.base + p.curTok().start)
+        }
         Kind.KwAsync => {
             p.advance()
             return <TopItemAst.Decl d=parseFuncDecl(p: inout p, isAsync: true) />
@@ -2296,7 +2425,11 @@ export fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
 // an unsupported target). An empty struct declaration so `.derive` can match `Decl`
 // and fall through.
 fn emptyTopItem(off: U64) -> TopItemAst {
-    return <TopItemAst.Decl d=<DeclAst kind=<DeclKind.Struct /> name="" nameSpan=<Span start=off end=off /> typeParams=[] span=<Span start=off end=off /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() /> />
+    return <TopItemAst.Decl d=emptyDeclAst(off: off) />
+}
+
+fn emptyDeclAst(off: U64) -> DeclAst {
+    return <DeclAst kind=<DeclKind.Struct /> name="" nameSpan=<Span start=off end=off /> typeParams=[] span=<Span start=off end=off /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
 }
 
 // Parse a single nominal declaration (`[unique] struct` / `enum` / `fn`) from the
@@ -2307,24 +2440,58 @@ fn emptyTopItem(off: U64) -> TopItemAst {
 export fn parseDecl(p: inout P) -> DeclAst {
     match p.curKind() {
         Kind.KwStruct => { return parseStructDecl(p: inout p, isUnique: false) }
+        Kind.KwNonsendable => {
+            p.advance()
+            match p.curKind() {
+                Kind.KwStruct => { return parseStructDecl(p: inout p, isUnique: false, isNonsendable: true) }
+                Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: false, isNonsendable: true) }
+                _ => {
+                    p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `nonsendable`")
+                    return emptyDeclAst(off: p.base + p.curTok().start)
+                }
+            }
+        }
         Kind.KwUnique => {
             // `unique struct` / `unique enum` (spec/03): dispatch on the following
             // keyword — assuming struct silently swallowed `unique enum` as junk.
             p.advance()
             match p.curKind() {
+                Kind.KwNonsendable => {
+                    p.advance()
+                    match p.curKind() {
+                        Kind.KwStruct => { return parseStructDecl(p: inout p, isUnique: true, isNonsendable: true) }
+                        Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: true, isNonsendable: true) }
+                        _ => {
+                            p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique nonsendable`")
+                            return emptyDeclAst(off: p.base + p.curTok().start)
+                        }
+                    }
+                }
+                Kind.KwStruct => { return parseStructDecl(p: inout p, isUnique: true) }
                 Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: true) }
-                _ => { return parseStructDecl(p: inout p, isUnique: true) }
+                _ => {
+                    p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique`")
+                    return emptyDeclAst(off: p.base + p.curTok().start)
+                }
             }
         }
         Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: false) }
         Kind.KwFn => { return parseFuncDecl(p: inout p, isAsync: false) }
+        Kind.KwSpawn => {
+            p.fail(off: p.base + p.curTok().start, msg: "`spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            p.advance()
+            match p.curKind() {
+                Kind.KwFn => { return parseFuncDecl(p: inout p, isAsync: false) }
+                _ => { return emptyDeclAst(off: p.base + p.curTok().start) }
+            }
+        }
         Kind.KwAsync => {
             p.advance()
             return parseFuncDecl(p: inout p, isAsync: true)
         }
         _ => {
             val off: U64 = p.base + p.curTok().start
-            return <DeclAst kind=<DeclKind.Struct /> name="" nameSpan=<Span start=off end=off /> typeParams=[] span=<Span start=off end=off /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
+            return emptyDeclAst(off: off)
         }
     }
 }
@@ -2367,7 +2534,7 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
     val name: String = p.text(t: nameTok)
     val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
-    val typeParams: Array[String] = parseTypeParamNames(p: inout p)
+    val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     val params: Array[ParamAst] = parseParamAsts(p: inout p)
     mut val hasRet: Bool = false
     mut val ret: TypeAst = emptyTypeAst()
@@ -2396,7 +2563,7 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
         p.skipNewlines()
         body = parseBlockAst(p: inout p)
     }
-    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=typeParams params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName body=body assocTy=emptyTypeAst() />
+    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName body=body assocTy=emptyTypeAst() />
 }
 
 // An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block (spec/07,08).
@@ -2405,7 +2572,7 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
 export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
-    val implParams: Array[String] = parseTypeParamNames(p: inout p)
+    val implTps: TypeParamListAst = parseTypeParamList(p: inout p)
     val recvType: TypeAst = parseType(p: inout p)
     mut val isTraitImpl: Bool = false
     mut val traitName: String = ""
@@ -2604,7 +2771,7 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAs
             }
         }
     }
-    return <ImplAst recvType=recvType implParams=implParams isTraitImpl=isTraitImpl traitName=traitName traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName />
+    return <ImplAst recvType=recvType implParams=implTps.names implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName />
 }
 
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
@@ -2615,7 +2782,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> SigAst {
     val name: String = p.text(t: nameTok)
     val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
-    val typeParams: Array[String] = parseTypeParamNames(p: inout p)
+    val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     val params: Array[ParamAst] = parseParamAsts(p: inout p)
     mut val hasRet: Bool = false
     mut val ret: TypeAst = emptyTypeAst()
@@ -2627,7 +2794,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> SigAst {
         }
         _ => {}
     }
-    return <SigAst name=name nameSpan=nameSpan typeParams=typeParams params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />
+    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />
 }
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).
@@ -2640,7 +2807,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
     val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
     // trait type parameters `trait Add[Rhs]` (spec/12), before `: Super` / `{`.
-    val typeParams: Array[String] = parseTypeParamNames(p: inout p)
+    val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     mut val supertraits: Array[String] = []
     match p.curKind() {
         Kind.Colon => {
@@ -2749,7 +2916,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
             }
         }
     }
-    return <TraitAst name=name nameSpan=nameSpan typeParams=typeParams supertraits=supertraits reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
+    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable supertraits=supertraits reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
@@ -2789,6 +2956,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
     mut val fns: Array[SigAst] = []
     mut val structNames: Array[String] = []
     mut val structTypeParams: Array[Array[String]] = []
+    mut val structTypeParamSendable: Array[Array[Bool]] = []
     mut val structSpans: Array[Span] = []
     mut val structDirectives: Array[DirectiveAst] = []
     // a `@[...]` directive seen since the last item — attached to the next struct/type
@@ -2818,7 +2986,9 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                 p.advance()
                 // optional generic params `[T, …]` (`extern { struct Buffer[T] }`): a
                 // generic opaque intrinsic. Non-generic structs get an empty list.
-                structTypeParams.append(parseTypeParamNames(p: inout p))
+                val stps: TypeParamListAst = parseTypeParamList(p: inout p)
+                structTypeParams.append(stps.names)
+                structTypeParamSendable.append(stps.isSendable)
             }
             _ => {
                 // `type Name` — opaque foreign type (spec/15 FFI: `extern(c) { type
@@ -2830,6 +3000,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                     val tTok: Tok = p.curTok()
                     structNames.append(p.text(t: tTok))
                     structTypeParams.append([])
+                    structTypeParamSendable.append([])
                     structSpans.append(<Span start=kwSpan.start end=p.spanOf(t: tTok).end />)
                     structDirectives.append(pendingDir)
                     pendingDir = <DirectiveAst reqs=[] />
@@ -2846,7 +3017,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
             }
         }
     }
-    return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structTypeParams=structTypeParams structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
+    return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structTypeParams=structTypeParams structTypeParamSendable=structTypeParamSendable structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
 }
 
 // `import <path> [with { name [as Q], ... }]` or `part <path>` (spec/15). The cursor
@@ -3067,9 +3238,14 @@ fn parseExportAst(p: inout P) -> TopItemAst {
     match p.curKind() {
         Kind.KwExtern => { return <TopItemAst.Export inner=<TopItemAst.Extern e=parseExternDecl(p: inout p) /> /> }
         Kind.KwFn => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwSpawn => {
+            p.fail(off: p.base + p.curTok().start, msg: "`export spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> />
+        }
         Kind.KwAsync => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwStruct => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwUnique => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwNonsendable => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwEnum => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwVal => { return <TopItemAst.Export inner=<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: false) /> /> }
         Kind.KwMut => {
@@ -3144,9 +3320,11 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
         p.skipNewlines()
         match p.curKind() {
             Kind.KwFn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
+            Kind.KwSpawn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwAsync => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwStruct => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwUnique => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
+            Kind.KwNonsendable => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwEnum => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwExtern => { items.append(<TopItemAst.Extern e=parseExternDecl(p: inout p) />) }
             Kind.KwVal => { items.append(<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: false) />) }
@@ -3660,6 +3838,42 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             p.skipNewlines()
             val body: BlockAst = parseBlockAst(p: inout p)
             return <ExprAst.Closure params=params hasRet=hasRet ret=ret body=body span=<Span start=sStart end=p.prevEnd() /> />
+        }
+        Kind.KwSendable => {
+            if p.peekKind(off: 1) == <Kind.KwFn /> {
+                p.fail(off: sStart, msg: "`sendable fn` literals are rejected in v1 until sendable capture/effect checking is available")
+                p.advance()
+                p.advance()
+                val params: Array[ParamAst] = parseParamAsts(p: inout p)
+                mut val hasRet: Bool = false
+                mut val ret: TypeAst = emptyTypeAst()
+                match p.curKind() {
+                    Kind.Arrow => {
+                        p.advance()
+                        ret = parseType(p: inout p)
+                        hasRet = true
+                    }
+                    _ => {}
+                }
+                p.skipNewlines()
+                val body: BlockAst = parseBlockAst(p: inout p)
+                return <ExprAst.Closure params=params hasRet=hasRet ret=ret body=body span=<Span start=sStart end=p.prevEnd() /> />
+            }
+            p.fail(off: sStart, msg: "`sendable` is only valid in type syntax before `fn` or in generic parameter lists")
+            p.advance()
+            return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+        }
+        Kind.KwSpawn => {
+            p.fail(off: sStart, msg: "`spawn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            p.advance()
+            match p.curKind() {
+                Kind.LBrace => {
+                    val body: BlockAst = parseBlockAst(p: inout p)
+                    return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+                }
+                _ => {}
+            }
+            return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.Lt => {
             return parseMakeAst(p: inout p)
