@@ -1945,22 +1945,22 @@ fn parseTypeParamNames(p: inout P) -> Array[String] {
 fn parseStructField(p: inout P) -> FieldAst {
     val fStart: U64 = p.base + p.curTok().start
     mut val vis: U64 = 0
+    mut val usedPubGet: Bool = false
     if curIs(p: inout p, kw: "pub") {
         p.advance()
         vis = 2
         match p.curKind() {
             Kind.LParen => {
                 p.advance()
-                if curIs(p: inout p, kw: "get") {
-                    vis = 1
+                if !(curIs(p: inout p, kw: "get")) {
+                    p.fail(off: p.base + p.curTok().start, msg: "field visibility is `pub` or `pub(get)`; no other `pub(...)` form exists")
                 }
-                match p.curKind() {
-                    Kind.Ident => { p.advance() }
-                    _ => {}
-                }
+                vis = 1
+                usedPubGet = true
+                p.advance()
                 match p.curKind() {
                     Kind.RParen => { p.advance() }
-                    _ => {}
+                    _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `)` after `pub(get)`") }
                 }
             }
             _ => {}
@@ -1976,7 +1976,10 @@ fn parseStructField(p: inout P) -> FieldAst {
     }
     match p.curKind() {
         Kind.KwVal => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `val` in struct field declaration") }
+    }
+    if usedPubGet && !isMut {
+        p.fail(off: fStart, msg: "`pub(get)` is only valid on `mut val`; use `pub val` for a public read-only field")
     }
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
@@ -5406,6 +5409,35 @@ export fn parseBlockFrom(source: String, start: U64) -> BlockAst {
 export struct Src {
     pub mut val bytes: Array[U8]
 }
+
+// Public memberwise factories for the syntax value tree. Parser/build helpers are
+// ordinary module functions, so spec/05 requires explicit factory publication.
+pub impl Tok { factory }
+pub impl Lexer { factory }
+pub impl Span { factory }
+pub impl TypeParamListAst { factory }
+pub impl TypeAst { factory }
+pub impl FieldAst { factory }
+pub impl VariantAst { factory }
+pub impl ParamAst { factory }
+pub impl DeclAst { factory }
+pub impl MemberAst { factory }
+pub impl SigAst { factory }
+pub impl TraitAst { factory }
+pub impl ExternAst { factory }
+pub impl ImplAst { factory }
+pub impl ImportAst { factory }
+pub impl DeriveReqAst { factory }
+pub impl DirectiveAst { factory }
+pub impl ArgAst { factory }
+pub impl MakeFieldAst { factory }
+pub impl BindAst { factory }
+pub impl PatternAst { factory }
+pub impl MatchArmAst { factory }
+pub impl BlockAst { factory }
+pub impl P { factory }
+pub impl CondClause { factory }
+pub impl Src { factory }
 
 // A fresh, empty source builder.
 export fn newSrc() -> Src {
