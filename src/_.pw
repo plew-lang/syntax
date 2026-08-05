@@ -17,6 +17,7 @@
 // `stringFromBytesUnchecked` (build a String from a byte slice) is used by the parser to
 // turn token byte-ranges into name Strings.
 import @Std/Core with { stringFromBytesUnchecked }
+export @Std/Core with { Eq }
 
 part ./Lexer
 part ./Parser
