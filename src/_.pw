@@ -1065,6 +1065,11 @@ export struct TypeAst {
     // plain type. A zero-cost view (same runtime layout) that selects which
     // extension's methods/witnesses resolve; treated as an invariant type detail.
     pub val extView: String = ""
+    // Source selectors written after a type head, in source order.  The compiler
+    // canonicalizes them into an unordered extension set plus one optional trait
+    // selector; keeping the raw list here lets the parser accept `T#E#P` without
+    // assigning extension/trait meaning before declarations are available.
+    pub val viewNames: Array[String] = []
     // Associated-type projection (spec/08): `T#Trait.Item` stores
     // projectionTrait="Trait", projectionAssoc="Item"; the short form `T.Item`
     // stores projectionTrait="" and projectionAssoc="Item".
@@ -1178,13 +1183,14 @@ export struct DeclAst {
     // Promise. Default false. (The caller of a top-level `async fn` consumes the
     // `async` keyword and threads it in.)
     pub val isAsync: Bool
-    // `where T: A + B, U: C` trait bounds (spec/08), as parallel name lists: each
-    // atom (one trait per `+`/`,` expansion) is a (param, trait) pair. Empty for an
-    // unconstrained function. A macro reads them; the compiler lowers them to
-    // FuncBound records.
+    // `where T: A + B, U: C` trait bounds (spec/08), as parallel lists: each
+    // atom (one trait per `+`/`,` expansion) has its subject name, full trait
+    // type, and subject type.  The full trait TypeAst retains positional trait
+    // arguments and associated-type bindings (`T: Add[I64]`), not just its head.
     pub val whereParams: Array[String]
     pub val whereTraits: Array[String]
     pub val whereTypes: Array[TypeAst] = []
+    pub val whereTraitTypes: Array[TypeAst] = []
     // fn body (`kind == Func`): the parsed `{ ... }` block (empty for struct/enum
     // and for a body-less signature). Lets a macro read/transform a function body.
     pub val body: BlockAst
@@ -1221,6 +1227,7 @@ export struct MemberAst {
     pub val whereParams: Array[String]
     pub val whereTraits: Array[String]
     pub val whereTypes: Array[TypeAst] = []
+    pub val whereTraitTypes: Array[TypeAst] = []
     // `async fn` method (spec/14). `selfInout` = `inout fn` (mutable self),
     // `selfMove` = `move fn`/`async move fn` (consuming self). A plain/`borrow fn`
     // has both false.
@@ -1317,6 +1324,9 @@ export struct ImplAst {
     pub val implParamSendable: Array[Bool] = []
     pub val isTraitImpl: Bool
     pub val traitName: String
+    // Original occurrence after `as`, retained so lowering can resolve a
+    // module-local import alias at its actual use site.
+    pub val traitNameSpan: Span = <Span start=0 end=0 />
     // trait type arguments `impl V as Add[V]` (spec/12): bind the trait's type
     // parameters to concrete types. Empty for a bare `impl V as Trait`.
     pub val traitArgs: Array[TypeAst]
@@ -1324,6 +1334,7 @@ export struct ImplAst {
     pub val whereParams: Array[String]
     pub val whereTraits: Array[String]
     pub val whereTypes: Array[TypeAst] = []
+    pub val whereTraitTypes: Array[TypeAst] = []
     pub val isPub: Bool
     pub val members: Array[MemberAst]
     pub val span: Span
@@ -1684,7 +1695,7 @@ fn parseType(p: inout P) -> TypeAst {
                 _ => {}
             }
             val inner: TypeAst = parseType(p: inout p)
-            return <TypeAst name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView isAny=true argLabels=inner.argLabels isSendable=isSendableAny />
+            return <TypeAst name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView viewNames=inner.viewNames isAny=true argLabels=inner.argLabels isSendable=isSendableAny />
         }
     }
     mut val isSendableFn: Bool = false
@@ -1856,9 +1867,12 @@ fn parseType(p: inout P) -> TypeAst {
     // projection `T#Trait.Item` / `T.Item` (spec/08). A `#Name` followed by `.Item`
     // is a projection source, not a value/extension view.
     mut val extView: String = ""
+    mut val viewNames: Array[String] = []
     mut val projectionTrait: String = ""
     mut val projectionAssoc: String = ""
-    match p.curKind() {
+    mut val parsingViews: Bool = true
+    while parsingViews {
+        match p.curKind() {
         Kind.Hash => {
             p.advance()
             val hashName: String = p.text(t: p.curTok())
@@ -1903,10 +1917,15 @@ fn parseType(p: inout P) -> TypeAst {
                 }
                 _ => {
                     extView = hashName
+                    viewNames.append(hashName)
                 }
             }
         }
-        _ => {}
+        _ => { parsingViews = false }
+        }
+        if projectionAssoc.bytes().count() > 0 {
+            parsingViews = false
+        }
     }
     if projectionAssoc.bytes().count() == 0 {
         match p.curKind() {
@@ -1918,7 +1937,7 @@ fn parseType(p: inout P) -> TypeAst {
             _ => {}
         }
     }
-    return <TypeAst name=name args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView projectionTrait=projectionTrait projectionAssoc=projectionAssoc argLabels=argLabels />
+    return <TypeAst name=name args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView viewNames=viewNames projectionTrait=projectionTrait projectionAssoc=projectionAssoc argLabels=argLabels />
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
@@ -2304,7 +2323,7 @@ fn parseParamAsts(p: inout P) -> Array[ParamAst] {
 // (one (param, trait) pair per `+`/`,` atom). Appends into `params`/`traits`. The
 // cursor may or may not be at `where`; a non-`where` token leaves both untouched.
 // Mirrors the compiler's parseWhereClause.
-fn parseWhereNames(p: inout P, params: inout Array[String], traits: inout Array[String], types: inout Array[TypeAst]) {
+fn parseWhereNames(p: inout P, params: inout Array[String], traits: inout Array[String], types: inout Array[TypeAst], traitTypes: inout Array[TypeAst]) {
     if curIs(p: inout p, kw: "where") {
         p.advance()
         mut val cont: Bool = true
@@ -2325,6 +2344,7 @@ fn parseWhereNames(p: inout P, params: inout Array[String], traits: inout Array[
                                 params.append(lhs.name)
                                 traits.append(tName.name)
                                 types.append(lhs)
+                                traitTypes.append(tName)
                             }
                             _ => {}
                         }
@@ -2369,10 +2389,11 @@ export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
     mut val whereParams: Array[String] = []
     mut val whereTraits: Array[String] = []
     mut val whereTypes: Array[TypeAst] = []
-    parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes)
+    mut val whereTraitTypes: Array[TypeAst] = []
+    parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     p.skipNewlines()
     val body: BlockAst = parseBlockAst(p: inout p)
-    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes body=body />
+    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
 }
 
 // Parse an item's source into a `DeclAst` (struct / enum / fn). `source` is the
@@ -2587,7 +2608,8 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
     mut val whereParams: Array[String] = []
     mut val whereTraits: Array[String] = []
     mut val whereTypes: Array[TypeAst] = []
-    parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes)
+    mut val whereTraitTypes: Array[TypeAst] = []
+    parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     // `via real`: witnesses a requirement by aliasing an existing method (no body).
     mut val isVia: Bool = false
     mut val viaName: String = ""
@@ -2602,7 +2624,7 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
         p.skipNewlines()
         body = parseBlockAst(p: inout p)
     }
-    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName body=body assocTy=emptyTypeAst() />
+    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName body=body assocTy=emptyTypeAst() />
 }
 
 // An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block (spec/07,08).
@@ -2615,11 +2637,14 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAs
     val recvType: TypeAst = parseType(p: inout p)
     mut val isTraitImpl: Bool = false
     mut val traitName: String = ""
+    mut val traitNameSpan: Span = <Span start=0 end=0 />
     mut val traitArgs: Array[TypeAst] = []
     match p.curKind() {
         Kind.KwAs => {
             p.advance()
-            traitName = p.text(t: p.curTok())
+            val traitTok: Tok = p.curTok()
+            traitName = p.text(t: traitTok)
+            traitNameSpan = p.spanOf(t: traitTok)
             p.advance()
             isTraitImpl = true
             // trait type arguments `as Add[V]` (spec/12): bind the trait's type
@@ -2647,7 +2672,8 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAs
     mut val whereParams: Array[String] = []
     mut val whereTraits: Array[String] = []
     mut val whereTypes: Array[TypeAst] = []
-    parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes)
+    mut val whereTraitTypes: Array[TypeAst] = []
+    parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     match p.curKind() {
         Kind.LBrace => { p.advance() }
         _ => {}
@@ -2811,7 +2837,7 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAs
             }
         }
     }
-    return <ImplAst recvType=recvType implParams=implTps.names implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName />
+    return <ImplAst recvType=recvType implParams=implTps.names implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitNameSpan traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName />
 }
 
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
