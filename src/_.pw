@@ -1070,10 +1070,12 @@ export struct TypeAst {
     // selector; keeping the raw list here lets the parser accept `T#E#P` without
     // assigning extension/trait meaning before declarations are available.
     pub val viewNames: Array[String] = []
-    // Associated-type projection (spec/08): `T#Trait.Item` stores
-    // projectionTrait="Trait", projectionAssoc="Item"; the short form `T.Item`
-    // stores projectionTrait="" and projectionAssoc="Item".
+    // Associated-type projection (spec/08): `T#Trait[Args].Item` stores the
+    // resolved source spelling and its positional instance arguments.  The
+    // short form `T.Item` leaves projectionTrait empty.
     pub val projectionTrait: String = ""
+    pub val projectionTraitArgs: Array[TypeAst] = []
+    pub val projectionTraitArgLabels: Array[String] = []
     pub val projectionAssoc: String = ""
     // `any P` (spec/08): an existential — a type-erased value of any concrete type
     // conforming to trait `name`. false for a plain type. Runtime layout is a fat
@@ -1869,6 +1871,8 @@ fn parseType(p: inout P) -> TypeAst {
     mut val extView: String = ""
     mut val viewNames: Array[String] = []
     mut val projectionTrait: String = ""
+    mut val projectionTraitArgs: Array[TypeAst] = []
+    mut val projectionTraitArgLabels: Array[String] = []
     mut val projectionAssoc: String = ""
     mut val parsingViews: Bool = true
     while parsingViews {
@@ -1879,24 +1883,30 @@ fn parseType(p: inout P) -> TypeAst {
             p.advance()
             match p.curKind() {
                 Kind.LBracket => {
-                    p.fail(off: p.base + p.curTok().start, msg: "associated-type projection source with trait type arguments is not supported yet — use a non-parameterized source trait in v1")
-                    mut val depth: U64 = 0
-                    mut val skipping: Bool = true
-                    while skipping {
+                    p.advance()
+                    while true {
                         match p.curKind() {
-                            Kind.LBracket => {
-                                depth += 1U64
-                                p.advance()
-                            }
                             Kind.RBracket => {
-                                depth -= 1U64
                                 p.advance()
-                                if depth == 0U64 {
-                                    skipping = false
-                                }
+                                break
                             }
-                            Kind.Eof => { skipping = false }
-                            _ => { p.advance() }
+                            Kind.Eof => { break }
+                            Kind.Comma => { p.advance() }
+                            _ => {
+                                mut val lbl: String = ""
+                                match p.curKind() {
+                                    Kind.Ident => {
+                                        if p.peekKind(off: 1) == <Kind.Eq /> {
+                                            lbl = p.text(t: p.curTok())
+                                            p.advance()
+                                            p.advance()
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                projectionTraitArgs.append(parseType(p: inout p))
+                                projectionTraitArgLabels.append(lbl)
+                            }
                         }
                     }
                     match p.curKind() {
@@ -1937,7 +1947,7 @@ fn parseType(p: inout P) -> TypeAst {
             _ => {}
         }
     }
-    return <TypeAst name=name args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView viewNames=viewNames projectionTrait=projectionTrait projectionAssoc=projectionAssoc argLabels=argLabels />
+    return <TypeAst name=name args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView viewNames=viewNames projectionTrait=projectionTrait projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionAssoc=projectionAssoc argLabels=argLabels />
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
