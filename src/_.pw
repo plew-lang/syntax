@@ -1479,6 +1479,12 @@ export struct SyntaxStmt {
     pub val flag1: Bool
     pub val flag2: Bool
     pub val flag3: Bool
+    // A record loop pattern is lowered through the same get-element plus
+    // destructure semantics as `(val x, val y) = element`. The value parser
+    // marks it with a private synthetic patType spelling; retain the semantic
+    // distinction explicitly instead of asking compiler consumers to infer it
+    // from unrelated empty spans.
+    pub val isRecordPattern: Bool = false
     pub val child0: ExprId
     pub val child1: ExprId
     pub val child2: ExprId
