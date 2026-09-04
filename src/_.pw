@@ -22,6 +22,7 @@ export @Std/Core with { Eq }
 part ./Lexer
 part ./Parser
 part ./Build
+part ./Arena
 
 // A derive is anything that implements a derive interface; `@[X]` is valid when X
 // does (spec/16). The single axis is whether the derive carries configuration:
@@ -1050,33 +1051,483 @@ export struct Span {
     pub val end: U64
 }
 
+// Compiler-facing syntax arena -------------------------------------------------
+//
+// The macro-facing value AST below deliberately stays intact: `parseItem` is a
+// small, explicit value boundary for Derive.  A normal compiler parse instead
+// produces a SyntaxFile whose children are scalar IDs and flat slices.  Keep the
+// IDs distinct even though their runtime representation is U64; letting a raw
+// index cross from (say) an Expr table into a Type table would make a malformed
+// syntax tree look valid to the frontend.
+//
+// The tables and parser writer are introduced together in subsequent slices.  Do
+// not use these types to put TopItemAst behind a Ref or an Array: that would retain
+// the value tree and defeat the representation boundary.
+export struct SyntaxSlice {
+    pub val start: U64
+    pub val count: U64
+}
+
+export struct TopItemId { pub val raw: U64 }
+export struct DeclId { pub val raw: U64 }
+export struct ImplId { pub val raw: U64 }
+export struct TraitId { pub val raw: U64 }
+export struct ExternId { pub val raw: U64 }
+export struct ImportId { pub val raw: U64 }
+export struct DirectiveId { pub val raw: U64 }
+export struct NewtypeId { pub val raw: U64 }
+export struct TypeId { pub val raw: U64 }
+export struct FieldId { pub val raw: U64 }
+export struct VariantId { pub val raw: U64 }
+export struct ParamId { pub val raw: U64 }
+export struct MemberId { pub val raw: U64 }
+export struct SigId { pub val raw: U64 }
+export struct StmtId { pub val raw: U64 }
+export struct ExprId { pub val raw: U64 }
+export struct BlockId { pub val raw: U64 }
+export struct PatternId { pub val raw: U64 }
+export struct MatchArmId { pub val raw: U64 }
+export struct ArgId { pub val raw: U64 }
+export struct MakeFieldId { pub val raw: U64 }
+export struct BindId { pub val raw: U64 }
+export struct DeriveReqId { pub val raw: U64 }
+
+// This tag is intentionally about the top-level syntax category, not a semantic
+// declaration kind.  A compiler load pass can decide import/predeclare/lower order
+// without materializing a TopItemAst value.
+export enum SyntaxTopItemKind {
+    Decl
+    Impl
+    Trait
+    Extern
+    Import
+    Export
+    ReExport
+    Directive
+    GlobalVal
+    NewType
+}
+
+// A top-level node never contains a value-AST payload. `payload` indexes the
+// table selected by `kind` (DeclId, ImplId, TraitId, …); Export uses another
+// TopItemId.  Keeping it scalar lets the file's top-level walk remain cheap even
+// when one declaration owns a large body.
+export struct SyntaxTopItem {
+    pub val kind: SyntaxTopItemKind
+    pub val payload: U64
+    pub val span: Span
+}
+
+// The root owner for the compiler-facing immutable representation. Tables are
+// added category by category below; all references into them are IDs/slices and
+// never nested Ast values. `topLevel` preserves source order, while `topItems`
+// is the storage addressed by TopItemId.
+export struct SyntaxFile {
+    mut val topLevel: Array[TopItemId] = []
+    mut val topItems: Array[SyntaxTopItem] = []
+    mut val decls: Array[SyntaxDecl] = []
+    mut val impls: Array[SyntaxImpl] = []
+    mut val traits: Array[SyntaxTrait] = []
+    mut val externs: Array[SyntaxExtern] = []
+    mut val imports: Array[SyntaxImport] = []
+    mut val directives: Array[SyntaxDirective] = []
+    mut val newtypes: Array[SyntaxNewtype] = []
+    mut val types: Array[SyntaxType] = []
+    mut val fields: Array[SyntaxField] = []
+    mut val variants: Array[SyntaxVariant] = []
+    mut val params: Array[SyntaxParam] = []
+    mut val members: Array[SyntaxMember] = []
+    mut val sigs: Array[SyntaxSig] = []
+    mut val stmts: Array[SyntaxStmt] = []
+    mut val exprs: Array[SyntaxExpr] = []
+    mut val blocks: Array[SyntaxBlock] = []
+    mut val patterns: Array[SyntaxPattern] = []
+    mut val matchArms: Array[SyntaxMatchArm] = []
+    mut val args: Array[SyntaxArg] = []
+    mut val makeFields: Array[SyntaxMakeField] = []
+    mut val binds: Array[SyntaxBind] = []
+    mut val deriveReqs: Array[SyntaxDeriveReq] = []
+    // Flat child pools. A SyntaxSlice always addresses the pool documented by
+    // its containing field; tables are never recursively embedded in a node.
+    mut val typeIds: Array[TypeId] = []
+    mut val fieldIds: Array[FieldId] = []
+    mut val variantIds: Array[VariantId] = []
+    mut val paramIds: Array[ParamId] = []
+    mut val memberIds: Array[MemberId] = []
+    mut val sigIds: Array[SigId] = []
+    mut val stmtIds: Array[StmtId] = []
+    mut val exprIds: Array[ExprId] = []
+    mut val patternIds: Array[PatternId] = []
+    mut val matchArmIds: Array[MatchArmId] = []
+    mut val argIds: Array[ArgId] = []
+    mut val makeFieldIds: Array[MakeFieldId] = []
+    mut val bindIds: Array[BindId] = []
+    mut val deriveReqIds: Array[DeriveReqId] = []
+    mut val directiveIds: Array[DirectiveId] = []
+    // A pool of slice descriptors preserves each independently-sized nested
+    // group, notably extern opaque-type generic parameter lists.
+    mut val slices: Array[SyntaxSlice] = []
+    mut val texts: Array[Span] = []
+    mut val bools: Array[Bool] = []
+}
+
+// Raw declaration-side nodes. `Span` is also the text reference: all parser
+// input lives in the compiler source arena, so copying a spelling into String is
+// neither necessary nor desirable on the compiler path.
+export struct SyntaxType {
+    pub val name: Span
+    pub val args: SyntaxSlice
+    pub val span: Span
+    pub val extView: Span
+    pub val viewNames: SyntaxSlice
+    pub val projectionTrait: Span
+    pub val projectionTraitArgs: SyntaxSlice
+    pub val projectionTraitArgLabels: SyntaxSlice
+    pub val projectionAssoc: Span
+    pub val isAny: Bool
+    pub val argLabels: SyntaxSlice
+    pub val isSendable: Bool
+    pub val isRecord: Bool
+}
+
+export struct SyntaxField {
+    pub val name: Span
+    pub val ty: TypeId
+    pub val isMut: Bool
+    pub val vis: U64
+    pub val hasDefault: Bool
+    pub val defaultVal: ExprId
+    pub val span: Span
+}
+
+export struct SyntaxVariant {
+    pub val name: Span
+    pub val fields: SyntaxSlice
+    pub val span: Span
+}
+
+export struct SyntaxParam {
+    pub val name: Span
+    pub val ty: TypeId
+    pub val isInout: Bool
+    pub val isMove: Bool
+    pub val isBorrow: Bool
+    pub val noLabel: Bool
+    pub val hasDefault: Bool
+    pub val defaultVal: ExprId
+    pub val span: Span
+}
+
+export struct SyntaxDecl {
+    pub val kind: DeclKind
+    pub val name: Span
+    pub val typeParams: SyntaxSlice
+    pub val typeParamSendable: SyntaxSlice
+    pub val span: Span
+    pub val isUnique: Bool
+    pub val isNonsendable: Bool
+    pub val fields: SyntaxSlice
+    pub val hasDeinit: Bool
+    pub val deinitBody: BlockId
+    pub val variants: SyntaxSlice
+    pub val params: SyntaxSlice
+    pub val hasRet: Bool
+    pub val ret: TypeId
+    pub val isAsync: Bool
+    pub val whereParams: SyntaxSlice
+    pub val whereTraits: SyntaxSlice
+    pub val whereTypes: SyntaxSlice
+    pub val whereTraitTypes: SyntaxSlice
+    pub val body: BlockId
+}
+
+export struct SyntaxMember {
+    pub val kind: MemberKind
+    pub val name: Span
+    pub val typeParams: SyntaxSlice
+    pub val typeParamSendable: SyntaxSlice
+    pub val params: SyntaxSlice
+    pub val hasRet: Bool
+    pub val ret: TypeId
+    pub val whereParams: SyntaxSlice
+    pub val whereTraits: SyntaxSlice
+    pub val whereTypes: SyntaxSlice
+    pub val whereTraitTypes: SyntaxSlice
+    pub val isAsync: Bool
+    pub val selfInout: Bool
+    pub val selfMove: Bool
+    pub val isVia: Bool
+    pub val viaName: Span
+    pub val body: BlockId
+    pub val assocTy: TypeId
+    pub val isFactory: Bool
+    pub val factoryKind: U64
+    pub val factoryErr: TypeId
+}
+
+export struct SyntaxSig {
+    pub val name: Span
+    pub val typeParams: SyntaxSlice
+    pub val typeParamSendable: SyntaxSlice
+    pub val params: SyntaxSlice
+    pub val hasRet: Bool
+    pub val ret: TypeId
+    pub val isAssoc: Bool
+    pub val selfInout: Bool
+}
+
+export struct SyntaxTrait {
+    pub val name: Span
+    pub val typeParams: SyntaxSlice
+    pub val typeParamSendable: SyntaxSlice
+    pub val supertraits: SyntaxSlice
+    pub val reqs: SyntaxSlice
+    pub val assocTypes: SyntaxSlice
+    pub val span: Span
+}
+
+export struct SyntaxExtern {
+    pub val abiOk: Bool
+    pub val abiC: Bool
+    pub val abiSpan: Span
+    pub val fns: SyntaxSlice
+    pub val structNames: SyntaxSlice
+    pub val structTypeParams: SyntaxSlice
+    pub val structTypeParamSendable: SyntaxSlice
+    pub val structSpans: SyntaxSlice
+    pub val structDirectives: SyntaxSlice
+    pub val span: Span
+}
+
+export struct SyntaxImpl {
+    pub val recvType: TypeId
+    pub val implParams: SyntaxSlice
+    pub val implParamSendable: SyntaxSlice
+    pub val isTraitImpl: Bool
+    pub val traitName: Span
+    pub val traitNameSpan: Span
+    pub val traitArgs: SyntaxSlice
+    pub val whereParams: SyntaxSlice
+    pub val whereTraits: SyntaxSlice
+    pub val whereTypes: SyntaxSlice
+    pub val whereTraitTypes: SyntaxSlice
+    pub val isPub: Bool
+    pub val members: SyntaxSlice
+    pub val span: Span
+    pub val extName: Span
+}
+
+export struct SyntaxImport {
+    pub val path: Span
+    pub val segment: Span
+    pub val isImport: Bool
+    pub val nameSpans: SyntaxSlice
+    pub val alias: Span
+    pub val nameAliases: SyntaxSlice
+    pub val span: Span
+}
+
+export struct SyntaxDeriveReq {
+    pub val name: Span
+    pub val args: SyntaxSlice
+}
+
+export struct SyntaxDirective {
+    pub val reqs: SyntaxSlice
+}
+
+export struct SyntaxNewtype {
+    pub val name: Span
+    pub val ty: TypeId
+    pub val isPub: Bool
+    pub val span: Span
+}
+
+// Expression/body-side nodes use one tagged scalar record per category.  The tag
+// is closed and every child is an ID or a flat slice; fields irrelevant to a tag
+// are zero/empty.  This avoids a nested enum payload while preserving all source
+// forms for a direct compiler lowering.
+export enum SyntaxExprKind {
+    IntLit
+    FloatLit
+    StrLit
+    Ident
+    Unary
+    Binary
+    Call
+    Field
+    Method
+    ExtMethod
+    ExtView
+    Index
+    Make
+    ArrayLit
+    DictLit
+    RecordLit
+    Cast
+    MatchExpr
+    IfExpr
+    OptChain
+    ChainHole
+    Try
+    Arrow
+    ArrowMethod
+    Closure
+    Move
+    Await
+    // The value parser currently represents source `a..<b` / `a..=b` as a
+    // synthetic Make of a prelude range type.  SyntaxFile retains the surface
+    // construct instead: no synthesized type/field String enters the arena.
+    Range
+}
+
+export struct SyntaxExpr {
+    pub val kind: SyntaxExprKind
+    pub val span: Span
+    pub val text: Span
+    pub val name: Span
+    pub val nameSpan: Span
+    pub val op: I64
+    // Preserve the parser literal payload exactly; signed interpretation belongs
+    // to type checking, not syntax storage.
+    pub val intValue: U64
+    pub val flag0: Bool
+    pub val flag1: Bool
+    pub val child0: ExprId
+    pub val child1: ExprId
+    pub val child2: ExprId
+    pub val type0: TypeId
+    pub val block0: BlockId
+    pub val block1: BlockId
+    pub val args: SyntaxSlice
+    pub val elems: SyntaxSlice
+    pub val keys: SyntaxSlice
+    pub val values: SyntaxSlice
+    pub val fields: SyntaxSlice
+    pub val arms: SyntaxSlice
+    pub val params: SyntaxSlice
+    pub val typeArgs: SyntaxSlice
+}
+
+export struct SyntaxArg {
+    pub val label: Span
+    pub val hasLabel: Bool
+    pub val isInout: Bool
+    pub val value: ExprId
+    pub val span: Span
+}
+
+export struct SyntaxMakeField {
+    pub val name: Span
+    pub val value: ExprId
+    pub val span: Span
+}
+
+export struct SyntaxBind {
+    pub val field: Span
+    pub val name: Span
+    pub val fieldStart: U64
+    pub val span: Span
+    pub val isAssign: Bool
+}
+
+export struct SyntaxPattern {
+    pub val isWildcard: Bool
+    pub val isStruct: Bool
+    pub val typeName: Span
+    pub val variant: Span
+    pub val binds: SyntaxSlice
+    pub val isLiteral: Bool
+    pub val lit: ExprId
+    pub val captureName: Span
+    pub val span: Span
+}
+
+export struct SyntaxMatchArm {
+    pub val pat: PatternId
+    pub val body: BlockId
+    pub val span: Span
+}
+
+export struct SyntaxBlock {
+    pub val stmts: SyntaxSlice
+}
+
+export enum SyntaxStmtKind {
+    Let
+    Assign
+    ExprStmt
+    Return
+    If
+    While
+    For
+    Match
+    Panic
+    Give
+    Break
+    Continue
+    Destructure
+}
+
+export struct SyntaxStmt {
+    pub val kind: SyntaxStmtKind
+    pub val span: Span
+    pub val name: Span
+    pub val typeName: Span
+    pub val op: I64
+    pub val flag0: Bool
+    pub val flag1: Bool
+    pub val flag2: Bool
+    pub val flag3: Bool
+    pub val child0: ExprId
+    pub val child1: ExprId
+    pub val child2: ExprId
+    pub val type0: TypeId
+    pub val block0: BlockId
+    pub val block1: BlockId
+    pub val arms: SyntaxSlice
+    pub val binds: SyntaxSlice
+}
+
 export struct TypeParamListAst {
     pub val names: Array[String]
     pub val isSendable: Array[Bool]
+    // Exact source span parallel to `names`; required when the compiler-facing
+    // arena interns a generic binder without retaining its String.
+    pub val nameSpans: Array[Span] = []
 }
 
 // A type expression. `Array[U8]` -> name="Array", args=[U8]; a bare `T` ->
 // name="T", args=[]. (Function types `fn(...)->T` are an additive follow-up.)
 export struct TypeAst {
     pub val name: String
+    // Exact source spelling of `name`. `span` covers the complete type expression
+    // (and may begin at `any`/`sendable`), so it cannot substitute for this when a
+    // compiler-facing SyntaxFile interns the head without retaining a String.
+    pub val nameSpan: Span = <Span start=0 end=0 />
     pub val args: Array[TypeAst]
     pub val span: Span
     // `Person#Ext` (spec/09): an extension-view refinement of the type. "" for a
     // plain type. A zero-cost view (same runtime layout) that selects which
     // extension's methods/witnesses resolve; treated as an invariant type detail.
     pub val extView: String = ""
+    pub val extViewSpan: Span = <Span start=0 end=0 />
     // Source selectors written after a type head, in source order.  The compiler
     // canonicalizes them into an unordered extension set plus one optional trait
     // selector; keeping the raw list here lets the parser accept `T#E#P` without
     // assigning extension/trait meaning before declarations are available.
     pub val viewNames: Array[String] = []
+    pub val viewNameSpans: Array[Span] = []
     // Associated-type projection (spec/08): `T#Trait[Args].Item` stores the
     // resolved source spelling and its positional instance arguments.  The
     // short form `T.Item` leaves projectionTrait empty.
     pub val projectionTrait: String = ""
+    pub val projectionTraitSpan: Span = <Span start=0 end=0 />
     pub val projectionTraitArgs: Array[TypeAst] = []
     pub val projectionTraitArgLabels: Array[String] = []
+    pub val projectionTraitArgLabelSpans: Array[Span] = []
     pub val projectionAssoc: String = ""
+    pub val projectionAssocSpan: Span = <Span start=0 end=0 />
     // `any P` (spec/08): an existential — a type-erased value of any concrete type
     // conforming to trait `name`. false for a plain type. Runtime layout is a fat
     // pointer `{ data, vtable }` (vs the plain type's own layout), so this is part
@@ -1088,6 +1539,7 @@ export struct TypeAst {
     // label marks a named associated-type / type-parameter binding `Name=Type`.
     // Empty (or all "") for an ordinary generic type like `Array[I32]`.
     pub val argLabels: Array[String] = []
+    pub val argLabelSpans: Array[Span] = []
     // A type-level sendability assertion/requirement written in the surface syntax:
     // `[sendable T]` marks a type parameter, `any sendable P` marks an existential
     // guarantee, and `sendable fn(...) -> R` marks a function value capability. This
@@ -1107,6 +1559,7 @@ export struct TypeAst {
 // `emptyExpr()` placeholder when absent).
 export struct FieldAst {
     pub val name: String
+    pub val nameSpan: Span = <Span start=0 end=0 />
     pub val ty: TypeAst
     pub val isMut: Bool
     pub val vis: U64
@@ -1119,6 +1572,7 @@ export struct FieldAst {
 // payload-less variant `V`.
 export struct VariantAst {
     pub val name: String
+    pub val nameSpan: Span = <Span start=0 end=0 />
     pub val fields: Array[FieldAst]
     pub val span: Span
 }
@@ -1128,6 +1582,7 @@ export struct VariantAst {
 // flagged by `hasDefault` and surfaced in `defaultVal` (`emptyExpr()` when absent).
 export struct ParamAst {
     pub val name: String
+    pub val nameSpan: Span = <Span start=0 end=0 />
     pub val ty: TypeAst
     pub val isInout: Bool
     pub val isMove: Bool
@@ -1165,6 +1620,7 @@ export struct DeclAst {
     // module visibility) attributes it to the right module.
     pub val nameSpan: Span
     pub val typeParams: Array[String]
+    pub val typeParamSpans: Array[Span] = []
     pub val typeParamSendable: Array[Bool] = []
     pub val span: Span
     // struct/enum (`kind == Struct` or `kind == Enum`)
@@ -1222,6 +1678,7 @@ export struct MemberAst {
     pub val name: String
     pub val nameSpan: Span
     pub val typeParams: Array[String]
+    pub val typeParamSpans: Array[Span] = []
     pub val typeParamSendable: Array[Bool] = []
     pub val params: Array[ParamAst]
     pub val hasRet: Bool
@@ -1240,6 +1697,7 @@ export struct MemberAst {
     // existing method `real` (no body). `viaName` is `real`.
     pub val isVia: Bool
     pub val viaName: String
+    pub val viaNameSpan: Span = <Span start=0 end=0 />
     // Method/AssocFn/Deinit body (empty for `via` and AssocType).
     pub val body: BlockAst
     // AssocType's bound type `type Item = <assocTy>`.
@@ -1261,6 +1719,7 @@ export struct SigAst {
     pub val name: String
     pub val nameSpan: Span
     pub val typeParams: Array[String]
+    pub val typeParamSpans: Array[Span] = []
     pub val typeParamSendable: Array[Bool] = []
     pub val params: Array[ParamAst]
     pub val hasRet: Bool
@@ -1281,10 +1740,13 @@ export struct TraitAst {
     // parameter of operator traits and any other trait type args. Empty for a
     // non-parameterized trait (Eq/Ord/Hasher).
     pub val typeParams: Array[String]
+    pub val typeParamSpans: Array[Span] = []
     pub val typeParamSendable: Array[Bool] = []
     pub val supertraits: Array[String]
+    pub val supertraitSpans: Array[Span] = []
     pub val reqs: Array[SigAst]
     pub val assocTypes: Array[String]
+    pub val assocTypeSpans: Array[Span] = []
     pub val span: Span
 }
 
@@ -1301,11 +1763,13 @@ export struct ExternAst {
     pub val abiSpan: Span
     pub val fns: Array[SigAst]
     pub val structNames: Array[String]
+    pub val structNameSpans: Array[Span] = []
     // per-struct generic type-parameter names (parallel to structNames; empty = a
     // non-generic opaque type). Lets a generic opaque intrinsic — `struct Buffer[T]` —
     // be registered as a real generic struct (so its `Buffer[E]` uses are generic
     // instances dispatched uniformly), distinct from non-generic `struct Ref`.
     pub val structTypeParams: Array[Array[String]] = []
+    pub val structTypeParamSpans: Array[Array[Span]] = []
     pub val structTypeParamSendable: Array[Array[Bool]] = []
     // per-struct source span covering `struct Name` (the whole item), so a `@[...]`
     // derive on an extern struct can feed `parseItem` the item's source (spec/16).
@@ -1323,6 +1787,7 @@ export struct ExternAst {
 export struct ImplAst {
     pub val recvType: TypeAst
     pub val implParams: Array[String]
+    pub val implParamSpans: Array[Span] = []
     pub val implParamSendable: Array[Bool] = []
     pub val isTraitImpl: Bool
     pub val traitName: String
@@ -1344,6 +1809,7 @@ export struct ImplAst {
     // extension impl's members do not join bare resolution; they are reached only
     // through a call-site `value#Name.member` view.
     pub val extName: String = ""
+    pub val extNameSpan: Span = <Span start=0 end=0 />
 }
 
 // An `import <path> [with { name [as Q], ... }]` statement (spec/15). `pathSpan` is
@@ -1407,11 +1873,12 @@ export enum TopItemAst {
     // a named type (spec/10): `newtype Meter = F64`. `name` is the distinct type; `ty`
     // is the underlying. Same representation as the underlying (a zero-cost `as`
     // re-tag), but a distinct type identity that inherits the underlying's methods.
-    NewType(name: String, ty: TypeAst, isPub: Bool, span: Span)
+    NewType(name: String, nameSpan: Span, ty: TypeAst, isPub: Bool, span: Span)
 }
 
 export struct ArgAst {
     pub val label: String
+    pub val labelSpan: Span = <Span start=0 end=0 />
     pub val hasLabel: Bool
     pub val isInout: Bool
     pub val value: ExprAst
@@ -1421,6 +1888,7 @@ export struct ArgAst {
 // A field binding in a JSX construction `<T field=expr />`.
 export struct MakeFieldAst {
     pub val name: String
+    pub val nameSpan: Span = <Span start=0 end=0 />
     pub val value: ExprAst
     pub val span: Span
 }
@@ -1435,6 +1903,8 @@ export struct BindAst {
     pub val field: String
     pub val name: String
     pub val fieldStart: U64
+    pub val fieldSpan: Span = <Span start=0 end=0 />
+    pub val nameSpan: Span = <Span start=0 end=0 />
     pub val span: Span
     // a destructure-statement element written WITHOUT `val` assigns the field to an
     // EXISTING `mut val` binding instead of declaring a new one (`(x, val y) = r`,
@@ -1451,13 +1921,16 @@ export struct PatternAst {
     pub val isWildcard: Bool
     pub val isStruct: Bool
     pub val typeName: String
+    pub val typeNameSpan: Span = <Span start=0 end=0 />
     pub val variant: String
+    pub val variantSpan: Span = <Span start=0 end=0 />
     pub val binds: Array[BindAst]
     pub val isLiteral: Bool = false
     pub val lit: ExprAst = emptyExpr()
     // a capture binding `val x` — a named wildcard that binds the whole scrutinee to
     // `captureName` (spec/11). isWildcard is also true; captureName is "" for a plain `_`.
     pub val captureName: String = ""
+    pub val captureNameSpan: Span = <Span start=0 end=0 />
     pub val span: Span
 }
 
@@ -1478,13 +1951,13 @@ export struct BlockAst {
 
 // An expression. `op` fields carry the operator's lexer kind code (kindCode).
 export enum ExprAst {
-    IntLit(value: U64, isBool: Bool, tySuffix: String, span: Span)
-    FloatLit(text: String, tySuffix: String, span: Span)
+    IntLit(value: U64, isBool: Bool, tySuffix: String, literalSpan: Span, tySuffixSpan: Span, span: Span)
+    FloatLit(text: String, tySuffix: String, literalSpan: Span, tySuffixSpan: Span, span: Span)
     StrLit(raw: String, span: Span)
     Ident(name: String, span: Span)
     Unary(op: I64, operand: ExprAst, span: Span)
     Binary(op: I64, lhs: ExprAst, rhs: ExprAst, span: Span)
-    Call(name: String, args: Array[ArgAst], span: Span)
+    Call(name: String, nameSpan: Span, args: Array[ArgAst], span: Span)
     // `nameSpan` is the member name's own source span (the whole `span` starts at the
     // base) — consumers reference the field by SOURCE bytes for precise diagnostics.
     Field(base: ExprAst, name: String, nameSpan: Span, span: Span)
@@ -1494,14 +1967,14 @@ export enum ExprAst {
     Method(recv: ExprAst, name: String, nameSpan: Span, args: Array[ArgAst], span: Span)
     // `recv#Ext.name(args)` (spec/09): a method call through an extension view.
     // `src` is the extension (or trait) name selecting the method source.
-    ExtMethod(recv: ExprAst, src: String, name: String, args: Array[ArgAst], span: Span)
+    ExtMethod(recv: ExprAst, src: String, srcSpan: Span, name: String, nameSpan: Span, args: Array[ArgAst], span: Span)
     // `recv#Ext` / `recv#!Ext` (spec/09): a zero-cost value re-view. `strip=false`
     // selects extension `src` (the static type gains the `#Ext` view); `strip=true`
     // removes it (`#!Ext`, the "super" form — a following `.method()` resolves the
     // shadowed bare method). The value is unchanged either way.
-    ExtView(recv: ExprAst, src: String, strip: Bool, span: Span)
+    ExtView(recv: ExprAst, src: String, srcSpan: Span, strip: Bool, span: Span)
     Index(base: ExprAst, index: ExprAst, span: Span)
-    Make(typeName: String, typeArgs: Array[TypeAst], variant: String, isEnum: Bool, fields: Array[MakeFieldAst], span: Span)
+    Make(typeName: String, typeNameSpan: Span, typeArgs: Array[TypeAst], variant: String, variantSpan: Span, isEnum: Bool, fields: Array[MakeFieldAst], span: Span)
     ArrayLit(elems: Array[ExprAst], span: Span)
     DictLit(keys: Array[ExprAst], vals: Array[ExprAst], span: Span)
     // a labelled anonymous record literal `(x: 1, y: 2)` (spec/02). `fields` reuses
@@ -1534,19 +2007,19 @@ export enum ExprAst {
 // The source span of any expression node (every variant carries one).
 export fn exprAstSpan(e: ExprAst) -> Span {
     match e {
-        ExprAst.IntLit(value: _, isBool: _, tySuffix: _, val span) => { return span }
-        ExprAst.FloatLit(text: _, tySuffix: _, val span) => { return span }
+        ExprAst.IntLit(value: _, isBool: _, tySuffix: _, literalSpan: _, tySuffixSpan: _, val span) => { return span }
+        ExprAst.FloatLit(text: _, tySuffix: _, literalSpan: _, tySuffixSpan: _, val span) => { return span }
         ExprAst.StrLit(raw: _, val span) => { return span }
         ExprAst.Ident(name: _, val span) => { return span }
         ExprAst.Unary(op: _, operand: _, val span) => { return span }
         ExprAst.Binary(op: _, lhs: _, rhs: _, val span) => { return span }
-        ExprAst.Call(name: _, args: _, val span) => { return span }
+        ExprAst.Call(name: _, nameSpan: _, args: _, val span) => { return span }
         ExprAst.Field(base: _, name: _, nameSpan: _, val span) => { return span }
         ExprAst.Method(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
-        ExprAst.ExtMethod(recv: _, src: _, name: _, args: _, val span) => { return span }
-        ExprAst.ExtView(recv: _, src: _, strip: _, val span) => { return span }
+        ExprAst.ExtMethod(recv: _, src: _, srcSpan: _, name: _, nameSpan: _, args: _, val span) => { return span }
+        ExprAst.ExtView(recv: _, src: _, srcSpan: _, strip: _, val span) => { return span }
         ExprAst.Index(base: _, index: _, val span) => { return span }
-        ExprAst.Make(typeName: _, typeArgs: _, variant: _, isEnum: _, fields: _, val span) => { return span }
+        ExprAst.Make(typeName: _, typeNameSpan: _, typeArgs: _, variant: _, variantSpan: _, isEnum: _, fields: _, val span) => { return span }
         ExprAst.ArrayLit(elems: _, val span) => { return span }
         ExprAst.DictLit(keys: _, vals: _, val span) => { return span }
         ExprAst.RecordLit(fields: _, val span) => { return span }
@@ -1566,13 +2039,13 @@ export fn exprAstSpan(e: ExprAst) -> Span {
 
 // A statement.
 export enum StmtAst {
-    Let(mutable: Bool, name: String, hasTy: Bool, ty: TypeAst, init: ExprAst, span: Span)
+    Let(mutable: Bool, name: String, nameSpan: Span, hasTy: Bool, ty: TypeAst, init: ExprAst, span: Span)
     Assign(op: I64, target: ExprAst, value: ExprAst, span: Span)
     ExprStmt(expr: ExprAst, span: Span)
     Return(value: ExprAst, hasValue: Bool, span: Span)
     If(cond: ExprAst, thenBlk: BlockAst, elseBlk: BlockAst, hasElse: Bool, span: Span)
     While(cond: ExprAst, body: BlockAst, span: Span)
-    For(varName: String, varTy: TypeAst, hasVarTy: Bool, isRange: Bool, inclusive: Bool, iter: ExprAst, rangeHi: ExprAst, body: BlockAst, isStruct: Bool, patType: String, binds: Array[BindAst], span: Span)
+    For(varName: String, varNameSpan: Span, varTy: TypeAst, hasVarTy: Bool, isRange: Bool, inclusive: Bool, iter: ExprAst, rangeHi: ExprAst, body: BlockAst, isStruct: Bool, patType: String, patTypeSpan: Span, binds: Array[BindAst], span: Span)
     Match(scrut: ExprAst, arms: Array[MatchArmAst], span: Span)
     Panic(msg: ExprAst, span: Span)
     Give(value: ExprAst, span: Span)
@@ -1581,12 +2054,12 @@ export enum StmtAst {
     // a record-destructuring binding `(val x, val y) = expr` (spec/02,03): each bind is
     // a field of the record value `init`. Punning `(val x)` is field=name=x; explicit
     // `(a: val x)` is field=a name=x. Lowers to a temp binding plus one `val` per field.
-    Destructure(binds: Array[BindAst], typeName: String, init: ExprAst, span: Span)
+    Destructure(binds: Array[BindAst], typeName: String, typeNameSpan: Span, init: ExprAst, span: Span)
 }
 
 // A placeholder expression (an absent value position, e.g. `return` with no value).
 export fn emptyExpr() -> ExprAst {
-    return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=0 end=0 /> />
+    return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=0 end=0 /> />
 }
 
 // An empty block.
@@ -1697,7 +2170,7 @@ fn parseType(p: inout P) -> TypeAst {
                 _ => {}
             }
             val inner: TypeAst = parseType(p: inout p)
-            return <TypeAst name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView viewNames=inner.viewNames isAny=true argLabels=inner.argLabels isSendable=isSendableAny />
+            return <TypeAst name=inner.name nameSpan=inner.nameSpan args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView extViewSpan=inner.extViewSpan viewNames=inner.viewNames viewNameSpans=inner.viewNameSpans projectionTrait=inner.projectionTrait projectionTraitSpan=inner.projectionTraitSpan projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels projectionTraitArgLabelSpans=inner.projectionTraitArgLabelSpans projectionAssoc=inner.projectionAssoc projectionAssocSpan=inner.projectionAssocSpan isAny=true argLabels=inner.argLabels argLabelSpans=inner.argLabelSpans isSendable=isSendableAny isRecord=inner.isRecord />
         }
     }
     mut val isSendableFn: Bool = false
@@ -1725,6 +2198,7 @@ fn parseType(p: inout P) -> TypeAst {
             p.advance()
             mut val fieldTypes: Array[TypeAst] = []
             mut val fieldNames: Array[String] = []
+            mut val fieldNameSpans: Array[Span] = []
             while true {
                 match p.curKind() {
                     Kind.RParen => { p.advance()  break }
@@ -1739,11 +2213,12 @@ fn parseType(p: inout P) -> TypeAst {
                             _ => { p.fail(off: p.base + p.curTok().start, msg: "an anonymous record field needs a `label: Type` (every field is labelled)") }
                         }
                         fieldNames.append(label)
+                        fieldNameSpans.append(p.spanOf(t: labelTok))
                         fieldTypes.append(parseType(p: inout p))
                     }
                 }
             }
-            return <TypeAst name="" args=fieldTypes span=<Span start=recStart end=p.prevEnd() /> argLabels=fieldNames isRecord=true />
+            return <TypeAst name="" args=fieldTypes span=<Span start=recStart end=p.prevEnd() /> argLabels=fieldNames argLabelSpans=fieldNameSpans isRecord=true />
         }
         _ => {}
     }
@@ -1758,6 +2233,7 @@ fn parseType(p: inout P) -> TypeAst {
         }
     }
     val name: String = p.text(t: head)
+    val nameSpan: Span = p.spanOf(t: head)
     mut val sStart: U64 = p.base + head.start
     if isSendableFn {
         sStart = sendableStart
@@ -1769,6 +2245,7 @@ fn parseType(p: inout P) -> TypeAst {
             // parameter labels (spec/04: labels are part of a function type's identity);
             // "" for an unlabeled position. Captured parallel to fparams.
             mut val flabels: Array[String] = []
+            mut val flabelSpans: Array[Span] = []
             match p.curKind() {
                 Kind.LParen => { p.advance() }
                 _ => {}
@@ -1784,10 +2261,12 @@ fn parseType(p: inout P) -> TypeAst {
                     _ => {
                         // optional `label:` (or `label~:`) before the type.
                         mut val lbl: String = ""
+                        mut val lblSpan: Span = <Span start=0 end=0 />
                         match p.curKind() {
                             Kind.Ident => {
                                 if p.peekKind(off: 1) == <Kind.Colon /> {
                                     lbl = p.text(t: p.curTok())
+                                    lblSpan = p.spanOf(t: p.curTok())
                                     p.advance()
                                     p.advance()
                                 }
@@ -1799,6 +2278,7 @@ fn parseType(p: inout P) -> TypeAst {
                             _ => {}
                         }
                         flabels.append(lbl)
+                        flabelSpans.append(lblSpan)
                         fparams.append(parseType(p: inout p))
                     }
                 }
@@ -1816,14 +2296,17 @@ fn parseType(p: inout P) -> TypeAst {
             // argLabels parallel to fargs: slot 0 is the return type (no label, ""),
             // slots 1.. carry each parameter's label.
             mut val fargLabels: Array[String] = []
+            mut val fargLabelSpans: Array[Span] = []
             fargLabels.append("")
+            fargLabelSpans.append(<Span start=0 end=0 />)
             mut val fk: U64 = 0
             while fk < fparams.count() {
                 fargs.append(fparams[fk])
                 fargLabels.append(flabels[fk])
+                fargLabelSpans.append(flabelSpans[fk])
                 fk += 1
             }
-            return <TypeAst name=name args=fargs argLabels=fargLabels span=<Span start=sStart end=p.prevEnd() /> isSendable=isSendableFn />
+            return <TypeAst name=name nameSpan=nameSpan args=fargs argLabels=fargLabels argLabelSpans=fargLabelSpans span=<Span start=sStart end=p.prevEnd() /> isSendable=isSendableFn />
         }
         _ => {}
     }
@@ -1832,6 +2315,7 @@ fn parseType(p: inout P) -> TypeAst {
     // binding `Name=Type` (spec/08,12 — used by `any P[Item=I32]`) records its name;
     // an ordinary positional type argument records "".
     mut val argLabels: Array[String] = []
+    mut val argLabelSpans: Array[Span] = []
     match p.curKind() {
         Kind.LBracket => {
             p.advance()
@@ -1847,10 +2331,12 @@ fn parseType(p: inout P) -> TypeAst {
                         // a named binding `Name = Type` (an Ident immediately followed
                         // by `=`): record the label and parse the bound type.
                         mut val lbl: String = ""
+                        mut val lblSpan: Span = <Span start=0 end=0 />
                         match p.curKind() {
                             Kind.Ident => {
                                 if p.peekKind(off: 1) == <Kind.Eq /> {
                                     lbl = p.text(t: p.curTok())
+                                    lblSpan = p.spanOf(t: p.curTok())
                                     p.advance()
                                     p.advance()
                                 }
@@ -1859,6 +2345,7 @@ fn parseType(p: inout P) -> TypeAst {
                         }
                         args.append(parseType(p: inout p))
                         argLabels.append(lbl)
+                        argLabelSpans.append(lblSpan)
                     }
                 }
             }
@@ -1869,17 +2356,24 @@ fn parseType(p: inout P) -> TypeAst {
     // projection `T#Trait.Item` / `T.Item` (spec/08). A `#Name` followed by `.Item`
     // is a projection source, not a value/extension view.
     mut val extView: String = ""
+    mut val extViewSpan: Span = <Span start=0 end=0 />
     mut val viewNames: Array[String] = []
+    mut val viewNameSpans: Array[Span] = []
     mut val projectionTrait: String = ""
+    mut val projectionTraitSpan: Span = <Span start=0 end=0 />
     mut val projectionTraitArgs: Array[TypeAst] = []
     mut val projectionTraitArgLabels: Array[String] = []
+    mut val projectionTraitArgLabelSpans: Array[Span] = []
     mut val projectionAssoc: String = ""
+    mut val projectionAssocSpan: Span = <Span start=0 end=0 />
     mut val parsingViews: Bool = true
     while parsingViews {
         match p.curKind() {
         Kind.Hash => {
             p.advance()
-            val hashName: String = p.text(t: p.curTok())
+            val hashNameTok: Tok = p.curTok()
+            val hashName: String = p.text(t: hashNameTok)
+            val hashNameSpan: Span = p.spanOf(t: hashNameTok)
             p.advance()
             match p.curKind() {
                 Kind.LBracket => {
@@ -1894,10 +2388,12 @@ fn parseType(p: inout P) -> TypeAst {
                             Kind.Comma => { p.advance() }
                             _ => {
                                 mut val lbl: String = ""
+                                mut val lblSpan: Span = <Span start=0 end=0 />
                                 match p.curKind() {
                                     Kind.Ident => {
                                         if p.peekKind(off: 1) == <Kind.Eq /> {
                                             lbl = p.text(t: p.curTok())
+                                            lblSpan = p.spanOf(t: p.curTok())
                                             p.advance()
                                             p.advance()
                                         }
@@ -1906,6 +2402,7 @@ fn parseType(p: inout P) -> TypeAst {
                                 }
                                 projectionTraitArgs.append(parseType(p: inout p))
                                 projectionTraitArgLabels.append(lbl)
+                                projectionTraitArgLabelSpans.append(lblSpan)
                             }
                         }
                     }
@@ -1913,7 +2410,10 @@ fn parseType(p: inout P) -> TypeAst {
                         Kind.Dot => {
                             p.advance()
                             projectionTrait = hashName
-                            projectionAssoc = p.text(t: p.curTok())
+                            projectionTraitSpan = hashNameSpan
+                            val assocTok: Tok = p.curTok()
+                            projectionAssoc = p.text(t: assocTok)
+                            projectionAssocSpan = p.spanOf(t: assocTok)
                             p.advance()
                         }
                         _ => {}
@@ -1922,12 +2422,17 @@ fn parseType(p: inout P) -> TypeAst {
                 Kind.Dot => {
                     p.advance()
                     projectionTrait = hashName
-                    projectionAssoc = p.text(t: p.curTok())
+                    projectionTraitSpan = hashNameSpan
+                    val assocTok: Tok = p.curTok()
+                    projectionAssoc = p.text(t: assocTok)
+                    projectionAssocSpan = p.spanOf(t: assocTok)
                     p.advance()
                 }
                 _ => {
                     extView = hashName
+                    extViewSpan = hashNameSpan
                     viewNames.append(hashName)
+                    viewNameSpans.append(hashNameSpan)
                 }
             }
         }
@@ -1941,13 +2446,15 @@ fn parseType(p: inout P) -> TypeAst {
         match p.curKind() {
             Kind.Dot => {
                 p.advance()
-                projectionAssoc = p.text(t: p.curTok())
+                val assocTok: Tok = p.curTok()
+                projectionAssoc = p.text(t: assocTok)
+                projectionAssocSpan = p.spanOf(t: assocTok)
                 p.advance()
             }
             _ => {}
         }
     }
-    return <TypeAst name=name args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView viewNames=viewNames projectionTrait=projectionTrait projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionAssoc=projectionAssoc argLabels=argLabels />
+    return <TypeAst name=name nameSpan=nameSpan args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView extViewSpan=extViewSpan viewNames=viewNames viewNameSpans=viewNameSpans projectionTrait=projectionTrait projectionTraitSpan=projectionTraitSpan projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionTraitArgLabelSpans=projectionTraitArgLabelSpans projectionAssoc=projectionAssoc projectionAssocSpan=projectionAssocSpan argLabels=argLabels argLabelSpans=argLabelSpans />
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
@@ -1955,14 +2462,15 @@ fn parseType(p: inout P) -> TypeAst {
 fn parseNewtypeAst(p: inout P, isPub: Bool) -> TopItemAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
-    val name: String = p.text(t: p.curTok())
+    val nameTok: Tok = p.curTok()
+    val name: String = p.text(t: nameTok)
     p.advance()
     match p.curKind() {
         Kind.Eq => { p.advance() }
         _ => { p.fail(off: p.base + p.curTok().start, msg: "a newtype declaration is `newtype Name = Underlying`") }
     }
     val ty: TypeAst = parseType(p: inout p)
-    return <TopItemAst.NewType name=name ty=ty isPub=isPub span=<Span start=sStart end=p.prevEnd() /> />
+    return <TopItemAst.NewType name=name nameSpan=p.spanOf(t: nameTok) ty=ty isPub=isPub span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // An optional generic parameter list `[T, sendable U]` -> names plus per-parameter
@@ -1971,6 +2479,7 @@ fn parseNewtypeAst(p: inout P, isPub: Bool) -> TopItemAst {
 fn parseTypeParamList(p: inout P) -> TypeParamListAst {
     mut val ps: Array[String] = []
     mut val flags: Array[Bool] = []
+    mut val nameSpans: Array[Span] = []
     match p.curKind() {
         Kind.LBracket => {
             p.advance()
@@ -1992,8 +2501,10 @@ fn parseTypeParamList(p: inout P) -> TypeParamListAst {
                         p.advance()
                         match p.curKind() {
                             Kind.Ident => {
-                                ps.append(p.text(t: p.curTok()))
+                                val nameTok: Tok = p.curTok()
+                                ps.append(p.text(t: nameTok))
                                 flags.append(true)
+                                nameSpans.append(p.spanOf(t: nameTok))
                                 p.advance()
                                 match p.curKind() {
                                     Kind.Ident => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
@@ -2007,10 +2518,12 @@ fn parseTypeParamList(p: inout P) -> TypeParamListAst {
                         }
                     }
                     Kind.Ident => {
-                        val name: String = p.text(t: p.curTok())
+                        val nameTok: Tok = p.curTok()
+                        val name: String = p.text(t: nameTok)
                         p.advance()
                         ps.append(name)
                         flags.append(false)
+                        nameSpans.append(p.spanOf(t: nameTok))
                         match p.curKind() {
                             Kind.Ident => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
                             Kind.KwSendable => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
@@ -2026,7 +2539,7 @@ fn parseTypeParamList(p: inout P) -> TypeParamListAst {
         }
         _ => {}
     }
-    return <TypeParamListAst names=ps isSendable=flags />
+    return <TypeParamListAst names=ps isSendable=flags nameSpans=nameSpans />
 }
 
 fn parseTypeParamNames(p: inout P) -> Array[String] {
@@ -2098,7 +2611,7 @@ fn parseStructField(p: inout P) -> FieldAst {
     if ty.span.end == ty.span.start && !hasDefault {
         p.fail(off: fStart, msg: "struct field needs a type annotation or a default value")
     }
-    return <FieldAst name=name ty=ty isMut=isMut vis=vis hasDefault=hasDefault defaultVal=defaultVal span=<Span start=fStart end=p.prevEnd() /> />
+    return <FieldAst name=name nameSpan=p.spanOf(t: nameTok) ty=ty isMut=isMut vis=vis hasDefault=hasDefault defaultVal=defaultVal span=<Span start=fStart end=p.prevEnd() /> />
 }
 
 // A struct declaration. The cursor is at `struct` (modifiers before it are already
@@ -2151,7 +2664,7 @@ export fn parseStructDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = fals
             }
         }
     }
-    return <DeclAst kind=<DeclKind.Struct /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
+    return <DeclAst kind=<DeclKind.Struct /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=[] params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
 }
 
 // An enum variant payload field `name: Type` (no modifiers). The cursor is at the
@@ -2169,7 +2682,7 @@ fn parseVariantField(p: inout P) -> FieldAst {
         }
         _ => {}
     }
-    return <FieldAst name=name ty=ty isMut=false vis=0 hasDefault=false defaultVal=emptyExpr() span=<Span start=fStart end=p.prevEnd() /> />
+    return <FieldAst name=name nameSpan=p.spanOf(t: nameTok) ty=ty isMut=false vis=0 hasDefault=false defaultVal=emptyExpr() span=<Span start=fStart end=p.prevEnd() /> />
 }
 
 // An enum declaration. The cursor is at `enum`.
@@ -2233,12 +2746,12 @@ export fn parseEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false)
                     }
                     _ => {}
                 }
-                variants.append(<VariantAst name=vName fields=vfields span=<Span start=vStart end=p.prevEnd() /> />)
+                variants.append(<VariantAst name=vName nameSpan=p.spanOf(t: vTok) fields=vfields span=<Span start=vStart end=p.prevEnd() /> />)
             }
             _ => { p.advance() }
         }
     }
-    return <DeclAst kind=<DeclKind.Enum /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique isNonsendable=isNonsendable fields=[] hasDeinit=false deinitBody=emptyBlock() variants=variants params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
+    return <DeclAst kind=<DeclKind.Enum /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=isUnique isNonsendable=isNonsendable fields=[] hasDeinit=false deinitBody=emptyBlock() variants=variants params=[] hasRet=false ret=emptyTypeAst() isAsync=false whereParams=[] whereTraits=[] body=emptyBlock() />
 }
 
 // A function parameter `name[~]: [inout|move|borrow] Type [= expr]`. The cursor is
@@ -2294,7 +2807,7 @@ fn parseParamAst(p: inout P) -> ParamAst {
         }
         _ => {}
     }
-    return <ParamAst name=name ty=ty isInout=isInout isMove=isMove isBorrow=isBorrow noLabel=noLabel hasDefault=hasDefault defaultVal=defaultVal span=<Span start=pStart end=p.prevEnd() /> />
+    return <ParamAst name=name nameSpan=p.spanOf(t: nameTok) ty=ty isInout=isInout isMove=isMove isBorrow=isBorrow noLabel=noLabel hasDefault=hasDefault defaultVal=defaultVal span=<Span start=pStart end=p.prevEnd() /> />
 }
 
 // A parenthesized parameter list `( params )`. The cursor is at `(` (or anything
@@ -2403,7 +2916,7 @@ export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     p.skipNewlines()
     val body: BlockAst = parseBlockAst(p: inout p)
-    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
+    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
 }
 
 // Parse an item's source into a `DeclAst` (struct / enum / fn). `source` is the
@@ -2623,9 +3136,12 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
     // `via real`: witnesses a requirement by aliasing an existing method (no body).
     mut val isVia: Bool = false
     mut val viaName: String = ""
+    mut val viaNameSpan: Span = <Span start=0 end=0 />
     if curIs(p: inout p, kw: "via") {
         p.advance()
-        viaName = p.text(t: p.curTok())
+        val viaTok: Tok = p.curTok()
+        viaName = p.text(t: viaTok)
+        viaNameSpan = p.spanOf(t: viaTok)
         p.advance()
         isVia = true
     }
@@ -2634,13 +3150,13 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
         p.skipNewlines()
         body = parseBlockAst(p: inout p)
     }
-    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName body=body assocTy=emptyTypeAst() />
+    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName viaNameSpan=viaNameSpan body=body assocTy=emptyTypeAst() />
 }
 
 // An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block (spec/07,08).
 // The cursor is at the `impl` ident (the leading `pub`, if any, is already consumed
 // and passed as `isPub`). Mirrors the compiler's parseImpl.
-export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAst {
+export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan: Span = <Span start=0 end=0 />) -> ImplAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val implTps: TypeParamListAst = parseTypeParamList(p: inout p)
@@ -2847,7 +3363,7 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "") -> ImplAs
             }
         }
     }
-    return <ImplAst recvType=recvType implParams=implTps.names implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitNameSpan traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName />
+    return <ImplAst recvType=recvType implParams=implTps.names implParamSpans=implTps.nameSpans implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitNameSpan traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName extNameSpan=extNameSpan />
 }
 
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
@@ -2870,7 +3386,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> SigAst {
         }
         _ => {}
     }
-    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />
+    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />
 }
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).
@@ -2885,6 +3401,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
     // trait type parameters `trait Add[Rhs]` (spec/12), before `: Super` / `{`.
     val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     mut val supertraits: Array[String] = []
+    mut val supertraitSpans: Array[Span] = []
     match p.curKind() {
         Kind.Colon => {
             p.advance()
@@ -2892,7 +3409,9 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
             while more {
                 match p.curKind() {
                     Kind.Ident => {
-                        supertraits.append(p.text(t: p.curTok()))
+                        val superTok: Tok = p.curTok()
+                        supertraits.append(p.text(t: superTok))
+                        supertraitSpans.append(p.spanOf(t: superTok))
                         p.advance()
                     }
                     _ => {}
@@ -2911,6 +3430,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
     }
     mut val reqs: Array[SigAst] = []
     mut val assocTypes: Array[String] = []
+    mut val assocTypeSpans: Array[Span] = []
     while true {
         p.skipNewlines()
         match p.curKind() {
@@ -2979,7 +3499,9 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
                         p.advance()
                         match p.curKind() {
                             Kind.Ident => {
-                                assocTypes.append(p.text(t: p.curTok()))
+                                val assocTok: Tok = p.curTok()
+                                assocTypes.append(p.text(t: assocTok))
+                                assocTypeSpans.append(p.spanOf(t: assocTok))
                                 p.advance()
                             }
                             _ => {}
@@ -2992,7 +3514,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
             }
         }
     }
-    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSendable=tps.isSendable supertraits=supertraits reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
+    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable supertraits=supertraits supertraitSpans=supertraitSpans reqs=reqs assocTypes=assocTypes assocTypeSpans=assocTypeSpans span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
@@ -3031,7 +3553,9 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
     }
     mut val fns: Array[SigAst] = []
     mut val structNames: Array[String] = []
+    mut val structNameSpans: Array[Span] = []
     mut val structTypeParams: Array[Array[String]] = []
+    mut val structTypeParamSpans: Array[Array[Span]] = []
     mut val structTypeParamSendable: Array[Array[Bool]] = []
     mut val structSpans: Array[Span] = []
     mut val structDirectives: Array[DirectiveAst] = []
@@ -3056,6 +3580,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                 p.advance()
                 val sTok: Tok = p.curTok()
                 structNames.append(p.text(t: sTok))
+                structNameSpans.append(p.spanOf(t: sTok))
                 structSpans.append(<Span start=kwSpan.start end=p.spanOf(t: sTok).end />)
                 structDirectives.append(pendingDir)
                 pendingDir = <DirectiveAst reqs=[] />
@@ -3064,6 +3589,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                 // generic opaque intrinsic. Non-generic structs get an empty list.
                 val stps: TypeParamListAst = parseTypeParamList(p: inout p)
                 structTypeParams.append(stps.names)
+                structTypeParamSpans.append(stps.nameSpans)
                 structTypeParamSendable.append(stps.isSendable)
             }
             _ => {
@@ -3075,7 +3601,9 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
                     p.advance()
                     val tTok: Tok = p.curTok()
                     structNames.append(p.text(t: tTok))
+                    structNameSpans.append(p.spanOf(t: tTok))
                     structTypeParams.append([])
+                    structTypeParamSpans.append([])
                     structTypeParamSendable.append([])
                     structSpans.append(<Span start=kwSpan.start end=p.spanOf(t: tTok).end />)
                     structDirectives.append(pendingDir)
@@ -3093,7 +3621,7 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
             }
         }
     }
-    return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structTypeParams=structTypeParams structTypeParamSendable=structTypeParamSendable structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
+    return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structNameSpans=structNameSpans structTypeParams=structTypeParams structTypeParamSpans=structTypeParamSpans structTypeParamSendable=structTypeParamSendable structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
 }
 
 // `import <path> [with { name [as Q], ... }]` or `part <path>` (spec/15). The cursor
@@ -3262,7 +3790,7 @@ fn parseDirectiveArgsAst(p: inout P) -> Array[MakeFieldAst] {
                     _ => {}
                 }
                 val v: ExprAst = parseExprAst(p: inout p)
-                fields.append(<MakeFieldAst name=label value=v span=labelSpan />)
+                fields.append(<MakeFieldAst name=label nameSpan=labelSpan value=v span=labelSpan />)
             }
             _ => { p.advance() }
         }
@@ -3350,7 +3878,9 @@ fn parseExportAst(p: inout P) -> TopItemAst {
 // state — it is purely a label on its impls.
 fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
     p.advance()
-    val name: String = p.text(t: p.curTok())
+    val nameTok: Tok = p.curTok()
+    val name: String = p.text(t: nameTok)
+    val nameSpan: Span = p.spanOf(t: nameTok)
     p.advance()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
@@ -3367,12 +3897,12 @@ fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
             Kind.Eof => { cont = false }
             _ => {
                 if curIs(p: inout p, kw: "impl") {
-                    items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: false, extName: name) />)
+                    items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: false, extName: name, extNameSpan: nameSpan) />)
                 } else {
                     if curIs(p: inout p, kw: "pub") {
                         p.advance()
                         if curIs(p: inout p, kw: "impl") {
-                            items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true, extName: name) />)
+                            items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true, extName: name, extNameSpan: nameSpan) />)
                         } else {
                             p.advance()
                         }
@@ -3385,16 +3915,14 @@ fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
     }
 }
 
-// Parse a whole program (a file's tokens) into a flat list of top-level items
-// (spec/15). The compiler frontend drives this over its own token stream (base=0)
-// and lowers each item (Codegen/Lower.pw), following `Import` items to load further
-// files. This is the single top-level entry — the compiler has no separate
-// declaration/dispatch parser. Mirrors the compiler's old parseProgram dispatch.
-export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
+// Parse exactly one top-level source position. An extension is deliberately one
+// source position but expands to several Impl items, hence the small returned
+// list. Both the value-AST and SyntaxFile entry points consume this one dispatch;
+// there must not be a second compiler-only top-level grammar.
+fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
     mut val items: Array[TopItemAst] = []
-    while true {
-        p.skipNewlines()
-        match p.curKind() {
+    p.skipNewlines()
+    match p.curKind() {
             Kind.KwFn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwSpawn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwAsync => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
@@ -3453,7 +3981,7 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
                     }
                 }
             }
-            Kind.Eof => { break }
+            Kind.Eof => {}
             _ => {
                 if p.peekKind(off: 1) == <Kind.LBracket /> {
                     items.append(<TopItemAst.Directive dir=parseDirectiveAst(p: inout p) />)
@@ -3464,9 +3992,578 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
                     p.advance()
                 }
             }
+    }
+    return items
+}
+
+// Parse a whole program (a file's tokens) into a flat list of top-level items
+// (spec/15). The compiler frontend drives this over its own token stream (base=0)
+// and lowers each item (Codegen/Lower.pw), following `Import` items to load further
+// files. This is the single top-level entry — the compiler has no separate
+// declaration/dispatch parser. Mirrors the compiler's old parseProgram dispatch.
+export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
+    mut val items: Array[TopItemAst] = []
+    while p.curKind() != <Kind.Eof /> {
+        val next: Array[TopItemAst] = parseTopItemsAt(p: inout p)
+        mut val i: U64 = 0U64
+        while i < next.count() {
+            items.append(next[i])
+            i += 1U64
         }
     }
     return items
+}
+
+// Compiler entry point.  Parsing remains the same recoverable value-AST parser
+// used by macros; each completed top-level item is immediately frozen into the
+// immutable, ID-addressed representation and the program-sized value array is
+// discarded before returning.
+export fn parseProgramSyntaxFile(p: inout P) -> SyntaxFile {
+    mut val file: SyntaxFile = <SyntaxFile />
+    parseProgramSyntaxInto(p: inout p, file: inout file)
+    return file
+}
+
+// Compiler loader entry: append one source file to the single program-owned
+// syntax store and return precisely the roots added for this file.  This is the
+// only post-factory mutation exposed by SyntaxFile; ordinary consumers receive
+// the completed file as `val` and have read-only ID traversal only.
+export fn parseProgramSyntaxInto(p: inout P, file: inout SyntaxFile) -> SyntaxSlice {
+    val start: U64 = file.topLevelCount()
+    while p.curKind() != <Kind.Eof /> {
+        val items: Array[TopItemAst] = parseTopItemsAt(p: inout p)
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            file.freezeTopItem(ast: items[i])
+            i += 1U64
+        }
+    }
+    return <SyntaxSlice start=start count=file.topLevelCount() - start />
+}
+
+// Read-only traversal surface for compiler clients.  Tables stay private so no
+// caller can append a node after parse/freeze has established the ID graph.
+export fn syntaxFileTopLevelCount(file: SyntaxFile) -> U64 {
+    return file.topLevelCount()
+}
+
+export fn syntaxFileTopLevel(file: SyntaxFile, index: U64) -> TopItemId {
+    return file.topLevelItem(index: index)
+}
+
+export fn syntaxTopItemKind(file: SyntaxFile, item: TopItemId) -> SyntaxTopItemKind {
+    return file.topItemKind(item: item)
+}
+
+export fn syntaxTopItemSpan(file: SyntaxFile, item: TopItemId) -> Span {
+    return file.topItemSpan(item: item)
+}
+
+// Export stores its wrapped top-level node as the scalar payload.  Other tags
+// also have scalar payloads for their category table, so callers must inspect
+// `syntaxTopItemKind` before interpreting this as a TopItemId.
+export fn syntaxTopItemPayload(file: SyntaxFile, item: TopItemId) -> U64 {
+    return file.topItemPayload(item: item)
+}
+
+export fn syntaxImport(file: SyntaxFile, id: ImportId) -> SyntaxImport {
+    return file.importNode(id: id)
+}
+
+export fn syntaxDecl(file: SyntaxFile, id: DeclId) -> SyntaxDecl {
+    return file.declNode(id: id)
+}
+
+export fn syntaxDeclFieldCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+    return file.declFieldCount(decl: decl)
+}
+
+export fn syntaxDeclField(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> FieldId {
+    return file.declField(decl: decl, index: index)
+}
+
+export fn syntaxField(file: SyntaxFile, id: FieldId) -> SyntaxField {
+    return file.fieldNode(id: id)
+}
+
+export fn syntaxDeclTypeParamCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+    return file.declTypeParamCount(decl: decl)
+}
+
+export fn syntaxDeclTypeParamSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
+    return file.declTypeParamSpan(decl: decl, index: index)
+}
+
+export fn syntaxDeclTypeParamIsSendable(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Bool {
+    return file.declTypeParamIsSendable(decl: decl, index: index)
+}
+
+export fn syntaxDeclVariantCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+    return file.declVariantCount(decl: decl)
+}
+
+export fn syntaxDeclVariant(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> VariantId {
+    return file.declVariant(decl: decl, index: index)
+}
+
+export fn syntaxVariant(file: SyntaxFile, id: VariantId) -> SyntaxVariant {
+    return file.variantNode(id: id)
+}
+
+export fn syntaxVariantFieldCount(file: SyntaxFile, variant: SyntaxVariant) -> U64 {
+    return file.variantFieldCount(variant: variant)
+}
+
+export fn syntaxVariantField(file: SyntaxFile, variant: SyntaxVariant, index: U64) -> FieldId {
+    return file.variantField(variant: variant, index: index)
+}
+
+export fn syntaxDeclParamCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+    return file.declParamCount(decl: decl)
+}
+
+export fn syntaxDeclParam(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> ParamId {
+    return file.declParam(decl: decl, index: index)
+}
+
+export fn syntaxParam(file: SyntaxFile, id: ParamId) -> SyntaxParam {
+    return file.paramNode(id: id)
+}
+
+// A where-clause entry is one aligned tuple of binder text, trait text, and
+// their respective syntax types.  The count comes from that canonical tuple,
+// rather than exposing any of the four backing pools directly.
+export fn syntaxDeclWhereCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+    return file.declWhereCount(decl: decl)
+}
+
+export fn syntaxDeclWhereParamSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
+    return file.declWhereParamSpan(decl: decl, index: index)
+}
+
+export fn syntaxDeclWhereTraitSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
+    return file.declWhereTraitSpan(decl: decl, index: index)
+}
+
+export fn syntaxDeclWhereType(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> TypeId {
+    return file.declWhereType(decl: decl, index: index)
+}
+
+export fn syntaxDeclWhereTraitType(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> TypeId {
+    return file.declWhereTraitType(decl: decl, index: index)
+}
+
+export fn syntaxImpl(file: SyntaxFile, id: ImplId) -> SyntaxImpl {
+    return file.implNode(id: id)
+}
+
+export fn syntaxImplParamCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+    return file.implParamCount(impl: impl)
+}
+
+export fn syntaxImplParamSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
+    return file.implParamSpan(impl: impl, index: index)
+}
+
+export fn syntaxImplParamIsSendable(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Bool {
+    return file.implParamIsSendable(impl: impl, index: index)
+}
+
+export fn syntaxImplTraitArgCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+    return file.implTraitArgCount(impl: impl)
+}
+
+export fn syntaxImplTraitArg(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
+    return file.implTraitArg(impl: impl, index: index)
+}
+
+export fn syntaxImplWhereCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+    return file.implWhereCount(impl: impl)
+}
+
+export fn syntaxImplWhereParamSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
+    return file.implWhereParamSpan(impl: impl, index: index)
+}
+
+export fn syntaxImplWhereTraitSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
+    return file.implWhereTraitSpan(impl: impl, index: index)
+}
+
+export fn syntaxImplWhereType(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
+    return file.implWhereType(impl: impl, index: index)
+}
+
+export fn syntaxImplWhereTraitType(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
+    return file.implWhereTraitType(impl: impl, index: index)
+}
+
+export fn syntaxImplMemberCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+    return file.implMemberCount(impl: impl)
+}
+
+export fn syntaxImplMember(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> MemberId {
+    return file.implMember(impl: impl, index: index)
+}
+
+export fn syntaxMember(file: SyntaxFile, id: MemberId) -> SyntaxMember {
+    return file.memberNode(id: id)
+}
+
+export fn syntaxMemberTypeParamCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
+    return file.memberTypeParamCount(member: member)
+}
+
+export fn syntaxMemberTypeParamSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
+    return file.memberTypeParamSpan(member: member, index: index)
+}
+
+export fn syntaxMemberTypeParamIsSendable(file: SyntaxFile, member: SyntaxMember, index: U64) -> Bool {
+    return file.memberTypeParamIsSendable(member: member, index: index)
+}
+
+export fn syntaxMemberParamCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
+    return file.memberParamCount(member: member)
+}
+
+export fn syntaxMemberParam(file: SyntaxFile, member: SyntaxMember, index: U64) -> ParamId {
+    return file.memberParam(member: member, index: index)
+}
+
+export fn syntaxMemberWhereCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
+    return file.memberWhereCount(member: member)
+}
+
+export fn syntaxMemberWhereParamSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
+    return file.memberWhereParamSpan(member: member, index: index)
+}
+
+export fn syntaxMemberWhereTraitSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
+    return file.memberWhereTraitSpan(member: member, index: index)
+}
+
+export fn syntaxMemberWhereType(file: SyntaxFile, member: SyntaxMember, index: U64) -> TypeId {
+    return file.memberWhereType(member: member, index: index)
+}
+
+export fn syntaxMemberWhereTraitType(file: SyntaxFile, member: SyntaxMember, index: U64) -> TypeId {
+    return file.memberWhereTraitType(member: member, index: index)
+}
+
+// A scalar trait view is sufficient for declaration prepass clients. Its
+// children remain ID/slice references; no value TraitAst is reconstructed.
+export fn syntaxTrait(file: SyntaxFile, id: TraitId) -> SyntaxTrait {
+    return file.traitNode(id: id)
+}
+
+export fn syntaxTraitTypeParamCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+    return file.traitTypeParamCount(trait: trait)
+}
+
+export fn syntaxTraitTypeParamSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
+    return file.traitTypeParamSpan(trait: trait, index: index)
+}
+
+export fn syntaxTraitTypeParamIsSendable(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Bool {
+    return file.traitTypeParamIsSendable(trait: trait, index: index)
+}
+
+export fn syntaxTraitSupertraitCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+    return file.traitSupertraitCount(trait: trait)
+}
+
+export fn syntaxTraitSupertraitSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
+    return file.traitSupertraitSpan(trait: trait, index: index)
+}
+
+export fn syntaxTraitAssocTypeCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+    return file.traitAssocTypeCount(trait: trait)
+}
+
+export fn syntaxTraitAssocTypeSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
+    return file.traitAssocTypeSpan(trait: trait, index: index)
+}
+
+export fn syntaxTraitReqCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+    return file.traitReqCount(trait: trait)
+}
+
+export fn syntaxTraitReq(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> SigId {
+    return file.traitReq(trait: trait, index: index)
+}
+
+export fn syntaxSig(file: SyntaxFile, id: SigId) -> SyntaxSig {
+    return file.sigNode(id: id)
+}
+
+export fn syntaxSigTypeParamCount(file: SyntaxFile, sig: SyntaxSig) -> U64 {
+    return file.sigTypeParamCount(sig: sig)
+}
+
+export fn syntaxSigTypeParamSpan(file: SyntaxFile, sig: SyntaxSig, index: U64) -> Span {
+    return file.sigTypeParamSpan(sig: sig, index: index)
+}
+
+export fn syntaxSigTypeParamIsSendable(file: SyntaxFile, sig: SyntaxSig, index: U64) -> Bool {
+    return file.sigTypeParamIsSendable(sig: sig, index: index)
+}
+
+export fn syntaxSigParamCount(file: SyntaxFile, sig: SyntaxSig) -> U64 {
+    return file.sigParamCount(sig: sig)
+}
+
+export fn syntaxSigParam(file: SyntaxFile, sig: SyntaxSig, index: U64) -> ParamId {
+    return file.sigParam(sig: sig, index: index)
+}
+
+export fn syntaxExtern(file: SyntaxFile, id: ExternId) -> SyntaxExtern {
+    return file.externNode(id: id)
+}
+
+export fn syntaxExternFnCount(file: SyntaxFile, ext: SyntaxExtern) -> U64 {
+    return file.externFnCount(ext: ext)
+}
+
+export fn syntaxExternFn(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> SigId {
+    return file.externFn(ext: ext, index: index)
+}
+
+export fn syntaxExternStructCount(file: SyntaxFile, ext: SyntaxExtern) -> U64 {
+    return file.externStructCount(ext: ext)
+}
+
+export fn syntaxExternStructNameSpan(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> Span {
+    return file.externStructNameSpan(ext: ext, index: index)
+}
+
+export fn syntaxExternStructSpan(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> Span {
+    return file.externStructSpan(ext: ext, index: index)
+}
+
+export fn syntaxExternStructTypeParamCount(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> U64 {
+    return file.externStructTypeParamCount(ext: ext, index: index)
+}
+
+export fn syntaxExternStructTypeParamSpan(file: SyntaxFile, ext: SyntaxExtern, structIndex: U64, index: U64) -> Span {
+    return file.externStructTypeParamSpan(ext: ext, structIndex: structIndex, index: index)
+}
+
+export fn syntaxExternStructTypeParamIsSendable(file: SyntaxFile, ext: SyntaxExtern, structIndex: U64, index: U64) -> Bool {
+    return file.externStructTypeParamIsSendable(ext: ext, structIndex: structIndex, index: index)
+}
+
+export fn syntaxExternStructDirective(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> DirectiveId {
+    return file.externStructDirective(ext: ext, index: index)
+}
+
+export fn syntaxDirective(file: SyntaxFile, id: DirectiveId) -> SyntaxDirective {
+    return file.directiveNode(id: id)
+}
+
+export fn syntaxDirectiveReqCount(file: SyntaxFile, directive: SyntaxDirective) -> U64 {
+    return file.directiveReqCount(directive: directive)
+}
+
+export fn syntaxDirectiveReq(file: SyntaxFile, directive: SyntaxDirective, index: U64) -> DeriveReqId {
+    return file.directiveReq(directive: directive, index: index)
+}
+
+export fn syntaxDeriveReq(file: SyntaxFile, id: DeriveReqId) -> SyntaxDeriveReq {
+    return file.deriveReqNode(id: id)
+}
+
+export fn syntaxDeriveReqArgCount(file: SyntaxFile, req: SyntaxDeriveReq) -> U64 {
+    return file.deriveReqArgCount(req: req)
+}
+
+export fn syntaxDeriveReqArg(file: SyntaxFile, req: SyntaxDeriveReq, index: U64) -> MakeFieldId {
+    return file.deriveReqArg(req: req, index: index)
+}
+
+export fn syntaxNewtype(file: SyntaxFile, id: NewtypeId) -> SyntaxNewtype {
+    return file.newtypeNode(id: id)
+}
+
+// Top-level `val` / `mut val` is represented by a StmtId.  As with every
+// SyntaxFile reader this exposes its scalar node view, never a value StmtAst.
+export fn syntaxStmt(file: SyntaxFile, id: StmtId) -> SyntaxStmt {
+    return file.stmtNode(id: id)
+}
+
+export fn syntaxBlock(file: SyntaxFile, id: BlockId) -> SyntaxBlock {
+    return file.blockNode(id: id)
+}
+
+export fn syntaxBlockStmtCount(file: SyntaxFile, block: SyntaxBlock) -> U64 {
+    return file.blockStmtCount(block: block)
+}
+
+export fn syntaxBlockStmt(file: SyntaxFile, block: SyntaxBlock, index: U64) -> StmtId {
+    return file.blockStmt(block: block, index: index)
+}
+
+export fn syntaxExpr(file: SyntaxFile, id: ExprId) -> SyntaxExpr {
+    return file.exprNode(id: id)
+}
+
+export fn syntaxExprArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprArgCount(expr: expr)
+}
+
+export fn syntaxExprArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ArgId {
+    return file.exprArg(expr: expr, index: index)
+}
+
+export fn syntaxArg(file: SyntaxFile, id: ArgId) -> SyntaxArg {
+    return file.argNode(id: id)
+}
+
+export fn syntaxExprElemCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprElemCount(expr: expr)
+}
+
+export fn syntaxExprElem(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
+    return file.exprElem(expr: expr, index: index)
+}
+
+export fn syntaxExprMakeFieldCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprMakeFieldCount(expr: expr)
+}
+
+export fn syntaxExprMakeField(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> MakeFieldId {
+    return file.exprMakeField(expr: expr, index: index)
+}
+
+export fn syntaxMakeField(file: SyntaxFile, id: MakeFieldId) -> SyntaxMakeField {
+    return file.makeFieldNode(id: id)
+}
+
+export fn syntaxExprDictEntryCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprDictEntryCount(expr: expr)
+}
+
+export fn syntaxExprDictKey(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
+    return file.exprDictKey(expr: expr, index: index)
+}
+
+export fn syntaxExprDictValue(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
+    return file.exprDictValue(expr: expr, index: index)
+}
+
+export fn syntaxStmtMatchArmCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
+    return file.stmtMatchArmCount(stmt: stmt)
+}
+
+export fn syntaxStmtMatchArm(file: SyntaxFile, stmt: SyntaxStmt, index: U64) -> MatchArmId {
+    return file.stmtMatchArm(stmt: stmt, index: index)
+}
+
+export fn syntaxExprMatchArmCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprMatchArmCount(expr: expr)
+}
+
+export fn syntaxExprMatchArm(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> MatchArmId {
+    return file.exprMatchArm(expr: expr, index: index)
+}
+
+export fn syntaxStmtBindCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
+    return file.stmtBindCount(stmt: stmt)
+}
+
+export fn syntaxStmtBind(file: SyntaxFile, stmt: SyntaxStmt, index: U64) -> BindId {
+    return file.stmtBind(stmt: stmt, index: index)
+}
+
+export fn syntaxMatchArm(file: SyntaxFile, id: MatchArmId) -> SyntaxMatchArm {
+    return file.matchArmNode(id: id)
+}
+
+export fn syntaxPattern(file: SyntaxFile, id: PatternId) -> SyntaxPattern {
+    return file.patternNode(id: id)
+}
+
+export fn syntaxPatternBindCount(file: SyntaxFile, pattern: SyntaxPattern) -> U64 {
+    return file.patternBindCount(pattern: pattern)
+}
+
+export fn syntaxPatternBind(file: SyntaxFile, pattern: SyntaxPattern, index: U64) -> BindId {
+    return file.patternBind(pattern: pattern, index: index)
+}
+
+export fn syntaxBind(file: SyntaxFile, id: BindId) -> SyntaxBind {
+    return file.bindNode(id: id)
+}
+
+export fn syntaxExprParamCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprParamCount(expr: expr)
+}
+
+export fn syntaxExprParam(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ParamId {
+    return file.exprParam(expr: expr, index: index)
+}
+
+export fn syntaxExprTypeArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+    return file.exprTypeArgCount(expr: expr)
+}
+
+export fn syntaxExprTypeArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> TypeId {
+    return file.exprTypeArg(expr: expr, index: index)
+}
+
+export fn syntaxType(file: SyntaxFile, id: TypeId) -> SyntaxType {
+    return file.typeNode(id: id)
+}
+
+export fn syntaxTypeArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+    return file.typeArgCount(ty: ty)
+}
+
+export fn syntaxTypeArg(file: SyntaxFile, ty: SyntaxType, index: U64) -> TypeId {
+    return file.typeArg(ty: ty, index: index)
+}
+
+export fn syntaxTypeArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
+    return file.typeArgLabel(ty: ty, index: index)
+}
+
+export fn syntaxTypeViewNameCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+    return file.typeViewNameCount(ty: ty)
+}
+
+export fn syntaxTypeViewName(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
+    return file.typeViewName(ty: ty, index: index)
+}
+
+export fn syntaxTypeProjectionTraitArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+    return file.typeProjectionTraitArgCount(ty: ty)
+}
+
+export fn syntaxTypeProjectionTraitArg(file: SyntaxFile, ty: SyntaxType, index: U64) -> TypeId {
+    return file.typeProjectionTraitArg(ty: ty, index: index)
+}
+
+export fn syntaxTypeProjectionTraitArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
+    return file.typeProjectionTraitArgLabel(ty: ty, index: index)
+}
+
+// Import names stay a typed read surface rather than exposing SyntaxSlice's
+// untyped backing pool to compiler clients.
+export fn syntaxImportNameCount(file: SyntaxFile, imp: SyntaxImport) -> U64 {
+    return file.importNameCount(imp: imp)
+}
+
+export fn syntaxImportNameSpan(file: SyntaxFile, imp: SyntaxImport, index: U64) -> Span {
+    return file.importNameSpan(imp: imp, index: index)
+}
+
+export fn syntaxImportNameAliasSpan(file: SyntaxFile, imp: SyntaxImport, index: U64) -> Span {
+    return file.importNameAliasSpan(imp: imp, index: index)
+}
+
+// The loader only needs to know whether an extern's opaque structs carry a
+// derive request in order to discover the generated part; it need not expose
+// the extern's nested DirectiveId pool.
+export fn syntaxExternHasDeriveDirective(file: SyntaxFile, id: ExternId) -> Bool {
+    return file.externHasDeriveDirective(id: id)
 }
 
 
@@ -3656,11 +4753,13 @@ fn parseCallArgsAst(p: inout P) -> Array[ArgAst] {
             _ => {
                 val aStart: U64 = p.base + p.curTok().start
                 mut val label: String = ""
+                mut val labelSpan: Span = <Span start=0 end=0 />
                 mut val hasLabel: Bool = false
                 match p.curKind() {
                     Kind.Ident => {
                         if p.peekKind(off: 1) == <Kind.Colon /> {
                             label = p.text(t: p.curTok())
+                            labelSpan = p.spanOf(t: p.curTok())
                             hasLabel = true
                             p.advance()
                             p.advance()
@@ -3677,7 +4776,7 @@ fn parseCallArgsAst(p: inout P) -> Array[ArgAst] {
                     _ => {}
                 }
                 val e: ExprAst = parseExprAst(p: inout p)
-                args.append(<ArgAst label=label hasLabel=hasLabel isInout=isInout value=e span=<Span start=aStart end=p.prevEnd() /> />)
+                args.append(<ArgAst label=label labelSpan=labelSpan hasLabel=hasLabel isInout=isInout value=e span=<Span start=aStart end=p.prevEnd() /> />)
                 match p.curKind() {
                     Kind.Comma => { p.advance() }
                     _ => {}
@@ -3692,7 +4791,9 @@ fn parseCallArgsAst(p: inout P) -> Array[ArgAst] {
 fn parseMakeAst(p: inout P) -> ExprAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
-    val typeName: String = p.text(t: p.curTok())
+    val typeNameTok: Tok = p.curTok()
+    val typeName: String = p.text(t: typeNameTok)
+    val typeNameSpan: Span = p.spanOf(t: typeNameTok)
     p.advance()
     mut val typeArgs: Array[TypeAst] = []
     match p.curKind() {
@@ -3715,11 +4816,14 @@ fn parseMakeAst(p: inout P) -> ExprAst {
         _ => {}
     }
     mut val variant: String = ""
+    mut val variantSpan: Span = <Span start=0 end=0 />
     mut val isEnum: Bool = false
     match p.curKind() {
         Kind.Dot => {
             p.advance()
-            variant = p.text(t: p.curTok())
+            val variantTok: Tok = p.curTok()
+            variant = p.text(t: variantTok)
+            variantSpan = p.spanOf(t: variantTok)
             p.advance()
             isEnum = true
         }
@@ -3739,20 +4843,21 @@ fn parseMakeAst(p: inout P) -> ExprAst {
             }
             Kind.Eof => { break }
             Kind.Ident => {
-                val fStart: U64 = p.base + p.curTok().start
-                val fname: String = p.text(t: p.curTok())
+                val fTok: Tok = p.curTok()
+                val fStart: U64 = p.base + fTok.start
+                val fname: String = p.text(t: fTok)
                 p.advance()
                 match p.curKind() {
                     Kind.Eq => { p.advance() }
                     _ => {}
                 }
                 val v: ExprAst = parseExprAst(p: inout p)
-                fields.append(<MakeFieldAst name=fname value=v span=<Span start=fStart end=p.prevEnd() /> />)
+                fields.append(<MakeFieldAst name=fname nameSpan=p.spanOf(t: fTok) value=v span=<Span start=fStart end=p.prevEnd() /> />)
             }
             _ => { p.advance() }
         }
     }
-    return <ExprAst.Make typeName=typeName typeArgs=typeArgs variant=variant isEnum=isEnum fields=fields span=<Span start=sStart end=p.prevEnd() /> />
+    return <ExprAst.Make typeName=typeName typeNameSpan=typeNameSpan typeArgs=typeArgs variant=variant variantSpan=variantSpan isEnum=isEnum fields=fields span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 fn parsePrimaryAst(p: inout P) -> ExprAst {
@@ -3763,19 +4868,21 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             p.advance()
             val v: U64 = tokenU64Ast(p: inout p, t: t)
             mut val suffix: String = ""
+            mut val suffixSpan: Span = <Span start=0 end=0 />
             match p.curKind() {
                 Kind.Ident => {
                     val st: Tok = p.curTok()
                     if st.start == t.start + t.len {
                         if isIntTypeAst(p: inout p, t: st) {
                             suffix = p.text(t: st)
+                            suffixSpan = p.spanOf(t: st)
                             p.advance()
                         }
                     }
                 }
                 _ => {}
             }
-            return <ExprAst.IntLit value=v isBool=false tySuffix=suffix span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=v isBool=false tySuffix=suffix literalSpan=p.spanOf(t: t) tySuffixSpan=suffixSpan span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.Float => {
             val t: Tok = p.curTok()
@@ -3784,32 +4891,36 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             val txt: String = stripUnderscoresAst(s: p.text(t: t))
             p.advance()
             mut val suffix: String = ""
+            mut val suffixSpan: Span = <Span start=0 end=0 />
             match p.curKind() {
                 Kind.Ident => {
                     val st: Tok = p.curTok()
                     if st.start == t.start + t.len {
                         if isFloatTypeAst(p: inout p, t: st) {
                             suffix = p.text(t: st)
+                            suffixSpan = p.spanOf(t: st)
                             p.advance()
                         }
                     }
                 }
                 _ => {}
             }
-            return <ExprAst.FloatLit text=txt tySuffix=suffix span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.FloatLit text=txt tySuffix=suffix literalSpan=p.spanOf(t: t) tySuffixSpan=suffixSpan span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.Char => {
             val t: Tok = p.curTok()
             p.advance()
-            return <ExprAst.IntLit value=charValueAst(p: inout p, t: t) isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=charValueAst(p: inout p, t: t) isBool=false tySuffix="" literalSpan=p.spanOf(t: t) tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.KwTrue => {
+            val t: Tok = p.curTok()
             p.advance()
-            return <ExprAst.IntLit value=1 isBool=true tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=1 isBool=true tySuffix="" literalSpan=p.spanOf(t: t) tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.KwFalse => {
+            val t: Tok = p.curTok()
             p.advance()
-            return <ExprAst.IntLit value=0 isBool=true tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=0 isBool=true tySuffix="" literalSpan=p.spanOf(t: t) tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.Str => {
             val t: Tok = p.curTok()
@@ -3823,7 +4934,7 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                     p.advance()
                     p.advance()
                     val args: Array[ArgAst] = parseCallArgsAst(p: inout p)
-                    return <ExprAst.Call name=p.text(t: t) args=args span=<Span start=sStart end=p.prevEnd() /> />
+                    return <ExprAst.Call name=p.text(t: t) nameSpan=p.spanOf(t: t) args=args span=<Span start=sStart end=p.prevEnd() /> />
                 }
                 _ => {
                     p.advance()
@@ -3876,13 +4987,13 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                                     // explicit `label: value`.
                                     p.advance()
                                     val fv: ExprAst = parseExprAst(p: inout p)
-                                    fields.append(<MakeFieldAst name=label value=fv span=<Span start=fStart end=p.prevEnd() /> />)
+                                    fields.append(<MakeFieldAst name=label nameSpan=p.spanOf(t: labelTok) value=fv span=<Span start=fStart end=p.prevEnd() /> />)
                                 }
                                 _ => {
                                     // punning `(x, …)`: the identifier is both the field
                                     // name and the value (`x` => `x: x`).
                                     val pv: ExprAst = <ExprAst.Ident name=label span=<Span start=fStart end=p.prevEnd() /> />
-                                    fields.append(<MakeFieldAst name=label value=pv span=<Span start=fStart end=p.prevEnd() /> />)
+                                    fields.append(<MakeFieldAst name=label nameSpan=p.spanOf(t: labelTok) value=pv span=<Span start=fStart end=p.prevEnd() /> />)
                                 }
                             }
                         }
@@ -3937,7 +5048,7 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             }
             p.fail(off: sStart, msg: "`sendable` is only valid in type syntax before `fn` or in generic parameter lists")
             p.advance()
-            return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.KwSpawn => {
             p.fail(off: sStart, msg: "`spawn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
@@ -3945,11 +5056,11 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             match p.curKind() {
                 Kind.LBrace => {
                     val body: BlockAst = parseBlockAst(p: inout p)
-                    return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+                    return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
                 }
                 _ => {}
             }
-            return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.Lt => {
             return parseMakeAst(p: inout p)
@@ -4063,7 +5174,7 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                 p.fail(off: sStart, msg: "expected an expression")
             }
             p.advance()
-            return <ExprAst.IntLit value=0 isBool=false tySuffix="" span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
     }
 }
@@ -4239,7 +5350,7 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                 if isMethodForm {
                     if strip {
                         // `#!Src.m(...)`: strip the view, then a bare method call.
-                        e = <ExprAst.ExtView recv=e src=src strip=true span=<Span start=sStart end=p.prevEnd() /> />
+                        e = <ExprAst.ExtView recv=e src=src srcSpan=p.spanOf(t: srcTok) strip=true span=<Span start=sStart end=p.prevEnd() /> />
                     } else {
                         p.advance()
                         val nameTok: Tok = p.curTok()
@@ -4247,10 +5358,10 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                         p.advance()
                         p.advance()
                         val args: Array[ArgAst] = parseCallArgsAst(p: inout p)
-                        e = <ExprAst.ExtMethod recv=e src=src name=nm args=args span=<Span start=sStart end=p.prevEnd() /> />
+                        e = <ExprAst.ExtMethod recv=e src=src srcSpan=p.spanOf(t: srcTok) name=nm nameSpan=p.spanOf(t: nameTok) args=args span=<Span start=sStart end=p.prevEnd() /> />
                     }
                 } else {
-                    e = <ExprAst.ExtView recv=e src=src strip=strip span=<Span start=sStart end=p.prevEnd() /> />
+                    e = <ExprAst.ExtView recv=e src=src srcSpan=p.spanOf(t: srcTok) strip=strip span=<Span start=sStart end=p.prevEnd() /> />
                 }
             }
             Kind.LBracket => {
@@ -4363,7 +5474,7 @@ fn parseRangeAst(p: inout P) -> ExprAst {
     fields.append(<MakeFieldAst name="start" value=lo span=sp />)
     fields.append(<MakeFieldAst name="end" value=hi span=sp />)
     mut val noArgs: Array[TypeAst] = []
-    return <ExprAst.Make typeName=tyName typeArgs=noArgs variant="" isEnum=false fields=fields span=sp />
+    return <ExprAst.Make typeName=tyName typeNameSpan=<Span start=0 end=0 /> typeArgs=noArgs variant="" variantSpan=<Span start=0 end=0 /> isEnum=false fields=fields span=sp />
 }
 
 // Parse a full expression. Exported: the entry point for body parsing (and for
@@ -4409,7 +5520,9 @@ fn parsePatternAst(p: inout P) -> PatternAst {
     mut val isWildcard: Bool = false
     mut val isStruct: Bool = false
     mut val typeName: String = ""
+    mut val typeNameSpan: Span = <Span start=0 end=0 />
     mut val variant: String = ""
+    mut val variantSpan: Span = <Span start=0 end=0 />
     mut val binds: Array[BindAst] = []
     if patternStartsLiteral(p: inout p) {
         val lit: ExprAst = parsePatternLiteralAst(p: inout p)
@@ -4422,7 +5535,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
             val nameTok: Tok = p.curTok()
             val cn: String = p.text(t: nameTok)
             p.advance()
-            return <PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=binds captureName=cn span=<Span start=sStart end=p.prevEnd() /> />
+            return <PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=binds captureName=cn captureNameSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
         }
         _ => {}
     }
@@ -4431,12 +5544,15 @@ fn parsePatternAst(p: inout P) -> PatternAst {
         p.advance()
     } else {
         typeName = p.text(t: firstTok)
+        typeNameSpan = p.spanOf(t: firstTok)
         p.advance()
         mut val popen: Bool = false
         match p.curKind() {
             Kind.Dot => {
                 p.advance()
-                variant = p.text(t: p.curTok())
+                val variantTok: Tok = p.curTok()
+                variant = p.text(t: variantTok)
+                variantSpan = p.spanOf(t: variantTok)
                 p.advance()
                 match p.curKind() {
                     Kind.LParen => {
@@ -4472,7 +5588,8 @@ fn parsePatternAst(p: inout P) -> PatternAst {
                         val bn: String = p.text(t: bTok)
                         val bStart: U64 = p.base + bTok.start
                         p.advance()
-                        binds.append(<BindAst field=bn name=bn fieldStart=bStart span=<Span start=bStart end=p.prevEnd() /> />)
+                        val bindSpan: Span = p.spanOf(t: bTok)
+                        binds.append(<BindAst field=bn name=bn fieldStart=bStart fieldSpan=bindSpan nameSpan=bindSpan span=<Span start=bStart end=p.prevEnd() /> />)
                         match p.curKind() {
                             Kind.Comma => { p.advance() }
                             _ => {}
@@ -4490,9 +5607,11 @@ fn parsePatternAst(p: inout P) -> PatternAst {
                         match p.curKind() {
                             Kind.KwVal => {
                                 p.advance()
-                                val nm: String = p.text(t: p.curTok())
+                                val nameTok: Tok = p.curTok()
+                                val nm: String = p.text(t: nameTok)
+                                val nameSpan: Span = p.spanOf(t: nameTok)
                                 p.advance()
-                                binds.append(<BindAst field=fname name=nm fieldStart=bStart span=<Span start=bStart end=p.prevEnd() /> />)
+                                binds.append(<BindAst field=fname name=nm fieldStart=bStart fieldSpan=p.spanOf(t: fTok) nameSpan=nameSpan span=<Span start=bStart end=p.prevEnd() /> />)
                             }
                             _ => {
                                 // `field: _` discard — record it (empty bind name) so the
@@ -4504,7 +5623,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
                                 // field then `match` on the binding (spec/11).
                                 val dTok: Tok = p.curTok()
                                 if rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
-                                    binds.append(<BindAst field=fname name="" fieldStart=bStart span=<Span start=bStart end=p.prevEnd() /> />)
+                                    binds.append(<BindAst field=fname name="" fieldStart=bStart fieldSpan=p.spanOf(t: fTok) span=<Span start=bStart end=p.prevEnd() /> />)
                                     p.advance()
                                 } else {
                                     p.fail(off: p.base + dTok.start, msg: "a pattern field binds with `val name` or discards with `_`; patterns are single-level — to match a nested structure, bind the field then `match` on the binding (spec/11)")
@@ -4522,7 +5641,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
             }
         }
     }
-    return <PatternAst isWildcard=isWildcard isStruct=isStruct typeName=typeName variant=variant binds=binds span=<Span start=sStart end=p.prevEnd() /> />
+    return <PatternAst isWildcard=isWildcard isStruct=isStruct typeName=typeName typeNameSpan=typeNameSpan variant=variant variantSpan=variantSpan binds=binds span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // Parse an arm's `Pat ( | Pat )*` and consume the `=>`. Returns one PatternAst per
@@ -4674,7 +5793,8 @@ fn parseMatchExprAst(p: inout P) -> ExprAst {
 fn parseLetAst(p: inout P, mutable: Bool) -> StmtAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
-    val nm: String = p.text(t: p.curTok())
+    val nameTok: Tok = p.curTok()
+    val nm: String = p.text(t: nameTok)
     p.advance()
     mut val hasTy: Bool = false
     mut val ty: TypeAst = emptyTypeAst()
@@ -4691,7 +5811,7 @@ fn parseLetAst(p: inout P, mutable: Bool) -> StmtAst {
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected '=' — a variable declaration must be initialized") }
     }
     val init: ExprAst = parseExprAst(p: inout p)
-    return <StmtAst.Let mutable=mutable name=nm hasTy=hasTy ty=ty init=init span=<Span start=sStart end=p.prevEnd() /> />
+    return <StmtAst.Let mutable=mutable name=nm nameSpan=p.spanOf(t: nameTok) hasTy=hasTy ty=ty init=init span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 fn parseReturnAst(p: inout P) -> StmtAst {
@@ -4958,7 +6078,7 @@ fn parseWhileLetStmt(p: inout P, sStart: U64) -> StmtAst {
     val breakBlk: BlockAst = <BlockAst stmts=breakStmts />
     mut val loopStmts: Array[StmtAst] = []
     loopStmts.append(buildCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: body, elseBlk: breakBlk, span: span))
-    val trueLit: ExprAst = <ExprAst.IntLit value=1 isBool=true tySuffix="" span=span />
+    val trueLit: ExprAst = <ExprAst.IntLit value=1 isBool=true tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=span />
     return <StmtAst.While cond=trueLit body=<BlockAst stmts=loopStmts /> span=span />
 }
 
@@ -4967,8 +6087,10 @@ fn parseForAst(p: inout P) -> StmtAst {
     p.advance()
     mut val isStruct: Bool = false
     mut val patType: String = ""
+    mut val patTypeSpan: Span = <Span start=0 end=0 />
     mut val binds: Array[BindAst] = []
     mut val varName: String = ""
+    mut val varNameSpan: Span = <Span start=0 end=0 />
     mut val varTy: TypeAst = emptyTypeAst()
     mut val hasVarTy: Bool = false
     mut val isPattern: Bool = false
@@ -5037,7 +6159,15 @@ fn parseForAst(p: inout P) -> StmtAst {
                         field = nm
                         fieldStart = p.base + nameTok.start
                     }
-                    recBinds.append(<BindAst field=field name=nm fieldStart=fieldStart span=<Span start=bStart end=p.prevEnd() /> />)
+                    mut val fieldSpan: Span = <Span start=0 end=0 />
+                    if field.bytes().count() > 0U64 {
+                        fieldSpan = <Span start=fieldStart end=fieldStart + field.bytes().count() />
+                    }
+                    mut val nameSpan: Span = p.spanOf(t: nameTok)
+                    if isDiscard {
+                        nameSpan = <Span start=0 end=0 />
+                    }
+                    recBinds.append(<BindAst field=field name=nm fieldStart=fieldStart fieldSpan=fieldSpan nameSpan=nameSpan span=<Span start=bStart end=p.prevEnd() /> />)
                 }
             }
         }
@@ -5052,7 +6182,7 @@ fn parseForAst(p: inout P) -> StmtAst {
         // frontend lowering binds a fresh element local and prepends a field-by-field
         // destructuring to the body (arena-level, so the synthetic names are interned —
         // an AST-level synthetic `Ident` would re-read the source by span and break).
-        return <StmtAst.For varName="" varTy=emptyTypeAst() hasVarTy=false isRange=false inclusive=false iter=rlo rangeHi=emptyExpr() body=rbody isStruct=false patType="__rec__" binds=recBinds span=<Span start=sStart end=p.prevEnd() /> />
+        return <StmtAst.For varName="" varNameSpan=<Span start=0 end=0 /> varTy=emptyTypeAst() hasVarTy=false isRange=false inclusive=false iter=rlo rangeHi=emptyExpr() body=rbody isStruct=false patType="__rec__" patTypeSpan=<Span start=0 end=0 /> binds=recBinds span=<Span start=sStart end=p.prevEnd() /> />
     }
     match p.curKind() {
         Kind.Ident => {
@@ -5066,13 +6196,16 @@ fn parseForAst(p: inout P) -> StmtAst {
         val pi: PatternAst = parsePatternAst(p: inout p)
         isStruct = pi.isStruct
         patType = pi.typeName
+        patTypeSpan = pi.typeNameSpan
         binds = pi.binds
     } else {
         match p.curKind() {
             Kind.KwVal => { p.advance() }
             _ => {}
         }
-        varName = p.text(t: p.curTok())
+        val varTok: Tok = p.curTok()
+        varName = p.text(t: varTok)
+        varNameSpan = p.spanOf(t: varTok)
         p.advance()
         // optional loop-variable type annotation (`for val i: I32 in …`): it types
         // the range bounds / element binding so bare literals need no suffix.
@@ -5112,7 +6245,7 @@ fn parseForAst(p: inout P) -> StmtAst {
     }
     p.skipNewlines()
     val body: BlockAst = parseBlockAst(p: inout p)
-    return <StmtAst.For varName=varName varTy=varTy hasVarTy=hasVarTy isRange=isRange inclusive=inclusive iter=lo rangeHi=hi body=body isStruct=isStruct patType=patType binds=binds span=<Span start=sStart end=p.prevEnd() /> />
+    return <StmtAst.For varName=varName varNameSpan=varNameSpan varTy=varTy hasVarTy=hasVarTy isRange=isRange inclusive=inclusive iter=lo rangeHi=hi body=body isStruct=isStruct patType=patType patTypeSpan=patTypeSpan binds=binds span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 fn parsePanicAst(p: inout P) -> StmtAst {
@@ -5270,7 +6403,15 @@ fn parseDestructureBindAst(p: inout P) -> BindAst {
         field = name
         fieldStart = p.base + nameTok.start
     }
-    return <BindAst field=field name=name fieldStart=fieldStart isAssign=isAssign span=<Span start=bStart end=p.prevEnd() /> />
+    mut val fieldSpan: Span = <Span start=0 end=0 />
+    if field.bytes().count() > 0U64 {
+        fieldSpan = <Span start=fieldStart end=fieldStart + field.bytes().count() />
+    }
+    mut val nameSpan: Span = p.spanOf(t: nameTok)
+    if isDiscard {
+        nameSpan = <Span start=0 end=0 />
+    }
+    return <BindAst field=field name=name fieldStart=fieldStart fieldSpan=fieldSpan nameSpan=nameSpan isAssign=isAssign span=<Span start=bStart end=p.prevEnd() /> />
 }
 
 // Parse a record-destructuring statement `(val x, val y) = e` / `(a: val x, …) = e` /
@@ -5292,7 +6433,7 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
         _ => { p.fail(off: p.base + p.curTok().start, msg: "record destructuring must be initialized: `(val x, val y) = expr`") }
     }
     val init: ExprAst = parseExprAst(p: inout p)
-    return <StmtAst.Destructure binds=binds typeName="" init=init span=<Span start=sStart end=p.prevEnd() /> />
+    return <StmtAst.Destructure binds=binds typeName="" typeNameSpan=<Span start=0 end=0 /> init=init span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // Parse a struct-destructuring statement `P { val x, f: val y, n: _ } = e`
@@ -5301,7 +6442,8 @@ fn parseDestructureAst(p: inout P) -> StmtAst {
 // the record form (val binds, bare assigns, labeled discards).
 fn parseStructDestructureAst(p: inout P) -> StmtAst {
     val sStart: U64 = p.base + p.curTok().start
-    val typeName: String = p.text(t: p.curTok())
+    val typeNameTok: Tok = p.curTok()
+    val typeName: String = p.text(t: typeNameTok)
     p.advance()
     p.advance()
     mut val binds: Array[BindAst] = []
@@ -5319,7 +6461,7 @@ fn parseStructDestructureAst(p: inout P) -> StmtAst {
         _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct { val x } = expr`") }
     }
     val init: ExprAst = parseExprAst(p: inout p)
-    return <StmtAst.Destructure binds=binds typeName=typeName init=init span=<Span start=sStart end=p.prevEnd() /> />
+    return <StmtAst.Destructure binds=binds typeName=typeName typeNameSpan=p.spanOf(t: typeNameTok) init=init span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // Parse `{ stmt* }` into a BlockAst. Current token should be `{`. Exported for the

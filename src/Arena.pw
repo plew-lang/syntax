@@ -1,0 +1,967 @@
+// Compiler-facing immutable syntax arena builder. The parser owns mutation while
+// constructing a SyntaxFile; consumers receive it as a `val` and use IDs/slices.
+// This part intentionally contains only impl blocks (spec/15 part rule).
+
+pub impl SyntaxSlice { factory }
+pub impl TopItemId { factory }
+pub impl DeclId { factory }
+pub impl ImplId { factory }
+pub impl TraitId { factory }
+pub impl ExternId { factory }
+pub impl ImportId { factory }
+pub impl DirectiveId { factory }
+pub impl NewtypeId { factory }
+pub impl TypeId { factory }
+pub impl FieldId { factory }
+pub impl VariantId { factory }
+pub impl ParamId { factory }
+pub impl MemberId { factory }
+pub impl SigId { factory }
+pub impl StmtId { factory }
+pub impl ExprId { factory }
+pub impl BlockId { factory }
+pub impl PatternId { factory }
+pub impl MatchArmId { factory }
+pub impl ArgId { factory }
+pub impl MakeFieldId { factory }
+pub impl BindId { factory }
+pub impl DeriveReqId { factory }
+pub impl SyntaxTopItem { factory }
+pub impl SyntaxType { factory }
+pub impl SyntaxField { factory }
+pub impl SyntaxVariant { factory }
+pub impl SyntaxParam { factory }
+pub impl SyntaxDecl { factory }
+pub impl SyntaxMember { factory }
+pub impl SyntaxSig { factory }
+pub impl SyntaxTrait { factory }
+pub impl SyntaxExtern { factory }
+pub impl SyntaxImpl { factory }
+pub impl SyntaxImport { factory }
+pub impl SyntaxDeriveReq { factory }
+pub impl SyntaxDirective { factory }
+pub impl SyntaxNewtype { factory }
+pub impl SyntaxExpr { factory }
+pub impl SyntaxArg { factory }
+pub impl SyntaxMakeField { factory }
+pub impl SyntaxBind { factory }
+pub impl SyntaxPattern { factory }
+pub impl SyntaxMatchArm { factory }
+pub impl SyntaxBlock { factory }
+pub impl SyntaxStmt { factory }
+
+pub impl SyntaxFile {
+    factory
+
+    // This is deliberately one-way: macro value ASTs may be frozen for a
+    // compiler input, but SyntaxFile never exposes a materialize operation.
+    inout fn freezeTopItem(ast: TopItemAst) -> TopItemId {
+        val id: TopItemId = self.freezeTopItemAst(ast: ast)
+        self.topLevel.append(id)
+        return id
+    }
+
+    fn topLevelCount() -> U64 { return self.topLevel.count() }
+    fn topLevelItem(index: U64) -> TopItemId { return self.topLevel[index] }
+    fn topItemKind(item: TopItemId) -> SyntaxTopItemKind { return self.topItems[item.raw].kind }
+    fn topItemSpan(item: TopItemId) -> Span { return self.topItems[item.raw].span }
+    fn topItemPayload(item: TopItemId) -> U64 { return self.topItems[item.raw].payload }
+    fn importNode(id: ImportId) -> SyntaxImport { return self.imports[id.raw] }
+    fn declNode(id: DeclId) -> SyntaxDecl { return self.decls[id.raw] }
+    fn fieldNode(id: FieldId) -> SyntaxField { return self.fields[id.raw] }
+    fn variantNode(id: VariantId) -> SyntaxVariant { return self.variants[id.raw] }
+    fn paramNode(id: ParamId) -> SyntaxParam { return self.params[id.raw] }
+    fn memberNode(id: MemberId) -> SyntaxMember { return self.members[id.raw] }
+    fn sigNode(id: SigId) -> SyntaxSig { return self.sigs[id.raw] }
+    fn blockNode(id: BlockId) -> SyntaxBlock { return self.blocks[id.raw] }
+    fn exprNode(id: ExprId) -> SyntaxExpr { return self.exprs[id.raw] }
+    fn argNode(id: ArgId) -> SyntaxArg { return self.args[id.raw] }
+    fn makeFieldNode(id: MakeFieldId) -> SyntaxMakeField { return self.makeFields[id.raw] }
+    fn matchArmNode(id: MatchArmId) -> SyntaxMatchArm { return self.matchArms[id.raw] }
+    fn patternNode(id: PatternId) -> SyntaxPattern { return self.patterns[id.raw] }
+    fn bindNode(id: BindId) -> SyntaxBind { return self.binds[id.raw] }
+    fn deriveReqNode(id: DeriveReqId) -> SyntaxDeriveReq { return self.deriveReqs[id.raw] }
+    fn implNode(id: ImplId) -> SyntaxImpl { return self.impls[id.raw] }
+    fn traitNode(id: TraitId) -> SyntaxTrait { return self.traits[id.raw] }
+    fn externNode(id: ExternId) -> SyntaxExtern { return self.externs[id.raw] }
+    fn directiveNode(id: DirectiveId) -> SyntaxDirective { return self.directives[id.raw] }
+    fn newtypeNode(id: NewtypeId) -> SyntaxNewtype { return self.newtypes[id.raw] }
+    fn stmtNode(id: StmtId) -> SyntaxStmt { return self.stmts[id.raw] }
+    fn typeNode(id: TypeId) -> SyntaxType { return self.types[id.raw] }
+    fn typeArgCount(ty: SyntaxType) -> U64 { return ty.args.count }
+    fn typeArg(ty: SyntaxType, index: U64) -> TypeId {
+        return self.typeIds[ty.args.start + index]
+    }
+    fn typeArgLabel(ty: SyntaxType, index: U64) -> Span {
+        return self.texts[ty.argLabels.start + index]
+    }
+    fn declFieldCount(decl: SyntaxDecl) -> U64 { return decl.fields.count }
+    fn declField(decl: SyntaxDecl, index: U64) -> FieldId {
+        return self.fieldIds[decl.fields.start + index]
+    }
+    fn declTypeParamCount(decl: SyntaxDecl) -> U64 { return decl.typeParams.count }
+    fn declTypeParamSpan(decl: SyntaxDecl, index: U64) -> Span {
+        return self.texts[decl.typeParams.start + index]
+    }
+    fn declTypeParamIsSendable(decl: SyntaxDecl, index: U64) -> Bool {
+        return self.bools[decl.typeParamSendable.start + index]
+    }
+    fn declVariantCount(decl: SyntaxDecl) -> U64 { return decl.variants.count }
+    fn declVariant(decl: SyntaxDecl, index: U64) -> VariantId {
+        return self.variantIds[decl.variants.start + index]
+    }
+    fn variantFieldCount(variant: SyntaxVariant) -> U64 { return variant.fields.count }
+    fn variantField(variant: SyntaxVariant, index: U64) -> FieldId {
+        return self.fieldIds[variant.fields.start + index]
+    }
+    fn declParamCount(decl: SyntaxDecl) -> U64 { return decl.params.count }
+    fn declParam(decl: SyntaxDecl, index: U64) -> ParamId {
+        return self.paramIds[decl.params.start + index]
+    }
+    fn declWhereCount(decl: SyntaxDecl) -> U64 { return decl.whereParams.count }
+    fn declWhereParamSpan(decl: SyntaxDecl, index: U64) -> Span {
+        return self.texts[decl.whereParams.start + index]
+    }
+    fn declWhereTraitSpan(decl: SyntaxDecl, index: U64) -> Span {
+        return self.texts[decl.whereTraits.start + index]
+    }
+    fn declWhereType(decl: SyntaxDecl, index: U64) -> TypeId {
+        return self.typeIds[decl.whereTypes.start + index]
+    }
+    fn declWhereTraitType(decl: SyntaxDecl, index: U64) -> TypeId {
+        return self.typeIds[decl.whereTraitTypes.start + index]
+    }
+    fn traitTypeParamCount(trait: SyntaxTrait) -> U64 { return trait.typeParams.count }
+    fn traitTypeParamSpan(trait: SyntaxTrait, index: U64) -> Span {
+        return self.texts[trait.typeParams.start + index]
+    }
+    fn traitTypeParamIsSendable(trait: SyntaxTrait, index: U64) -> Bool {
+        return self.bools[trait.typeParamSendable.start + index]
+    }
+    fn traitSupertraitCount(trait: SyntaxTrait) -> U64 { return trait.supertraits.count }
+    fn traitSupertraitSpan(trait: SyntaxTrait, index: U64) -> Span {
+        return self.texts[trait.supertraits.start + index]
+    }
+    fn traitAssocTypeCount(trait: SyntaxTrait) -> U64 { return trait.assocTypes.count }
+    fn traitAssocTypeSpan(trait: SyntaxTrait, index: U64) -> Span {
+        return self.texts[trait.assocTypes.start + index]
+    }
+    fn traitReqCount(trait: SyntaxTrait) -> U64 { return trait.reqs.count }
+    fn traitReq(trait: SyntaxTrait, index: U64) -> SigId {
+        return self.sigIds[trait.reqs.start + index]
+    }
+    fn sigTypeParamCount(sig: SyntaxSig) -> U64 { return sig.typeParams.count }
+    fn sigTypeParamSpan(sig: SyntaxSig, index: U64) -> Span {
+        return self.texts[sig.typeParams.start + index]
+    }
+    fn sigTypeParamIsSendable(sig: SyntaxSig, index: U64) -> Bool {
+        return self.bools[sig.typeParamSendable.start + index]
+    }
+    fn sigParamCount(sig: SyntaxSig) -> U64 { return sig.params.count }
+    fn sigParam(sig: SyntaxSig, index: U64) -> ParamId {
+        return self.paramIds[sig.params.start + index]
+    }
+    fn implParamCount(impl: SyntaxImpl) -> U64 { return impl.implParams.count }
+    fn implParamSpan(impl: SyntaxImpl, index: U64) -> Span {
+        return self.texts[impl.implParams.start + index]
+    }
+    fn implParamIsSendable(impl: SyntaxImpl, index: U64) -> Bool {
+        return self.bools[impl.implParamSendable.start + index]
+    }
+    fn implTraitArgCount(impl: SyntaxImpl) -> U64 { return impl.traitArgs.count }
+    fn implTraitArg(impl: SyntaxImpl, index: U64) -> TypeId {
+        return self.typeIds[impl.traitArgs.start + index]
+    }
+    fn implWhereCount(impl: SyntaxImpl) -> U64 { return impl.whereParams.count }
+    fn implWhereParamSpan(impl: SyntaxImpl, index: U64) -> Span {
+        return self.texts[impl.whereParams.start + index]
+    }
+    fn implWhereTraitSpan(impl: SyntaxImpl, index: U64) -> Span {
+        return self.texts[impl.whereTraits.start + index]
+    }
+    fn implWhereType(impl: SyntaxImpl, index: U64) -> TypeId {
+        return self.typeIds[impl.whereTypes.start + index]
+    }
+    fn implWhereTraitType(impl: SyntaxImpl, index: U64) -> TypeId {
+        return self.typeIds[impl.whereTraitTypes.start + index]
+    }
+    fn implMemberCount(impl: SyntaxImpl) -> U64 { return impl.members.count }
+    fn implMember(impl: SyntaxImpl, index: U64) -> MemberId {
+        return self.memberIds[impl.members.start + index]
+    }
+    fn memberTypeParamCount(member: SyntaxMember) -> U64 { return member.typeParams.count }
+    fn memberTypeParamSpan(member: SyntaxMember, index: U64) -> Span {
+        return self.texts[member.typeParams.start + index]
+    }
+    fn memberTypeParamIsSendable(member: SyntaxMember, index: U64) -> Bool {
+        return self.bools[member.typeParamSendable.start + index]
+    }
+    fn memberParamCount(member: SyntaxMember) -> U64 { return member.params.count }
+    fn memberParam(member: SyntaxMember, index: U64) -> ParamId {
+        return self.paramIds[member.params.start + index]
+    }
+    fn memberWhereCount(member: SyntaxMember) -> U64 { return member.whereParams.count }
+    fn memberWhereParamSpan(member: SyntaxMember, index: U64) -> Span {
+        return self.texts[member.whereParams.start + index]
+    }
+    fn memberWhereTraitSpan(member: SyntaxMember, index: U64) -> Span {
+        return self.texts[member.whereTraits.start + index]
+    }
+    fn memberWhereType(member: SyntaxMember, index: U64) -> TypeId {
+        return self.typeIds[member.whereTypes.start + index]
+    }
+    fn memberWhereTraitType(member: SyntaxMember, index: U64) -> TypeId {
+        return self.typeIds[member.whereTraitTypes.start + index]
+    }
+    fn externFnCount(ext: SyntaxExtern) -> U64 { return ext.fns.count }
+    fn externFn(ext: SyntaxExtern, index: U64) -> SigId {
+        return self.sigIds[ext.fns.start + index]
+    }
+    fn externStructCount(ext: SyntaxExtern) -> U64 { return ext.structNames.count }
+    fn externStructNameSpan(ext: SyntaxExtern, index: U64) -> Span {
+        return self.texts[ext.structNames.start + index]
+    }
+    fn externStructSpan(ext: SyntaxExtern, index: U64) -> Span {
+        return self.texts[ext.structSpans.start + index]
+    }
+    fn externStructTypeParamCount(ext: SyntaxExtern, index: U64) -> U64 {
+        return self.slices[ext.structTypeParams.start + index].count
+    }
+    fn externStructTypeParamSpan(ext: SyntaxExtern, structIndex: U64, index: U64) -> Span {
+        val params: SyntaxSlice = self.slices[ext.structTypeParams.start + structIndex]
+        return self.texts[params.start + index]
+    }
+    fn externStructTypeParamIsSendable(ext: SyntaxExtern, structIndex: U64, index: U64) -> Bool {
+        val params: SyntaxSlice = self.slices[ext.structTypeParamSendable.start + structIndex]
+        return self.bools[params.start + index]
+    }
+    fn externStructDirective(ext: SyntaxExtern, index: U64) -> DirectiveId {
+        return self.directiveIds[ext.structDirectives.start + index]
+    }
+    fn directiveReqCount(directive: SyntaxDirective) -> U64 { return directive.reqs.count }
+    fn directiveReq(directive: SyntaxDirective, index: U64) -> DeriveReqId {
+        return self.deriveReqIds[directive.reqs.start + index]
+    }
+    fn deriveReqArgCount(req: SyntaxDeriveReq) -> U64 { return req.args.count }
+    fn deriveReqArg(req: SyntaxDeriveReq, index: U64) -> MakeFieldId {
+        return self.makeFieldIds[req.args.start + index]
+    }
+    fn blockStmtCount(block: SyntaxBlock) -> U64 { return block.stmts.count }
+    fn blockStmt(block: SyntaxBlock, index: U64) -> StmtId {
+        return self.stmtIds[block.stmts.start + index]
+    }
+    fn exprArgCount(expr: SyntaxExpr) -> U64 { return expr.args.count }
+    fn exprArg(expr: SyntaxExpr, index: U64) -> ArgId {
+        return self.argIds[expr.args.start + index]
+    }
+    fn exprElemCount(expr: SyntaxExpr) -> U64 { return expr.elems.count }
+    fn exprElem(expr: SyntaxExpr, index: U64) -> ExprId {
+        return self.exprIds[expr.elems.start + index]
+    }
+    fn exprMakeFieldCount(expr: SyntaxExpr) -> U64 { return expr.fields.count }
+    fn exprMakeField(expr: SyntaxExpr, index: U64) -> MakeFieldId {
+        return self.makeFieldIds[expr.fields.start + index]
+    }
+    fn exprDictEntryCount(expr: SyntaxExpr) -> U64 { return expr.keys.count }
+    fn exprDictKey(expr: SyntaxExpr, index: U64) -> ExprId {
+        return self.exprIds[expr.keys.start + index]
+    }
+    fn exprDictValue(expr: SyntaxExpr, index: U64) -> ExprId {
+        return self.exprIds[expr.values.start + index]
+    }
+    fn stmtMatchArmCount(stmt: SyntaxStmt) -> U64 { return stmt.arms.count }
+    fn stmtMatchArm(stmt: SyntaxStmt, index: U64) -> MatchArmId {
+        return self.matchArmIds[stmt.arms.start + index]
+    }
+    fn exprMatchArmCount(expr: SyntaxExpr) -> U64 { return expr.arms.count }
+    fn exprMatchArm(expr: SyntaxExpr, index: U64) -> MatchArmId {
+        return self.matchArmIds[expr.arms.start + index]
+    }
+    fn stmtBindCount(stmt: SyntaxStmt) -> U64 { return stmt.binds.count }
+    fn stmtBind(stmt: SyntaxStmt, index: U64) -> BindId {
+        return self.bindIds[stmt.binds.start + index]
+    }
+    fn patternBindCount(pattern: SyntaxPattern) -> U64 { return pattern.binds.count }
+    fn patternBind(pattern: SyntaxPattern, index: U64) -> BindId {
+        return self.bindIds[pattern.binds.start + index]
+    }
+    fn exprParamCount(expr: SyntaxExpr) -> U64 { return expr.params.count }
+    fn exprParam(expr: SyntaxExpr, index: U64) -> ParamId {
+        return self.paramIds[expr.params.start + index]
+    }
+    fn exprTypeArgCount(expr: SyntaxExpr) -> U64 { return expr.typeArgs.count }
+    fn exprTypeArg(expr: SyntaxExpr, index: U64) -> TypeId {
+        return self.typeIds[expr.typeArgs.start + index]
+    }
+    fn typeViewNameCount(ty: SyntaxType) -> U64 { return ty.viewNames.count }
+    fn typeViewName(ty: SyntaxType, index: U64) -> Span {
+        return self.texts[ty.viewNames.start + index]
+    }
+    fn typeProjectionTraitArgCount(ty: SyntaxType) -> U64 { return ty.projectionTraitArgs.count }
+    fn typeProjectionTraitArg(ty: SyntaxType, index: U64) -> TypeId {
+        return self.typeIds[ty.projectionTraitArgs.start + index]
+    }
+    fn typeProjectionTraitArgLabel(ty: SyntaxType, index: U64) -> Span {
+        return self.texts[ty.projectionTraitArgLabels.start + index]
+    }
+    // Keep pool addressing inside SyntaxFile.  A SyntaxSlice has no runtime
+    // element type, so exposing a generic text-slice reader would let compiler
+    // clients accidentally interpret (for example) an ExprId slice as names.
+    fn importNameCount(imp: SyntaxImport) -> U64 { return imp.nameSpans.count }
+    fn importNameSpan(imp: SyntaxImport, index: U64) -> Span {
+        return self.texts[imp.nameSpans.start + index]
+    }
+    fn importNameAliasSpan(imp: SyntaxImport, index: U64) -> Span {
+        return self.texts[imp.nameAliases.start + index]
+    }
+    fn externHasDeriveDirective(id: ExternId) -> Bool {
+        val ext: SyntaxExtern = self.externs[id.raw]
+        mut val i: U64 = 0U64
+        while i < ext.structDirectives.count {
+            val directive: DirectiveId = self.directiveIds[ext.structDirectives.start + i]
+            if self.directives[directive.raw].reqs.count > 0U64 { return true }
+            i += 1U64
+        }
+        return false
+    }
+}
+
+impl SyntaxFile {
+    fn emptySlice() -> SyntaxSlice {
+        return <SyntaxSlice start=0U64 count=0U64 />
+    }
+
+    // The only construction path for expression rows.  Fields not selected by
+    // `kind` are deliberately inert; consumers must switch on the closed tag.
+    inout fn pushExprNode(
+        kind: SyntaxExprKind,
+        span: Span,
+        text: Span = <Span start=0 end=0 />,
+        name: Span = <Span start=0 end=0 />,
+        nameSpan: Span = <Span start=0 end=0 />,
+        op: I64 = 0,
+        intValue: U64 = 0U64,
+        flag0: Bool = false,
+        flag1: Bool = false,
+        child0: ExprId = <ExprId raw=0U64 />,
+        child1: ExprId = <ExprId raw=0U64 />,
+        child2: ExprId = <ExprId raw=0U64 />,
+        type0: TypeId = <TypeId raw=0U64 />,
+        block0: BlockId = <BlockId raw=0U64 />,
+        block1: BlockId = <BlockId raw=0U64 />,
+        args: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        elems: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        keys: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        values: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        arms: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        typeArgs: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
+    ) -> ExprId {
+        val id: ExprId = <ExprId raw=self.exprs.count() />
+        self.exprs.append(<SyntaxExpr kind=kind span=span text=text name=name nameSpan=nameSpan op=op intValue=intValue flag0=flag0 flag1=flag1 child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 args=args elems=elems keys=keys values=values fields=fields arms=arms params=params typeArgs=typeArgs />)
+        return id
+    }
+
+    // These helpers are parser-only construction operations.  A completed
+    // SyntaxFile is passed to the compiler as a `val`; its public read surface
+    // will expose IDs and node views, never a materialized value AST.
+    inout fn pushTextSlice(items: Array[Span]) -> SyntaxSlice {
+        val start: U64 = self.texts.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.texts.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushTypeIdSlice(items: Array[TypeId]) -> SyntaxSlice {
+        val start: U64 = self.typeIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.typeIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushExprIdSlice(items: Array[ExprId]) -> SyntaxSlice {
+        val start: U64 = self.exprIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.exprIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushStmtIdSlice(items: Array[StmtId]) -> SyntaxSlice {
+        val start: U64 = self.stmtIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.stmtIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushPatternIdSlice(items: Array[PatternId]) -> SyntaxSlice {
+        val start: U64 = self.patternIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.patternIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushMatchArmIdSlice(items: Array[MatchArmId]) -> SyntaxSlice {
+        val start: U64 = self.matchArmIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.matchArmIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushFieldIdSlice(items: Array[FieldId]) -> SyntaxSlice {
+        val start: U64 = self.fieldIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.fieldIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushVariantIdSlice(items: Array[VariantId]) -> SyntaxSlice {
+        val start: U64 = self.variantIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.variantIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushParamIdSlice(items: Array[ParamId]) -> SyntaxSlice {
+        val start: U64 = self.paramIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.paramIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushMemberIdSlice(items: Array[MemberId]) -> SyntaxSlice {
+        val start: U64 = self.memberIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.memberIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushSigIdSlice(items: Array[SigId]) -> SyntaxSlice {
+        val start: U64 = self.sigIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.sigIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushBindIdSlice(items: Array[BindId]) -> SyntaxSlice {
+        val start: U64 = self.bindIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.bindIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushArgIdSlice(items: Array[ArgId]) -> SyntaxSlice {
+        val start: U64 = self.argIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.argIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushMakeFieldIdSlice(items: Array[MakeFieldId]) -> SyntaxSlice {
+        val start: U64 = self.makeFieldIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.makeFieldIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    // Freeze the short-lived value parser result recursively.  Every spelling
+    // entering the persistent representation is an exact source Span; this is
+    // intentionally not an adapter that retains `TypeAst` or copies String.
+    inout fn freezeTypeAst(ast: TypeAst) -> TypeId {
+        mut val argIds: Array[TypeId] = []
+        mut val i: U64 = 0U64
+        while i < ast.args.count() {
+            argIds.append(self.freezeTypeAst(ast: ast.args[i]))
+            i += 1U64
+        }
+        mut val projectionArgIds: Array[TypeId] = []
+        i = 0U64
+        while i < ast.projectionTraitArgs.count() {
+            projectionArgIds.append(self.freezeTypeAst(ast: ast.projectionTraitArgs[i]))
+            i += 1U64
+        }
+        val id: TypeId = <TypeId raw=self.types.count() />
+        self.types.append(<SyntaxType
+            name=ast.nameSpan
+            args=self.pushTypeIdSlice(items: argIds)
+            span=ast.span
+            extView=ast.extViewSpan
+            viewNames=self.pushTextSlice(items: ast.viewNameSpans)
+            projectionTrait=ast.projectionTraitSpan
+            projectionTraitArgs=self.pushTypeIdSlice(items: projectionArgIds)
+            projectionTraitArgLabels=self.pushTextSlice(items: ast.projectionTraitArgLabelSpans)
+            projectionAssoc=ast.projectionAssocSpan
+            isAny=ast.isAny
+            argLabels=self.pushTextSlice(items: ast.argLabelSpans)
+            isSendable=ast.isSendable
+            isRecord=ast.isRecord
+        />)
+        return id
+    }
+
+    // Body nodes form one recursive group.  Keep the recursion entirely inside
+    // the freezer: the resulting file contains IDs/slices only, never a nested
+    // `ExprAst`/`StmtAst` payload.
+    inout fn freezeArgAst(ast: ArgAst) -> ArgId {
+        self.args.append(<SyntaxArg label=ast.labelSpan hasLabel=ast.hasLabel isInout=ast.isInout value=self.freezeExprAst(ast: ast.value) span=ast.span />)
+        val id: ArgId = <ArgId raw=self.args.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeArgAstSlice(items: Array[ArgAst]) -> SyntaxSlice {
+        mut val ids: Array[ArgId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeArgAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushArgIdSlice(items: ids)
+    }
+
+    inout fn freezeMakeFieldAst(ast: MakeFieldAst) -> MakeFieldId {
+        self.makeFields.append(<SyntaxMakeField name=ast.nameSpan value=self.freezeExprAst(ast: ast.value) span=ast.span />)
+        val id: MakeFieldId = <MakeFieldId raw=self.makeFields.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeMakeFieldAstSlice(items: Array[MakeFieldAst]) -> SyntaxSlice {
+        mut val ids: Array[MakeFieldId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeMakeFieldAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushMakeFieldIdSlice(items: ids)
+    }
+
+    inout fn freezeBindAst(ast: BindAst) -> BindId {
+        val id: BindId = <BindId raw=self.binds.count() />
+        self.binds.append(<SyntaxBind field=ast.fieldSpan name=ast.nameSpan fieldStart=ast.fieldStart span=ast.span isAssign=ast.isAssign />)
+        return id
+    }
+
+    inout fn freezeBindAstSlice(items: Array[BindAst]) -> SyntaxSlice {
+        mut val ids: Array[BindId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeBindAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushBindIdSlice(items: ids)
+    }
+
+    inout fn freezeParamAst(ast: ParamAst) -> ParamId {
+        self.params.append(<SyntaxParam name=ast.nameSpan ty=self.freezeTypeAst(ast: ast.ty) isInout=ast.isInout isMove=ast.isMove isBorrow=ast.isBorrow noLabel=ast.noLabel hasDefault=ast.hasDefault defaultVal=self.freezeExprAst(ast: ast.defaultVal) span=ast.span />)
+        val id: ParamId = <ParamId raw=self.params.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeParamAstSlice(items: Array[ParamAst]) -> SyntaxSlice {
+        mut val ids: Array[ParamId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeParamAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushParamIdSlice(items: ids)
+    }
+
+    inout fn freezePatternAst(ast: PatternAst) -> PatternId {
+        self.patterns.append(<SyntaxPattern isWildcard=ast.isWildcard isStruct=ast.isStruct typeName=ast.typeNameSpan variant=ast.variantSpan binds=self.freezeBindAstSlice(items: ast.binds) isLiteral=ast.isLiteral lit=self.freezeExprAst(ast: ast.lit) captureName=ast.captureNameSpan span=ast.span />)
+        val id: PatternId = <PatternId raw=self.patterns.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeMatchArmAst(ast: MatchArmAst) -> MatchArmId {
+        self.matchArms.append(<SyntaxMatchArm pat=self.freezePatternAst(ast: ast.pattern) body=self.freezeBlockAst(ast: ast.body) span=ast.span />)
+        val id: MatchArmId = <MatchArmId raw=self.matchArms.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeMatchArmAstSlice(items: Array[MatchArmAst]) -> SyntaxSlice {
+        mut val ids: Array[MatchArmId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeMatchArmAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushMatchArmIdSlice(items: ids)
+    }
+
+    inout fn freezeBlockAst(ast: BlockAst) -> BlockId {
+        self.blocks.append(<SyntaxBlock stmts=self.freezeStmtAstSlice(items: ast.stmts) />)
+        val id: BlockId = <BlockId raw=self.blocks.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeStmtAstSlice(items: Array[StmtAst]) -> SyntaxSlice {
+        mut val ids: Array[StmtId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeStmtAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushStmtIdSlice(items: ids)
+    }
+
+    inout fn freezeStmtAst(ast: StmtAst) -> StmtId {
+        match ast {
+            StmtAst.Let(mutable: val mutable, name: _, nameSpan: val nameSpan, hasTy: val hasTy, ty: val ty, init: val init, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Let /> span=span name=nameSpan typeName=<Span start=0 end=0 /> op=0 flag0=mutable flag1=hasTy flag2=false flag3=false child0=self.freezeExprAst(ast: init) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=self.freezeTypeAst(ast: ty) block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.Assign(op: val op, target: val target, value: val value, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Assign /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=op flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: target) child1=self.freezeExprAst(ast: value) child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.ExprStmt(expr: val expr, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.ExprStmt /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: expr) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.Return(value: val value, hasValue: val hasValue, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Return /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=hasValue flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: value) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.If(cond: val cond, thenBlk: val thenBlk, elseBlk: val elseBlk, hasElse: val hasElse, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.If /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=hasElse flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: cond) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=self.freezeBlockAst(ast: thenBlk) block1=self.freezeBlockAst(ast: elseBlk) arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.While(cond: val cond, body: val body, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.While /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: cond) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=self.freezeBlockAst(ast: body) block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.For(varName: _, varNameSpan: val varNameSpan, varTy: val varTy, hasVarTy: val hasVarTy, isRange: val isRange, inclusive: val inclusive, iter: val iter, rangeHi: val rangeHi, body: val body, isStruct: val isStruct, patType: _, patTypeSpan: val patTypeSpan, binds: val binds, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.For /> span=span name=varNameSpan typeName=patTypeSpan op=0 flag0=hasVarTy flag1=isRange flag2=inclusive flag3=isStruct child0=self.freezeExprAst(ast: iter) child1=self.freezeExprAst(ast: rangeHi) child2=<ExprId raw=0U64 /> type0=self.freezeTypeAst(ast: varTy) block0=self.freezeBlockAst(ast: body) block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.freezeBindAstSlice(items: binds) />)
+            }
+            StmtAst.Match(scrut: val scrut, arms: val arms, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Match /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: scrut) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.freezeMatchArmAstSlice(items: arms) binds=self.emptySlice() />)
+            }
+            StmtAst.Panic(msg: val msg, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Panic /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: msg) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.Give(value: val value, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Give /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: value) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.Break(span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Break /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=<ExprId raw=0U64 /> child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.Continue(span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Continue /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=false flag1=false flag2=false flag3=false child0=<ExprId raw=0U64 /> child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
+            }
+            StmtAst.Destructure(binds: val binds, typeName: _, typeNameSpan: val typeNameSpan, init: val init, span: val span) => {
+                self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Destructure /> span=span name=<Span start=0 end=0 /> typeName=typeNameSpan op=0 flag0=false flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: init) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.freezeBindAstSlice(items: binds) />)
+            }
+        }
+        val id: StmtId = <StmtId raw=self.stmts.count() - 1U64 />
+        return id
+    }
+
+    inout fn freezeExprAstSlice(items: Array[ExprAst]) -> SyntaxSlice {
+        mut val ids: Array[ExprId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeExprAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushExprIdSlice(items: ids)
+    }
+
+    inout fn freezeExprAst(ast: ExprAst) -> ExprId {
+        match ast {
+            ExprAst.IntLit(value: val value, isBool: val isBool, tySuffix: _, literalSpan: val literalSpan, tySuffixSpan: val tySuffixSpan, span: val span) => {
+                return self.pushExprNode(
+                    kind: <SyntaxExprKind.IntLit />
+                    span: span
+                    text: literalSpan
+                    name: tySuffixSpan
+                    intValue: value
+                    flag0: isBool
+                )
+            }
+            ExprAst.FloatLit(text: _, tySuffix: _, literalSpan: val literalSpan, tySuffixSpan: val tySuffixSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.FloatLit /> span: span text: literalSpan name: tySuffixSpan) }
+            ExprAst.StrLit(raw: _, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.StrLit /> span: span text: span) }
+            ExprAst.Ident(name: _, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Ident /> span: span name: span) }
+            ExprAst.Unary(op: val op, operand: val operand, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Unary /> span: span op: op child0: self.freezeExprAst(ast: operand)) }
+            ExprAst.Binary(op: val op, lhs: val lhs, rhs: val rhs, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Binary /> span: span op: op child0: self.freezeExprAst(ast: lhs) child1: self.freezeExprAst(ast: rhs)) }
+            ExprAst.Call(name: _, nameSpan: val nameSpan, args: val args, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Call /> span: span name: nameSpan args: self.freezeArgAstSlice(items: args)) }
+            ExprAst.Field(base: val base, name: _, nameSpan: val nameSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Field /> span: span name: nameSpan child0: self.freezeExprAst(ast: base)) }
+            ExprAst.Method(recv: val recv, name: _, nameSpan: val nameSpan, args: val args, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Method /> span: span name: nameSpan child0: self.freezeExprAst(ast: recv) args: self.freezeArgAstSlice(items: args)) }
+            ExprAst.ExtMethod(recv: val recv, src: _, srcSpan: val srcSpan, name: _, nameSpan: val nameSpan, args: val args, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ExtMethod /> span: span text: srcSpan name: nameSpan child0: self.freezeExprAst(ast: recv) args: self.freezeArgAstSlice(items: args)) }
+            ExprAst.ExtView(recv: val recv, src: _, srcSpan: val srcSpan, strip: val strip, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ExtView /> span: span text: srcSpan flag0: strip child0: self.freezeExprAst(ast: recv)) }
+            ExprAst.Index(base: val base, index: val index, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Index /> span: span child0: self.freezeExprAst(ast: base) child1: self.freezeExprAst(ast: index)) }
+            ExprAst.Make(typeName: _, typeNameSpan: val typeNameSpan, typeArgs: val typeArgs, variant: _, variantSpan: val variantSpan, isEnum: val isEnum, fields: val fields, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Make /> span: span name: typeNameSpan nameSpan: variantSpan flag0: isEnum fields: self.freezeMakeFieldAstSlice(items: fields) typeArgs: self.freezeTypeAstSlice(items: typeArgs)) }
+            ExprAst.ArrayLit(elems: val elems, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ArrayLit /> span: span elems: self.freezeExprAstSlice(items: elems)) }
+            ExprAst.DictLit(keys: val keys, vals: val vals, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.DictLit /> span: span keys: self.freezeExprAstSlice(items: keys) values: self.freezeExprAstSlice(items: vals)) }
+            ExprAst.RecordLit(fields: val fields, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.RecordLit /> span: span fields: self.freezeMakeFieldAstSlice(items: fields)) }
+            ExprAst.Cast(operand: val operand, ty: val ty, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Cast /> span: span child0: self.freezeExprAst(ast: operand) type0: self.freezeTypeAst(ast: ty)) }
+            ExprAst.MatchExpr(scrut: val scrut, arms: val arms, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.MatchExpr /> span: span child0: self.freezeExprAst(ast: scrut) arms: self.freezeMatchArmAstSlice(items: arms)) }
+            ExprAst.IfExpr(cond: val cond, thenBlk: val thenBlk, elseBlk: val elseBlk, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: self.freezeExprAst(ast: cond) block0: self.freezeBlockAst(ast: thenBlk) block1: self.freezeBlockAst(ast: elseBlk)) }
+            ExprAst.OptChain(base: val base, cont: val cont, memberSpan: val memberSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.OptChain /> span: span name: memberSpan child0: self.freezeExprAst(ast: base) child1: self.freezeExprAst(ast: cont)) }
+            ExprAst.ChainHole(span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ChainHole /> span: span) }
+            ExprAst.Try(operand: val operand, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Try /> span: span child0: self.freezeExprAst(ast: operand)) }
+            ExprAst.Arrow(base: val base, name: _, nameSpan: val nameSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Arrow /> span: span name: nameSpan child0: self.freezeExprAst(ast: base)) }
+            ExprAst.ArrowMethod(recv: val recv, name: _, nameSpan: val nameSpan, args: val args, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ArrowMethod /> span: span name: nameSpan child0: self.freezeExprAst(ast: recv) args: self.freezeArgAstSlice(items: args)) }
+            ExprAst.Closure(params: val params, hasRet: val hasRet, ret: val ret, body: val body, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Closure /> span: span flag0: hasRet type0: self.freezeTypeAst(ast: ret) block0: self.freezeBlockAst(ast: body) params: self.freezeParamAstSlice(items: params)) }
+            ExprAst.Move(operand: val operand, isBorrow: val isBorrow, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Move /> span: span flag0: isBorrow child0: self.freezeExprAst(ast: operand)) }
+            ExprAst.Await(operand: val operand, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Await /> span: span child0: self.freezeExprAst(ast: operand)) }
+        }
+    }
+
+    inout fn freezeTypeAstSlice(items: Array[TypeAst]) -> SyntaxSlice {
+        mut val ids: Array[TypeId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeTypeAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushTypeIdSlice(items: ids)
+    }
+
+    inout fn freezeFieldAst(ast: FieldAst) -> FieldId {
+        val id: FieldId = <FieldId raw=self.fields.count() />
+        self.fields.append(<SyntaxField name=ast.nameSpan ty=self.freezeTypeAst(ast: ast.ty) isMut=ast.isMut vis=ast.vis hasDefault=ast.hasDefault defaultVal=self.freezeExprAst(ast: ast.defaultVal) span=ast.span />)
+        return id
+    }
+
+    inout fn freezeFieldAstSlice(items: Array[FieldAst]) -> SyntaxSlice {
+        mut val ids: Array[FieldId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeFieldAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushFieldIdSlice(items: ids)
+    }
+
+    inout fn freezeVariantAstSlice(items: Array[VariantAst]) -> SyntaxSlice {
+        mut val ids: Array[VariantId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            val ast: VariantAst = items[i]
+            val id: VariantId = <VariantId raw=self.variants.count() />
+            self.variants.append(<SyntaxVariant name=ast.nameSpan fields=self.freezeFieldAstSlice(items: ast.fields) span=ast.span />)
+            ids.append(id)
+            i += 1U64
+        }
+        return self.pushVariantIdSlice(items: ids)
+    }
+
+    inout fn freezeDeclAst(ast: DeclAst) -> DeclId {
+        val id: DeclId = <DeclId raw=self.decls.count() />
+        self.decls.append(<SyntaxDecl kind=ast.kind name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) span=ast.span isUnique=ast.isUnique isNonsendable=ast.isNonsendable fields=self.freezeFieldAstSlice(items: ast.fields) hasDeinit=ast.hasDeinit deinitBody=self.freezeBlockAst(ast: ast.deinitBody) variants=self.freezeVariantAstSlice(items: ast.variants) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAsync=ast.isAsync whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) body=self.freezeBlockAst(ast: ast.body) />)
+        return id
+    }
+
+    // The parser has exact TypeAst spans for where-clause atoms.  The legacy
+    // parallel String lists are intentionally not retained by SyntaxFile.
+    fn whereParamSpans(names: Array[String], types: Array[TypeAst]) -> Array[Span] {
+        mut val result: Array[Span] = []
+        mut val i: U64 = 0U64
+        while i < names.count() {
+            result.append(types[i].nameSpan)
+            i += 1U64
+        }
+        return result
+    }
+
+    fn whereTraitSpans(names: Array[String], types: Array[TypeAst]) -> Array[Span] {
+        mut val result: Array[Span] = []
+        mut val i: U64 = 0U64
+        while i < names.count() {
+            result.append(types[i].nameSpan)
+            i += 1U64
+        }
+        return result
+    }
+
+    inout fn pushBoolSlice(items: Array[Bool]) -> SyntaxSlice {
+        val start: U64 = self.bools.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.bools.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn freezeSigAst(ast: SigAst) -> SigId {
+        val id: SigId = <SigId raw=self.sigs.count() />
+        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout />)
+        return id
+    }
+
+    inout fn freezeSigAstSlice(items: Array[SigAst]) -> SyntaxSlice {
+        mut val ids: Array[SigId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeSigAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushSigIdSlice(items: ids)
+    }
+
+    inout fn freezeMemberAst(ast: MemberAst) -> MemberId {
+        val id: MemberId = <MemberId raw=self.members.count() />
+        self.members.append(<SyntaxMember kind=ast.kind name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) isAsync=ast.isAsync selfInout=ast.selfInout selfMove=ast.selfMove isVia=ast.isVia viaName=ast.viaNameSpan body=self.freezeBlockAst(ast: ast.body) assocTy=self.freezeTypeAst(ast: ast.assocTy) isFactory=ast.isFactory factoryKind=ast.factoryKind factoryErr=self.freezeTypeAst(ast: ast.factoryErr) />)
+        return id
+    }
+
+    inout fn freezeMemberAstSlice(items: Array[MemberAst]) -> SyntaxSlice {
+        mut val ids: Array[MemberId] = []
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            ids.append(self.freezeMemberAst(ast: items[i]))
+            i += 1U64
+        }
+        return self.pushMemberIdSlice(items: ids)
+    }
+
+    inout fn freezeTraitAst(ast: TraitAst) -> TraitId {
+        val id: TraitId = <TraitId raw=self.traits.count() />
+        self.traits.append(<SyntaxTrait name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) supertraits=self.pushTextSlice(items: ast.supertraitSpans) reqs=self.freezeSigAstSlice(items: ast.reqs) assocTypes=self.pushTextSlice(items: ast.assocTypeSpans) span=ast.span />)
+        return id
+    }
+
+    inout fn freezeImplAst(ast: ImplAst) -> ImplId {
+        val id: ImplId = <ImplId raw=self.impls.count() />
+        self.impls.append(<SyntaxImpl recvType=self.freezeTypeAst(ast: ast.recvType) implParams=self.pushTextSlice(items: ast.implParamSpans) implParamSendable=self.pushBoolSlice(items: ast.implParamSendable) isTraitImpl=ast.isTraitImpl traitName=ast.traitNameSpan traitNameSpan=ast.traitNameSpan traitArgs=self.freezeTypeAstSlice(items: ast.traitArgs) whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) isPub=ast.isPub members=self.freezeMemberAstSlice(items: ast.members) span=ast.span extName=ast.extNameSpan />)
+        return id
+    }
+
+    inout fn pushDirectiveIdSlice(items: Array[DirectiveId]) -> SyntaxSlice {
+        val start: U64 = self.directiveIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.directiveIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn pushSliceSlice(items: Array[SyntaxSlice]) -> SyntaxSlice {
+        val start: U64 = self.slices.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.slices.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn freezeDeriveReqAst(ast: DeriveReqAst) -> DeriveReqId {
+        val id: DeriveReqId = <DeriveReqId raw=self.deriveReqs.count() />
+        self.deriveReqs.append(<SyntaxDeriveReq name=ast.nameSpan args=self.freezeMakeFieldAstSlice(items: ast.args) />)
+        return id
+    }
+
+    inout fn freezeDirectiveAst(ast: DirectiveAst) -> DirectiveId {
+        mut val ids: Array[DeriveReqId] = []
+        mut val i: U64 = 0U64
+        while i < ast.reqs.count() {
+            ids.append(self.freezeDeriveReqAst(ast: ast.reqs[i]))
+            i += 1U64
+        }
+        val id: DirectiveId = <DirectiveId raw=self.directives.count() />
+        self.directives.append(<SyntaxDirective reqs=self.pushDeriveReqIdSlice(items: ids) />)
+        return id
+    }
+
+    inout fn pushDeriveReqIdSlice(items: Array[DeriveReqId]) -> SyntaxSlice {
+        val start: U64 = self.deriveReqIds.count()
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.deriveReqIds.append(items[i])
+            i += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn freezeImportAst(ast: ImportAst) -> ImportId {
+        val id: ImportId = <ImportId raw=self.imports.count() />
+        self.imports.append(<SyntaxImport path=ast.pathSpan segment=ast.segSpan isImport=ast.isImport nameSpans=self.pushTextSlice(items: ast.nameSpans) alias=ast.aliasSpan nameAliases=self.pushTextSlice(items: ast.nameAliasSpans) span=ast.span />)
+        return id
+    }
+
+    inout fn freezeExternAst(ast: ExternAst) -> ExternId {
+        mut val typeParamGroups: Array[SyntaxSlice] = []
+        mut val sendableGroups: Array[SyntaxSlice] = []
+        mut val directiveIds: Array[DirectiveId] = []
+        mut val i: U64 = 0U64
+        while i < ast.structTypeParamSpans.count() {
+            typeParamGroups.append(self.pushTextSlice(items: ast.structTypeParamSpans[i]))
+            sendableGroups.append(self.pushBoolSlice(items: ast.structTypeParamSendable[i]))
+            directiveIds.append(self.freezeDirectiveAst(ast: ast.structDirectives[i]))
+            i += 1U64
+        }
+        val id: ExternId = <ExternId raw=self.externs.count() />
+        self.externs.append(<SyntaxExtern abiOk=ast.abiOk abiC=ast.abiC abiSpan=ast.abiSpan fns=self.freezeSigAstSlice(items: ast.fns) structNames=self.pushTextSlice(items: ast.structNameSpans) structTypeParams=self.pushSliceSlice(items: typeParamGroups) structTypeParamSendable=self.pushSliceSlice(items: sendableGroups) structSpans=self.pushTextSlice(items: ast.structSpans) structDirectives=self.pushDirectiveIdSlice(items: directiveIds) span=ast.span />)
+        return id
+    }
+
+    inout fn freezeNewtypeAst(name: Span, ty: TypeAst, isPub: Bool, span: Span) -> NewtypeId {
+        val under: TypeId = self.freezeTypeAst(ast: ty)
+        val id: NewtypeId = <NewtypeId raw=self.newtypes.count() />
+        self.newtypes.append(<SyntaxNewtype name=name ty=under isPub=isPub span=span />)
+        return id
+    }
+
+    inout fn freezeTopItemAst(ast: TopItemAst) -> TopItemId {
+        match ast {
+            TopItemAst.Decl(d: val d) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Decl /> payload: self.freezeDeclAst(ast: d).raw span: d.span) }
+            TopItemAst.Impl(im: val im) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: self.freezeImplAst(ast: im).raw span: im.span) }
+            TopItemAst.Trait(t: val t) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Trait /> payload: self.freezeTraitAst(ast: t).raw span: t.span) }
+            TopItemAst.Extern(e: val e) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Extern /> payload: self.freezeExternAst(ast: e).raw span: e.span) }
+            TopItemAst.Import(imp: val imp) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: self.freezeImportAst(ast: imp).raw span: imp.span) }
+            TopItemAst.Export(inner: val inner) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: self.freezeTopItemAst(ast: inner).raw span: <Span start=0 end=0 />) }
+            TopItemAst.ReExport(imp: val imp) => { return self.pushTopItem(kind: <SyntaxTopItemKind.ReExport /> payload: self.freezeImportAst(ast: imp).raw span: imp.span) }
+            TopItemAst.Directive(dir: val dir) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Directive /> payload: self.freezeDirectiveAst(ast: dir).raw span: <Span start=0 end=0 />) }
+            TopItemAst.GlobalVal(s: val s) => { return self.pushTopItem(kind: <SyntaxTopItemKind.GlobalVal /> payload: self.freezeStmtAst(ast: s).raw span: self.stmts[self.stmts.count() - 1U64].span) }
+            TopItemAst.NewType(name: _, nameSpan: val nameSpan, ty: val ty, isPub: val isPub, span: val span) => {
+                return self.pushTopItem(kind: <SyntaxTopItemKind.NewType /> payload: self.freezeNewtypeAst(name: nameSpan, ty: ty, isPub: isPub, span: span).raw span: span)
+            }
+        }
+    }
+
+    inout fn pushTopItem(kind: SyntaxTopItemKind, payload: U64, span: Span) -> TopItemId {
+        val id: TopItemId = <TopItemId raw=self.topItems.count() />
+        self.topItems.append(<SyntaxTopItem kind=kind payload=payload span=span />)
+        return id
+    }
+
+}
