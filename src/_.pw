@@ -4471,6 +4471,16 @@ export fn syntaxExprMatchArm(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> 
     return file.exprMatchArm(expr: expr, index: index)
 }
 
+// Owner-neutral match-arm views.  `SyntaxStmt.arms` and `SyntaxExpr.arms` are
+// slices into the same immutable MatchArmId pool.
+export fn syntaxMatchArmCount(file: SyntaxFile, arms: SyntaxSlice) -> U64 {
+    return file.matchArmCount(arms: arms)
+}
+
+export fn syntaxMatchArmAt(file: SyntaxFile, arms: SyntaxSlice, index: U64) -> MatchArmId {
+    return file.matchArm(arms: arms, index: index)
+}
+
 export fn syntaxStmtBindCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
     return file.stmtBindCount(stmt: stmt)
 }

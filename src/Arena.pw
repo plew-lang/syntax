@@ -277,6 +277,13 @@ pub impl SyntaxFile {
     fn exprMatchArm(expr: SyntaxExpr, index: U64) -> MatchArmId {
         return self.matchArmIds[expr.arms.start + index]
     }
+    // Match arms live in one shared ID pool regardless of whether their owner is a
+    // statement or an expression.  Consumers that already hold the slice should use
+    // these views rather than duplicating owner-specific traversal.
+    fn matchArmCount(arms: SyntaxSlice) -> U64 { return arms.count }
+    fn matchArm(arms: SyntaxSlice, index: U64) -> MatchArmId {
+        return self.matchArmIds[arms.start + index]
+    }
     fn stmtBindCount(stmt: SyntaxStmt) -> U64 { return stmt.binds.count }
     fn stmtBind(stmt: SyntaxStmt, index: U64) -> BindId {
         return self.bindIds[stmt.binds.start + index]
