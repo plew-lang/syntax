@@ -1171,6 +1171,14 @@ export struct SyntaxFile {
     mut val bools: Array[Bool] = []
 }
 
+// `SyntaxFile` is the public empty root used by a compiler client before the
+// parser fills its private tables.  Construction exposes no table fields.
+pub impl SyntaxFile {
+    factory empty() {
+        return <SyntaxFile />
+    }
+}
+
 // Raw declaration-side nodes. `Span` is also the text reference: all parser
 // input lives in the compiler source arena, so copying a spelling into String is
 // neither necessary nor desirable on the compiler path.
@@ -3321,10 +3329,14 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSp
                             val fparams: Array[ParamAst] = parseParamAsts(p: inout p)
                             val fbody: BlockAst = parseBlockAst(p: inout p)
                             mut val anonName: String = ""
+                            mut val anonSpan: Span = <Span start=fSpan.end end=fSpan.end />
                             if fparams.count() > 0 {
                                 anonName = fparams[0].name
+                                anonSpan = fparams[0].nameSpan
                             }
-                            members.append(<MemberAst kind=<MemberKind.AssocFn /> name=anonName nameSpan=fSpan typeParams=[] params=fparams hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=fbody assocTy=emptyTypeAst() isFactory=true factoryKind=facKind factoryErr=facErr />)
+                            // The semantic selector and its source span must denote
+                            // the same label; the `factory` keyword is not its name.
+                            members.append(<MemberAst kind=<MemberKind.AssocFn /> name=anonName nameSpan=anonSpan typeParams=[] params=fparams hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=fbody assocTy=emptyTypeAst() isFactory=true factoryKind=facKind factoryErr=facErr />)
                         }
                         _ => {
                             members.append(<MemberAst kind=<MemberKind.Factory /> name="factory" nameSpan=fSpan typeParams=[] params=[] hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=emptyBlock() assocTy=emptyTypeAst() />)
@@ -4025,7 +4037,7 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
 // immutable, ID-addressed representation and the program-sized value array is
 // discarded before returning.
 export fn parseProgramSyntaxFile(p: inout P) -> SyntaxFile {
-    mut val file: SyntaxFile = <SyntaxFile />
+    mut val file: SyntaxFile = <SyntaxFile.empty />
     parseProgramSyntaxInto(p: inout p, file: inout file)
     return file
 }
