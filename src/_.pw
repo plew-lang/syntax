@@ -4790,6 +4790,24 @@ inout fn parseSyntaxNewtype(p: inout P, isPub: Bool) -> NewtypeId {
     return id
 }
 
+inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> SigId {
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeParams: Array[Span] = []
+    mut val typeParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
+    val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+    mut val hasRet: Bool = false
+    mut val ret: TypeId = <TypeId raw=0U64 />
+    match p.curKind() {
+        Kind.Arrow => { p.advance() ret = self.parseSyntaxType(p: inout p) hasRet = true }
+        _ => {}
+    }
+    val id: SigId = <SigId raw=self.sigs.count() />
+    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />)
+    return id
+}
+
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
