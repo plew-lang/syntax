@@ -4923,6 +4923,124 @@ inout fn parseSyntaxDirective(p: inout P) -> DirectiveId {
     return id
 }
 
+// An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
+// block.  Unlike the macro value parser, the compiler path writes signatures,
+// opaque foreign declarations, and their directive IDs directly into the
+// SyntaxFile pools.  The temporary lists below contain only scalar IDs/spans;
+// no ExternAst, SigAst, or DirectiveAst crosses this boundary.
+inout fn parseSyntaxExternDecl(p: inout P) -> ExternId {
+    val externTok: Tok = p.curTok()
+    val abiSpan: Span = p.spanOf(t: externTok)
+    p.advance()
+    mut val abiOk: Bool = false
+    mut val abiC: Bool = false
+    match p.curKind() {
+        Kind.LParen => {
+            p.advance()
+            val abiTok: Tok = p.curTok()
+            if rangeEquals(bytes: p.bytes, start: abiTok.start, len: abiTok.len, kw: "c") {
+                abiOk = true
+                abiC = true
+            } else if rangeEquals(bytes: p.bytes, start: abiTok.start, len: abiTok.len, kw: "plewIntrinsic") {
+                abiOk = true
+            }
+            p.advance()
+            match p.curKind() {
+                Kind.RParen => { p.advance() }
+                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `)` after extern ABI selector") }
+            }
+        }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `(` after `extern` — write `extern(c)` or `extern(plewIntrinsic)") }
+    }
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after extern ABI selector") }
+    }
+
+    mut val fns: Array[SigId] = []
+    mut val structNames: Array[Span] = []
+    mut val structTypeParams: Array[SyntaxSlice] = []
+    mut val structTypeParamSendable: Array[SyntaxSlice] = []
+    mut val structSpans: Array[Span] = []
+    mut val structDirectives: Array[DirectiveId] = []
+    mut val pendingDirective: DirectiveId = <DirectiveId raw=0U64 />
+    mut val hasPendingDirective: Bool = false
+
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.KwFn => {
+                p.advance()
+                fns.append(self.parseSyntaxSig(p: inout p, isAssoc: false))
+                hasPendingDirective = false
+            }
+            Kind.KwStruct => {
+                val kwSpan: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                val name: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                mut val typeParams: Array[Span] = []
+                mut val typeParamFlags: Array[Bool] = []
+                self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamFlags)
+                structNames.append(name)
+                structTypeParams.append(self.pushDirectSyntaxTexts(items: typeParams))
+                structTypeParamSendable.append(self.pushDirectSyntaxBools(items: typeParamFlags))
+                structSpans.append(<Span start=kwSpan.start end=name.end />)
+                if hasPendingDirective {
+                    structDirectives.append(pendingDirective)
+                } else {
+                    val emptyDirective: DirectiveId = <DirectiveId raw=self.directives.count() />
+                    self.directives.append(<SyntaxDirective reqs=self.pushDeriveReqIdSlice(items: []) />)
+                    structDirectives.append(emptyDirective)
+                }
+                hasPendingDirective = false
+            }
+            _ => {
+                // `type Name` is an opaque C foreign type.  `type` remains a
+                // contextual keyword, exactly as in the value parser.
+                if curIs(p: inout p, kw: "type") {
+                    val kwSpan: Span = p.spanOf(t: p.curTok())
+                    p.advance()
+                    val name: Span = p.spanOf(t: p.curTok())
+                    p.advance()
+                    structNames.append(name)
+                    structTypeParams.append(self.pushDirectSyntaxTexts(items: []))
+                    structTypeParamSendable.append(self.pushDirectSyntaxBools(items: []))
+                    structSpans.append(<Span start=kwSpan.start end=name.end />)
+                    if hasPendingDirective {
+                        structDirectives.append(pendingDirective)
+                    } else {
+                        val emptyDirective: DirectiveId = <DirectiveId raw=self.directives.count() />
+                        self.directives.append(<SyntaxDirective reqs=self.pushDeriveReqIdSlice(items: []) />)
+                        structDirectives.append(emptyDirective)
+                    }
+                    hasPendingDirective = false
+                } else if p.peekKind(off: 1U64) == <Kind.LBracket /> {
+                    pendingDirective = self.parseSyntaxDirective(p: inout p)
+                    hasPendingDirective = true
+                } else {
+                    p.advance()
+                }
+            }
+        }
+    }
+
+    val id: ExternId = <ExternId raw=self.externs.count() />
+    self.externs.append(<SyntaxExtern
+        abiOk=abiOk abiC=abiC abiSpan=abiSpan
+        fns=self.pushSigIdSlice(items: fns)
+        structNames=self.pushDirectSyntaxTexts(items: structNames)
+        structTypeParams=self.pushSliceSlice(items: structTypeParams)
+        structTypeParamSendable=self.pushSliceSlice(items: structTypeParamSendable)
+        structSpans=self.pushDirectSyntaxTexts(items: structSpans)
+        structDirectives=self.pushDirectiveIdSlice(items: structDirectives)
+        span=<Span start=p.base + externTok.start end=p.prevEnd() />
+    />)
+    return id
+}
+
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
