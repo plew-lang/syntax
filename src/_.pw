@@ -4875,6 +4875,54 @@ inout fn parseSyntaxGlobalVal(p: inout P, mutable: Bool) -> TopItemId {
     return self.pushTopItem(kind: <SyntaxTopItemKind.GlobalVal /> payload: statement.raw span: self.stmts[statement.raw].span)
 }
 
+inout fn parseSyntaxDirectiveArgs(p: inout P) -> SyntaxSlice {
+    mut val fields: Array[MakeFieldId] = []
+    match p.curKind() { Kind.LParen => { p.advance() } _ => { return self.pushMakeFieldIdSlice(items: fields) } }
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RParen => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.Comma => { p.advance() }
+            Kind.Ident => {
+                val name: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                match p.curKind() { Kind.Colon => { p.advance() } _ => {} }
+                val value: ExprId = self.parseSyntaxExpr(p: inout p)
+                val id: MakeFieldId = <MakeFieldId raw=self.makeFields.count() />
+                self.makeFields.append(<SyntaxMakeField name=name value=value span=name />)
+                fields.append(id)
+            }
+            _ => { p.advance() }
+        }
+    }
+    return self.pushMakeFieldIdSlice(items: fields)
+}
+
+inout fn parseSyntaxDirective(p: inout P) -> DirectiveId {
+    p.advance()
+    match p.curKind() { Kind.LBracket => { p.advance() } _ => {} }
+    mut val reqs: Array[DeriveReqId] = []
+    while true {
+        match p.curKind() {
+            Kind.RBracket => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.Comma => { p.advance() }
+            Kind.Ident => {
+                val name: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                val id: DeriveReqId = <DeriveReqId raw=self.deriveReqs.count() />
+                self.deriveReqs.append(<SyntaxDeriveReq name=name args=self.parseSyntaxDirectiveArgs(p: inout p) />)
+                reqs.append(id)
+            }
+            _ => { p.advance() }
+        }
+    }
+    val id: DirectiveId = <DirectiveId raw=self.directives.count() />
+    self.directives.append(<SyntaxDirective reqs=self.pushDeriveReqIdSlice(items: reqs) />)
+    return id
+}
+
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
