@@ -2471,6 +2471,457 @@ fn parseType(p: inout P) -> TypeAst {
     return <TypeAst name=name nameSpan=nameSpan args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView extViewSpan=extViewSpan viewNames=viewNames viewNameSpans=viewNameSpans projectionTrait=projectionTrait projectionTraitSpan=projectionTraitSpan projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionTraitArgLabelSpans=projectionTraitArgLabelSpans projectionAssoc=projectionAssoc projectionAssocSpan=projectionAssocSpan argLabels=argLabels argLabelSpans=argLabelSpans />
 }
 
+impl SyntaxFile {
+fn directEmptySyntaxSlice() -> SyntaxSlice {
+    return <SyntaxSlice start=0U64 count=0U64 />
+}
+
+inout fn appendDirectSyntaxType(node: SyntaxType) -> TypeId {
+    val id: TypeId = <TypeId raw=self.types.count() />
+    self.types.append(node)
+    return id
+}
+
+inout fn pushDirectSyntaxTypeIds(items: Array[TypeId]) -> SyntaxSlice {
+    val start: U64 = self.typeIds.count()
+    mut val i: U64 = 0U64
+    while i < items.count() {
+        self.typeIds.append(items[i])
+        i += 1U64
+    }
+    return <SyntaxSlice start=start count=items.count() />
+}
+
+inout fn pushDirectSyntaxTexts(items: Array[Span]) -> SyntaxSlice {
+    val start: U64 = self.texts.count()
+    mut val i: U64 = 0U64
+    while i < items.count() {
+        self.texts.append(items[i])
+        i += 1U64
+    }
+    return <SyntaxSlice start=start count=items.count() />
+}
+
+inout fn pushDirectSyntaxBools(items: Array[Bool]) -> SyntaxSlice {
+    val start: U64 = self.bools.count()
+    mut val i: U64 = 0U64
+    while i < items.count() {
+        self.bools.append(items[i])
+        i += 1U64
+    }
+    return <SyntaxSlice start=start count=items.count() />
+}
+
+// Generic binder names and their sendability marker live in parallel scalar
+// pools.  This is intentionally separate from the value-AST
+// TypeParamListAst: the direct parser preserves only source spans and flags.
+inout fn parseSyntaxTypeParams(p: inout P, names: inout Array[Span], flags: inout Array[Bool]) {
+    match p.curKind() {
+        Kind.LBracket => {
+            p.advance()
+            while true {
+                match p.curKind() {
+                    Kind.RBracket => {
+                        p.advance()
+                        break
+                    }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    Kind.Colon => {
+                        p.fail(off: p.base + p.curTok().start, msg: "inline trait constraint is not allowed in `[...]`; use a `where` clause")
+                        p.advance()
+                    }
+                    Kind.KwSendable => {
+                        p.advance()
+                        match p.curKind() {
+                            Kind.Ident => {
+                                names.append(p.spanOf(t: p.curTok()))
+                                flags.append(true)
+                                p.advance()
+                                match p.curKind() {
+                                    Kind.Ident => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                                    Kind.KwSendable => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                                    _ => {}
+                                }
+                            }
+                            _ => {
+                                p.fail(off: p.base + p.curTok().start, msg: "`sendable` in a generic parameter list must be followed by a parameter name")
+                            }
+                        }
+                    }
+                    Kind.Ident => {
+                        names.append(p.spanOf(t: p.curTok()))
+                        flags.append(false)
+                        p.advance()
+                        match p.curKind() {
+                            Kind.Ident => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                            Kind.KwSendable => { p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `]` after generic parameter name") }
+                            _ => {}
+                        }
+                    }
+                    _ => {
+                        p.fail(off: p.base + p.curTok().start, msg: "unexpected token in generic parameter list; expected a parameter name or `sendable Name`")
+                        p.advance()
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// A `where` clause is stored as parallel scalar spans and type IDs, matching
+// SyntaxDecl/SyntaxMember/SyntaxImpl.  The source parser still accepts the
+// same recoverable grammar as the value API; it simply never reconstructs the
+// names from temporary TypeAst strings.
+inout fn parseSyntaxWhere(
+    p: inout P,
+    params: inout Array[Span],
+    traits: inout Array[Span],
+    types: inout Array[TypeId],
+    traitTypes: inout Array[TypeId]
+) {
+    if curIs(p: inout p, kw: "where") {
+        p.advance()
+        mut val cont: Bool = true
+        while cont {
+            p.skipNewlines()
+            match p.curKind() {
+                Kind.Ident => {
+                    val lhs: TypeId = self.parseSyntaxType(p: inout p)
+                    match p.curKind() {
+                        Kind.Colon => { p.advance() }
+                        _ => {}
+                    }
+                    mut val moreTraits: Bool = true
+                    while moreTraits {
+                        match p.curKind() {
+                            Kind.Ident => {
+                                val rhs: TypeId = self.parseSyntaxType(p: inout p)
+                                params.append(self.types[lhs.raw].name)
+                                traits.append(self.types[rhs.raw].name)
+                                types.append(lhs)
+                                traitTypes.append(rhs)
+                            }
+                            _ => {}
+                        }
+                        match p.curKind() {
+                            Kind.Plus => { p.advance() }
+                            _ => { moreTraits = false }
+                        }
+                    }
+                    match p.curKind() {
+                        Kind.Comma => { p.advance() }
+                        _ => { cont = false }
+                    }
+                }
+                _ => { cont = false }
+            }
+        }
+    }
+}
+
+// The canonical SyntaxFile parser starts with scalar leaves.  Unlike parseType,
+// this routine never constructs a TypeAst or a String spelling: every child is a
+// TypeId and every source spelling is retained as its exact Span.  The remaining
+// direct parser uses this same routine for fields, signatures, expressions, and
+// where clauses.
+inout fn emptySyntaxType() -> TypeId {
+    return self.appendDirectSyntaxType(node: <SyntaxType
+        name=<Span start=0U64 end=0U64 />
+        args=self.directEmptySyntaxSlice()
+        span=<Span start=0U64 end=0U64 />
+        extView=<Span start=0U64 end=0U64 />
+        viewNames=self.directEmptySyntaxSlice()
+        projectionTrait=<Span start=0U64 end=0U64 />
+        projectionTraitArgs=self.directEmptySyntaxSlice()
+        projectionTraitArgLabels=self.directEmptySyntaxSlice()
+        projectionAssoc=<Span start=0U64 end=0U64 />
+        isAny=false
+        argLabels=self.directEmptySyntaxSlice()
+        isSendable=false
+        isRecord=false
+    />)
+}
+
+inout fn parseSyntaxType(p: inout P) -> TypeId {
+    if curIs(p: inout p, kw: "any") {
+        if p.peekKind(off: 1) == <Kind.Ident /> || p.peekKind(off: 1) == <Kind.KwSendable /> {
+            val anyStart: U64 = p.base + p.curTok().start
+            p.advance()
+            mut val isSendableAny: Bool = false
+            match p.curKind() {
+                Kind.KwSendable => {
+                    p.advance()
+                    isSendableAny = true
+                    match p.curKind() {
+                        Kind.Ident => {}
+                        _ => {
+                            p.fail(off: p.base + p.curTok().start, msg: "`any sendable` must be followed by a trait type")
+                            return self.emptySyntaxType()
+                        }
+                    }
+                }
+                _ => {}
+            }
+            val innerId: TypeId = self.parseSyntaxType(p: inout p)
+            val inner: SyntaxType = self.types[innerId.raw]
+            return self.appendDirectSyntaxType(node: <SyntaxType
+                name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() />
+                extView=inner.extView viewNames=inner.viewNames projectionTrait=inner.projectionTrait
+                projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels
+                projectionAssoc=inner.projectionAssoc isAny=true argLabels=inner.argLabels
+                isSendable=isSendableAny isRecord=inner.isRecord
+            />)
+        }
+    }
+
+    mut val isSendableFn: Bool = false
+    mut val sendableStart: U64 = 0U64
+    match p.curKind() {
+        Kind.KwSendable => {
+            if p.peekKind(off: 1) == <Kind.KwFn /> {
+                sendableStart = p.base + p.curTok().start
+                p.advance()
+                isSendableFn = true
+            } else {
+                p.fail(off: p.base + p.curTok().start, msg: "`sendable` in type syntax is only valid before `fn` or after `any`")
+                p.advance()
+                return self.emptySyntaxType()
+            }
+        }
+        _ => {}
+    }
+
+    match p.curKind() {
+        Kind.LParen => {
+            val recStart: U64 = p.base + p.curTok().start
+            p.advance()
+            mut val fields: Array[TypeId] = []
+            mut val labels: Array[Span] = []
+            while true {
+                match p.curKind() {
+                    Kind.RParen => { p.advance() break }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    _ => {
+                        val labelTok: Tok = p.curTok()
+                        val labelSpan: Span = p.spanOf(t: labelTok)
+                        p.advance()
+                        match p.curKind() {
+                            Kind.Colon => { p.advance() }
+                            _ => { p.fail(off: p.base + p.curTok().start, msg: "an anonymous record field needs a `label: Type` (every field is labelled)") }
+                        }
+                        labels.append(labelSpan)
+                        fields.append(self.parseSyntaxType(p: inout p))
+                    }
+                }
+            }
+            return self.appendDirectSyntaxType(node: <SyntaxType
+                name=<Span start=0U64 end=0U64 /> args=self.pushDirectSyntaxTypeIds(items: fields)
+                span=<Span start=recStart end=p.prevEnd() /> extView=<Span start=0U64 end=0U64 />
+                viewNames=self.directEmptySyntaxSlice() projectionTrait=<Span start=0U64 end=0U64 />
+                projectionTraitArgs=self.directEmptySyntaxSlice() projectionTraitArgLabels=self.directEmptySyntaxSlice()
+                projectionAssoc=<Span start=0U64 end=0U64 /> isAny=false
+                argLabels=self.pushDirectSyntaxTexts(items: labels) isSendable=false isRecord=true
+            />)
+        }
+        _ => {}
+    }
+
+    val head: Tok = p.curTok()
+    match head.kind {
+        Kind.Ident => {}
+        Kind.KwFn => {}
+        _ => {
+            p.fail(off: p.base + head.start, msg: "expected a type name")
+            p.advance()
+            return self.emptySyntaxType()
+        }
+    }
+    val nameSpan: Span = p.spanOf(t: head)
+    mut val start: U64 = p.base + head.start
+    if isSendableFn { start = sendableStart }
+    p.advance()
+
+    match head.kind {
+        Kind.KwFn => {
+            mut val params: Array[TypeId] = []
+            mut val labels: Array[Span] = []
+            match p.curKind() {
+                Kind.LParen => { p.advance() }
+                _ => {}
+            }
+            while true {
+                match p.curKind() {
+                    Kind.RParen => { p.advance() break }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    _ => {
+                        mut val label: Span = <Span start=0U64 end=0U64 />
+                        match p.curKind() {
+                            Kind.Ident => {
+                                if p.peekKind(off: 1) == <Kind.Colon /> {
+                                    label = p.spanOf(t: p.curTok())
+                                    p.advance()
+                                    p.advance()
+                                }
+                            }
+                            _ => {}
+                        }
+                        match p.curKind() {
+                            Kind.KwInout => { p.advance() }
+                            _ => {}
+                        }
+                        labels.append(label)
+                        params.append(self.parseSyntaxType(p: inout p))
+                    }
+                }
+            }
+            mut val ret: TypeId = self.emptySyntaxType()
+            match p.curKind() {
+                Kind.Arrow => {
+                    p.advance()
+                    ret = self.parseSyntaxType(p: inout p)
+                }
+                _ => {}
+            }
+            mut val args: Array[TypeId] = [ret]
+            mut val argLabels: Array[Span] = [<Span start=0U64 end=0U64 />]
+            mut val i: U64 = 0U64
+            while i < params.count() {
+                args.append(params[i])
+                argLabels.append(labels[i])
+                i += 1U64
+            }
+            return self.appendDirectSyntaxType(node: <SyntaxType
+                name=nameSpan args=self.pushDirectSyntaxTypeIds(items: args) span=<Span start=start end=p.prevEnd() />
+                extView=<Span start=0U64 end=0U64 /> viewNames=self.directEmptySyntaxSlice()
+                projectionTrait=<Span start=0U64 end=0U64 /> projectionTraitArgs=self.directEmptySyntaxSlice()
+                projectionTraitArgLabels=self.directEmptySyntaxSlice() projectionAssoc=<Span start=0U64 end=0U64 />
+                isAny=false argLabels=self.pushDirectSyntaxTexts(items: argLabels) isSendable=isSendableFn isRecord=false
+            />)
+        }
+        _ => {}
+    }
+
+    mut val args: Array[TypeId] = []
+    mut val argLabels: Array[Span] = []
+    match p.curKind() {
+        Kind.LBracket => {
+            p.advance()
+            while true {
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() break }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    _ => {
+                        mut val label: Span = <Span start=0U64 end=0U64 />
+                        match p.curKind() {
+                            Kind.Ident => {
+                                if p.peekKind(off: 1) == <Kind.Eq /> {
+                                    label = p.spanOf(t: p.curTok())
+                                    p.advance()
+                                    p.advance()
+                                }
+                            }
+                            _ => {}
+                        }
+                        args.append(self.parseSyntaxType(p: inout p))
+                        argLabels.append(label)
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    mut val extView: Span = <Span start=0U64 end=0U64 />
+    mut val viewNames: Array[Span] = []
+    mut val projectionTrait: Span = <Span start=0U64 end=0U64 />
+    mut val projectionArgs: Array[TypeId] = []
+    mut val projectionArgLabels: Array[Span] = []
+    mut val projectionAssoc: Span = <Span start=0U64 end=0U64 />
+    mut val parsingViews: Bool = true
+    while parsingViews {
+        match p.curKind() {
+            Kind.Hash => {
+                p.advance()
+                val selector: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                match p.curKind() {
+                    Kind.LBracket => {
+                        p.advance()
+                        while true {
+                            match p.curKind() {
+                                Kind.RBracket => { p.advance() break }
+                                Kind.Eof => { break }
+                                Kind.Comma => { p.advance() }
+                                _ => {
+                                    mut val label: Span = <Span start=0U64 end=0U64 />
+                                    match p.curKind() {
+                                        Kind.Ident => {
+                                            if p.peekKind(off: 1) == <Kind.Eq /> {
+                                                label = p.spanOf(t: p.curTok())
+                                                p.advance()
+                                                p.advance()
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    projectionArgs.append(self.parseSyntaxType(p: inout p))
+                                    projectionArgLabels.append(label)
+                                }
+                            }
+                        }
+                        match p.curKind() {
+                            Kind.Dot => {
+                                p.advance()
+                                projectionTrait = selector
+                                projectionAssoc = p.spanOf(t: p.curTok())
+                                p.advance()
+                            }
+                            _ => {}
+                        }
+                    }
+                    Kind.Dot => {
+                        p.advance()
+                        projectionTrait = selector
+                        projectionAssoc = p.spanOf(t: p.curTok())
+                        p.advance()
+                    }
+                    _ => {
+                        extView = selector
+                        viewNames.append(selector)
+                    }
+                }
+            }
+            _ => { parsingViews = false }
+        }
+        if projectionAssoc.end > projectionAssoc.start { parsingViews = false }
+    }
+    if projectionAssoc.end == projectionAssoc.start {
+        match p.curKind() {
+            Kind.Dot => {
+                p.advance()
+                projectionAssoc = p.spanOf(t: p.curTok())
+                p.advance()
+            }
+            _ => {}
+        }
+    }
+    return self.appendDirectSyntaxType(node: <SyntaxType
+        name=nameSpan args=self.pushDirectSyntaxTypeIds(items: args) span=<Span start=start end=p.prevEnd() />
+        extView=extView viewNames=self.pushDirectSyntaxTexts(items: viewNames) projectionTrait=projectionTrait
+        projectionTraitArgs=self.pushDirectSyntaxTypeIds(items: projectionArgs)
+        projectionTraitArgLabels=self.pushDirectSyntaxTexts(items: projectionArgLabels)
+        projectionAssoc=projectionAssoc isAny=false argLabels=self.pushDirectSyntaxTexts(items: argLabels)
+        isSendable=false isRecord=false
+    />)
+}
+
+}
+
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
 // has already been confirmed by the caller; consume it, the name, `=`, and the type.
 fn parseNewtypeAst(p: inout P, isPub: Bool) -> TopItemAst {
