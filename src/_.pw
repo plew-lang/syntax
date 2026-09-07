@@ -4111,6 +4111,105 @@ inout fn parseSyntaxFor(p: inout P) -> StmtId {
     return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.For /> span: <Span start=start end=p.prevEnd() /> name: name typeName: typeName flag0: hasType flag1: isRange flag2: inclusive flag3: isStruct child0: low child1: high type0: ty block0: body binds: binds)
 }
 
+inout fn appendDirectSyntaxField(name: Span, ty: TypeId, isMut: Bool, vis: U64, hasDefault: Bool, defaultVal: ExprId, span: Span) -> FieldId {
+    val id: FieldId = <FieldId raw=self.fields.count() />
+    self.fields.append(<SyntaxField name=name ty=ty isMut=isMut vis=vis hasDefault=hasDefault defaultVal=defaultVal span=span />)
+    return id
+}
+
+inout fn parseSyntaxStructField(p: inout P) -> FieldId {
+    val start: U64 = p.base + p.curTok().start
+    mut val vis: U64 = 0U64
+    mut val usedPubGet: Bool = false
+    if curIs(p: inout p, kw: "pub") {
+        p.advance()
+        vis = 2U64
+        match p.curKind() {
+            Kind.LParen => {
+                p.advance()
+                if !curIs(p: inout p, kw: "get") {
+                    p.fail(off: p.base + p.curTok().start, msg: "field visibility is `pub` or `pub(get)`; no other `pub(...)` form exists")
+                }
+                vis = 1U64
+                usedPubGet = true
+                p.advance()
+                match p.curKind() {
+                    Kind.RParen => { p.advance() }
+                    _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `)` after `pub(get)`") }
+                }
+            }
+            _ => {}
+        }
+    }
+    mut val isMut: Bool = false
+    match p.curKind() {
+        Kind.KwMut => { p.advance() isMut = true }
+        _ => {}
+    }
+    match p.curKind() {
+        Kind.KwVal => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `val` in struct field declaration") }
+    }
+    if usedPubGet && !isMut {
+        p.fail(off: start, msg: "`pub(get)` is only valid on `mut val`; use `pub val` for a public read-only field")
+    }
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val ty: TypeId = <TypeId raw=0U64 />
+    mut val hasType: Bool = false
+    match p.curKind() {
+        Kind.Colon => { p.advance() ty = self.parseSyntaxType(p: inout p) hasType = true }
+        _ => {}
+    }
+    mut val hasDefault: Bool = false
+    mut val defaultVal: ExprId = <ExprId raw=0U64 />
+    match p.curKind() {
+        Kind.Eq => { p.advance() defaultVal = self.parseSyntaxExpr(p: inout p) hasDefault = true }
+        _ => {}
+    }
+    if !hasType && !hasDefault { p.fail(off: start, msg: "struct field needs a type annotation or a default value") }
+    return self.appendDirectSyntaxField(name: name, ty: ty, isMut: isMut, vis: vis, hasDefault: hasDefault, defaultVal: defaultVal, span: <Span start=start end=p.prevEnd() />)
+}
+
+inout fn appendDirectSyntaxDecl(kind: DeclKind, name: Span, typeParams: SyntaxSlice, typeParamSendable: SyntaxSlice, span: Span, isUnique: Bool, isNonsendable: Bool, fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasDeinit: Bool = false, deinitBody: BlockId = <BlockId raw=0U64 />, variants: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasRet: Bool = false, ret: TypeId = <TypeId raw=0U64 />, isAsync: Bool = false, whereParams: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraitTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, body: BlockId = <BlockId raw=0U64 />) -> DeclId {
+    val id: DeclId = <DeclId raw=self.decls.count() />
+    self.decls.append(<SyntaxDecl kind=kind name=name typeParams=typeParams typeParamSendable=typeParamSendable span=span isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=variants params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />)
+    return id
+}
+
+inout fn parseSyntaxStructDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeParams: Array[Span] = []
+    mut val typeParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => {}
+    }
+    mut val fields: Array[FieldId] = []
+    mut val hasDeinit: Bool = false
+    mut val deinitBody: BlockId = <BlockId raw=0U64 />
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.Comma => { p.fail(off: p.base + p.curTok().start, msg: "struct fields are separated by newlines, not commas") p.advance() }
+            Kind.KwDeinit => { p.advance() p.skipNewlines() deinitBody = self.parseSyntaxBlock(p: inout p) hasDeinit = true }
+            _ => {
+                if p.text(t: p.curTok()) == ";" {
+                    p.fail(off: p.base + p.curTok().start, msg: "struct fields are separated by newlines, not `;`")
+                    p.advance()
+                } else { fields.append(self.parseSyntaxStructField(p: inout p)) }
+            }
+        }
+    }
+    return self.appendDirectSyntaxDecl(kind: <DeclKind.Struct /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: isUnique isNonsendable: isNonsendable fields: self.pushFieldIdSlice(items: fields) hasDeinit: hasDeinit deinitBody: deinitBody)
+}
+
 inout fn syntaxStmtDiverges(id: StmtId) -> Bool {
     val stmt: SyntaxStmt = self.stmts[id.raw]
     match stmt.kind {
