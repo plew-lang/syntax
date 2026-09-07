@@ -1,0 +1,469 @@
+// Macro-value adapter for the canonical SyntaxFile parser.
+//
+// This part is deliberately the inverse of Arena.pw's freezer.  It is used
+// only by the explicit macro/value API boundary; compiler loading continues to
+// retain and traverse SyntaxFile IDs directly.  Keeping the inverse here means
+// one recursive-descent grammar owns token consumption, lookahead, and recover.
+
+impl SyntaxFile {
+    // A SyntaxFile stores source spelling as an absolute Span.  Macro parsing
+    // owns the slice P that produced the file, so reconstruct String values
+    // only at this explicit value boundary.
+    fn materializeText(p: P, span: Span) -> String {
+        if span.end <= span.start { return "" }
+        if span.start < p.base { return "" }
+        if span.end < p.base { return "" }
+        val start: U64 = span.start - p.base
+        val end: U64 = span.end - p.base
+        if end > p.bytes.count() { return "" }
+        mut val bytes: Array[U8] = []
+        mut val i: U64 = start
+        while i < end {
+            bytes.append(p.bytes[i])
+            i += 1U64
+        }
+        return stringFromBytesUnchecked(bytes)
+    }
+
+    fn materializeTexts(p: P, slice: SyntaxSlice) -> Array[String] {
+        mut val result: Array[String] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeText(p: p, span: self.texts[slice.start + i]))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeBools(slice: SyntaxSlice) -> Array[Bool] {
+        mut val result: Array[Bool] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.bools[slice.start + i])
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeType(id: TypeId, p: P) -> TypeAst {
+        val node: SyntaxType = self.types[id.raw]
+        mut val args: Array[TypeAst] = []
+        mut val i: U64 = 0U64
+        while i < node.args.count {
+            args.append(self.materializeType(id: self.typeIds[node.args.start + i], p: p))
+            i += 1U64
+        }
+        mut val projectionArgs: Array[TypeAst] = []
+        i = 0U64
+        while i < node.projectionTraitArgs.count {
+            projectionArgs.append(self.materializeType(id: self.typeIds[node.projectionTraitArgs.start + i], p: p))
+            i += 1U64
+        }
+        return <TypeAst
+            name=self.materializeText(p: p, span: node.name) nameSpan=node.name
+            args=args span=node.span
+            extView=self.materializeText(p: p, span: node.extView) extViewSpan=node.extView
+            viewNames=self.materializeTexts(p: p, slice: node.viewNames) viewNameSpans=self.spanSlice(slice: node.viewNames)
+            projectionTrait=self.materializeText(p: p, span: node.projectionTrait) projectionTraitSpan=node.projectionTrait
+            projectionTraitArgs=projectionArgs
+            projectionTraitArgLabels=self.materializeTexts(p: p, slice: node.projectionTraitArgLabels)
+            projectionTraitArgLabelSpans=self.spanSlice(slice: node.projectionTraitArgLabels)
+            projectionAssoc=self.materializeText(p: p, span: node.projectionAssoc) projectionAssocSpan=node.projectionAssoc
+            isAny=node.isAny
+            argLabels=self.materializeTexts(p: p, slice: node.argLabels) argLabelSpans=self.spanSlice(slice: node.argLabels)
+            isSendable=node.isSendable isRecord=node.isRecord
+        />
+    }
+
+    fn spanSlice(slice: SyntaxSlice) -> Array[Span] {
+        mut val result: Array[Span] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.texts[slice.start + i])
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeTypeSlice(slice: SyntaxSlice, p: P) -> Array[TypeAst] {
+        mut val result: Array[TypeAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeType(id: self.typeIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeArg(id: ArgId, p: P) -> ArgAst {
+        val node: SyntaxArg = self.args[id.raw]
+        return <ArgAst label=self.materializeText(p: p, span: node.label) labelSpan=node.label hasLabel=node.hasLabel isInout=node.isInout value=self.materializeExpr(id: node.value, p: p) span=node.span />
+    }
+
+    fn materializeArgs(slice: SyntaxSlice, p: P) -> Array[ArgAst] {
+        mut val result: Array[ArgAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeArg(id: self.argIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeMakeField(id: MakeFieldId, p: P) -> MakeFieldAst {
+        val node: SyntaxMakeField = self.makeFields[id.raw]
+        return <MakeFieldAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name value=self.materializeExpr(id: node.value, p: p) span=node.span />
+    }
+
+    fn materializeMakeFields(slice: SyntaxSlice, p: P) -> Array[MakeFieldAst] {
+        mut val result: Array[MakeFieldAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeMakeField(id: self.makeFieldIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeParam(id: ParamId, p: P) -> ParamAst {
+        val node: SyntaxParam = self.params[id.raw]
+        mut val defaultVal: ExprAst = emptyExpr()
+        if node.hasDefault { defaultVal = self.materializeExpr(id: node.defaultVal, p: p) }
+        return <ParamAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name ty=self.materializeType(id: node.ty, p: p) isInout=node.isInout isMove=node.isMove isBorrow=node.isBorrow noLabel=node.noLabel hasDefault=node.hasDefault defaultVal=defaultVal span=node.span />
+    }
+
+    fn materializeParams(slice: SyntaxSlice, p: P) -> Array[ParamAst] {
+        mut val result: Array[ParamAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeParam(id: self.paramIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeBind(id: BindId, p: P) -> BindAst {
+        val node: SyntaxBind = self.binds[id.raw]
+        return <BindAst field=self.materializeText(p: p, span: node.field) fieldSpan=node.field name=self.materializeText(p: p, span: node.name) nameSpan=node.name fieldStart=node.fieldStart span=node.span isAssign=node.isAssign />
+    }
+
+    fn materializeBinds(slice: SyntaxSlice, p: P) -> Array[BindAst] {
+        mut val result: Array[BindAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeBind(id: self.bindIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializePattern(id: PatternId, p: P) -> PatternAst {
+        val node: SyntaxPattern = self.patterns[id.raw]
+        mut val lit: ExprAst = emptyExpr()
+        if node.isLiteral { lit = self.materializeExpr(id: node.lit, p: p) }
+        return <PatternAst isWildcard=node.isWildcard isStruct=node.isStruct typeName=self.materializeText(p: p, span: node.typeName) typeNameSpan=node.typeName variant=self.materializeText(p: p, span: node.variant) variantSpan=node.variant binds=self.materializeBinds(slice: node.binds, p: p) isLiteral=node.isLiteral lit=lit captureName=self.materializeText(p: p, span: node.captureName) captureNameSpan=node.captureName span=node.span />
+    }
+
+    fn materializeMatchArm(id: MatchArmId, p: P) -> MatchArmAst {
+        val node: SyntaxMatchArm = self.matchArms[id.raw]
+        return <MatchArmAst pattern=self.materializePattern(id: node.pat, p: p) body=self.materializeBlock(id: node.body, p: p) span=node.span />
+    }
+
+    fn materializeMatchArms(slice: SyntaxSlice, p: P) -> Array[MatchArmAst] {
+        mut val result: Array[MatchArmAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeMatchArm(id: self.matchArmIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeBlock(id: BlockId, p: P) -> BlockAst {
+        val node: SyntaxBlock = self.blocks[id.raw]
+        mut val stmts: Array[StmtAst] = []
+        mut val i: U64 = 0U64
+        while i < node.stmts.count {
+            stmts.append(self.materializeStmt(id: self.stmtIds[node.stmts.start + i], p: p))
+            i += 1U64
+        }
+        return <BlockAst stmts=stmts />
+    }
+
+    fn materializeStmt(id: StmtId, p: P) -> StmtAst {
+        val node: SyntaxStmt = self.stmts[id.raw]
+        match node.kind {
+            SyntaxStmtKind.Let => {
+                mut val ty: TypeAst = emptyTypeAst()
+                if node.flag1 { ty = self.materializeType(id: node.type0, p: p) }
+                return <StmtAst.Let mutable=node.flag0 name=self.materializeText(p: p, span: node.name) nameSpan=node.name hasTy=node.flag1 ty=ty init=self.materializeExpr(id: node.child0, p: p) span=node.span />
+            }
+            SyntaxStmtKind.Assign => { return <StmtAst.Assign op=node.op target=self.materializeExpr(id: node.child0, p: p) value=self.materializeExpr(id: node.child1, p: p) span=node.span /> }
+            SyntaxStmtKind.ExprStmt => { return <StmtAst.ExprStmt expr=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+            SyntaxStmtKind.Return => { return <StmtAst.Return value=self.materializeExpr(id: node.child0, p: p) hasValue=node.flag0 span=node.span /> }
+            SyntaxStmtKind.If => { return <StmtAst.If cond=self.materializeExpr(id: node.child0, p: p) thenBlk=self.materializeBlock(id: node.block0, p: p) elseBlk=self.materializeBlock(id: node.block1, p: p) hasElse=node.flag0 span=node.span /> }
+            SyntaxStmtKind.While => { return <StmtAst.While cond=self.materializeExpr(id: node.child0, p: p) body=self.materializeBlock(id: node.block0, p: p) span=node.span /> }
+            SyntaxStmtKind.For => {
+                mut val patternName: String = self.materializeText(p: p, span: node.typeName)
+                if node.isRecordPattern { patternName = "__rec__" }
+                mut val varTy: TypeAst = emptyTypeAst()
+                if node.flag0 { varTy = self.materializeType(id: node.type0, p: p) }
+                mut val rangeHi: ExprAst = emptyExpr()
+                if node.flag1 { rangeHi = self.materializeExpr(id: node.child1, p: p) }
+                return <StmtAst.For varName=self.materializeText(p: p, span: node.name) varNameSpan=node.name varTy=varTy hasVarTy=node.flag0 isRange=node.flag1 inclusive=node.flag2 iter=self.materializeExpr(id: node.child0, p: p) rangeHi=rangeHi body=self.materializeBlock(id: node.block0, p: p) isStruct=node.flag3 patType=patternName patTypeSpan=node.typeName binds=self.materializeBinds(slice: node.binds, p: p) span=node.span />
+            }
+            SyntaxStmtKind.Match => { return <StmtAst.Match scrut=self.materializeExpr(id: node.child0, p: p) arms=self.materializeMatchArms(slice: node.arms, p: p) span=node.span /> }
+            SyntaxStmtKind.Panic => { return <StmtAst.Panic msg=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+            SyntaxStmtKind.Give => { return <StmtAst.Give value=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+            SyntaxStmtKind.Break => { return <StmtAst.Break span=node.span /> }
+            SyntaxStmtKind.Continue => { return <StmtAst.Continue span=node.span /> }
+            SyntaxStmtKind.Destructure => { return <StmtAst.Destructure binds=self.materializeBinds(slice: node.binds, p: p) typeName=self.materializeText(p: p, span: node.typeName) typeNameSpan=node.typeName init=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+        }
+    }
+
+    fn materializeExprs(slice: SyntaxSlice, p: P) -> Array[ExprAst] {
+        mut val result: Array[ExprAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeExpr(id: self.exprIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeExpr(id: ExprId, p: P) -> ExprAst {
+        val node: SyntaxExpr = self.exprs[id.raw]
+        match node.kind {
+            SyntaxExprKind.IntLit => { return <ExprAst.IntLit value=node.intValue isBool=node.flag0 tySuffix=self.materializeText(p: p, span: node.name) literalSpan=node.text tySuffixSpan=node.name span=node.span /> }
+            SyntaxExprKind.FloatLit => { return <ExprAst.FloatLit text=stripUnderscoresAst(s: self.materializeText(p: p, span: node.text)) tySuffix=self.materializeText(p: p, span: node.name) literalSpan=node.text tySuffixSpan=node.name span=node.span /> }
+            SyntaxExprKind.StrLit => { return <ExprAst.StrLit raw=self.materializeText(p: p, span: node.text) span=node.span /> }
+            SyntaxExprKind.Ident => { return <ExprAst.Ident name=self.materializeText(p: p, span: node.name) span=node.span /> }
+            SyntaxExprKind.Unary => { return <ExprAst.Unary op=node.op operand=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+            SyntaxExprKind.Binary => { return <ExprAst.Binary op=node.op lhs=self.materializeExpr(id: node.child0, p: p) rhs=self.materializeExpr(id: node.child1, p: p) span=node.span /> }
+            SyntaxExprKind.Call => { return <ExprAst.Call name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
+            SyntaxExprKind.Field => { return <ExprAst.Field base=self.materializeExpr(id: node.child0, p: p) name=self.materializeText(p: p, span: node.name) nameSpan=node.name span=node.span /> }
+            SyntaxExprKind.Method => { return <ExprAst.Method recv=self.materializeExpr(id: node.child0, p: p) name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
+            SyntaxExprKind.ExtMethod => { return <ExprAst.ExtMethod recv=self.materializeExpr(id: node.child0, p: p) src=self.materializeText(p: p, span: node.text) srcSpan=node.text name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
+            SyntaxExprKind.ExtView => { return <ExprAst.ExtView recv=self.materializeExpr(id: node.child0, p: p) src=self.materializeText(p: p, span: node.text) srcSpan=node.text strip=node.flag0 span=node.span /> }
+            SyntaxExprKind.Index => { return <ExprAst.Index base=self.materializeExpr(id: node.child0, p: p) index=self.materializeExpr(id: node.child1, p: p) span=node.span /> }
+            SyntaxExprKind.Make => { return <ExprAst.Make typeName=self.materializeText(p: p, span: node.name) typeNameSpan=node.name typeArgs=self.materializeTypeSlice(slice: node.typeArgs, p: p) variant=self.materializeText(p: p, span: node.nameSpan) variantSpan=node.nameSpan isEnum=node.flag0 fields=self.materializeMakeFields(slice: node.fields, p: p) span=node.span /> }
+            SyntaxExprKind.ArrayLit => { return <ExprAst.ArrayLit elems=self.materializeExprs(slice: node.elems, p: p) span=node.span /> }
+            SyntaxExprKind.DictLit => { return <ExprAst.DictLit keys=self.materializeExprs(slice: node.keys, p: p) vals=self.materializeExprs(slice: node.values, p: p) span=node.span /> }
+            SyntaxExprKind.RecordLit => { return <ExprAst.RecordLit fields=self.materializeMakeFields(slice: node.fields, p: p) span=node.span /> }
+            SyntaxExprKind.Cast => { return <ExprAst.Cast operand=self.materializeExpr(id: node.child0, p: p) ty=self.materializeType(id: node.type0, p: p) span=node.span /> }
+            SyntaxExprKind.MatchExpr => { return <ExprAst.MatchExpr scrut=self.materializeExpr(id: node.child0, p: p) arms=self.materializeMatchArms(slice: node.arms, p: p) span=node.span /> }
+            SyntaxExprKind.IfExpr => { return <ExprAst.IfExpr cond=self.materializeExpr(id: node.child0, p: p) thenBlk=self.materializeBlock(id: node.block0, p: p) elseBlk=self.materializeBlock(id: node.block1, p: p) span=node.span /> }
+            SyntaxExprKind.OptChain => { return <ExprAst.OptChain base=self.materializeExpr(id: node.child0, p: p) cont=self.materializeExpr(id: node.child1, p: p) memberSpan=node.name span=node.span /> }
+            SyntaxExprKind.ChainHole => { return <ExprAst.ChainHole span=node.span /> }
+            SyntaxExprKind.Try => { return <ExprAst.Try operand=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+            SyntaxExprKind.Arrow => { return <ExprAst.Arrow base=self.materializeExpr(id: node.child0, p: p) name=self.materializeText(p: p, span: node.name) nameSpan=node.name span=node.span /> }
+            SyntaxExprKind.ArrowMethod => { return <ExprAst.ArrowMethod recv=self.materializeExpr(id: node.child0, p: p) name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
+            SyntaxExprKind.Closure => {
+                mut val ret: TypeAst = emptyTypeAst()
+                if node.flag0 { ret = self.materializeType(id: node.type0, p: p) }
+                return <ExprAst.Closure params=self.materializeParams(slice: node.params, p: p) hasRet=node.flag0 ret=ret body=self.materializeBlock(id: node.block0, p: p) span=node.span />
+            }
+            SyntaxExprKind.Move => { return <ExprAst.Move operand=self.materializeExpr(id: node.child0, p: p) isBorrow=node.flag0 span=node.span /> }
+            SyntaxExprKind.Await => { return <ExprAst.Await operand=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
+            SyntaxExprKind.Range => {
+                mut val typeName: String = "HalfOpenRange"
+                if node.flag0 { typeName = "ClosedRange" }
+                return <ExprAst.Make typeName=typeName typeNameSpan=<Span start=0U64 end=0U64 /> typeArgs=[] variant="" variantSpan=<Span start=0U64 end=0U64 /> isEnum=false fields=[<MakeFieldAst name="start" value=self.materializeExpr(id: node.child0, p: p) span=node.span />, <MakeFieldAst name="end" value=self.materializeExpr(id: node.child1, p: p) span=node.span />] span=node.span />
+            }
+        }
+    }
+
+    fn materializeField(id: FieldId, p: P) -> FieldAst {
+        val node: SyntaxField = self.fields[id.raw]
+        mut val defaultVal: ExprAst = emptyExpr()
+        if node.hasDefault { defaultVal = self.materializeExpr(id: node.defaultVal, p: p) }
+        return <FieldAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name ty=self.materializeType(id: node.ty, p: p) isMut=node.isMut vis=node.vis hasDefault=node.hasDefault defaultVal=defaultVal span=node.span />
+    }
+
+    fn materializeFields(slice: SyntaxSlice, p: P) -> Array[FieldAst] {
+        mut val result: Array[FieldAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeField(id: self.fieldIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeVariant(id: VariantId, p: P) -> VariantAst {
+        val node: SyntaxVariant = self.variants[id.raw]
+        return <VariantAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name fields=self.materializeFields(slice: node.fields, p: p) span=node.span />
+    }
+
+    fn materializeVariants(slice: SyntaxSlice, p: P) -> Array[VariantAst] {
+        mut val result: Array[VariantAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeVariant(id: self.variantIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeWhereNames(slice: SyntaxSlice, p: P) -> Array[String] {
+        return self.materializeTexts(p: p, slice: slice)
+    }
+
+    fn materializeSig(id: SigId, p: P) -> SigAst {
+        val node: SyntaxSig = self.sigs[id.raw]
+        mut val ret: TypeAst = emptyTypeAst()
+        if node.hasRet { ret = self.materializeType(id: node.ret, p: p) }
+        return <SigAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAssoc=node.isAssoc selfInout=node.selfInout />
+    }
+
+    fn materializeSigs(slice: SyntaxSlice, p: P) -> Array[SigAst] {
+        mut val result: Array[SigAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeSig(id: self.sigIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeMember(id: MemberId, p: P) -> MemberAst {
+        val node: SyntaxMember = self.members[id.raw]
+        mut val ret: TypeAst = emptyTypeAst()
+        if node.hasRet { ret = self.materializeType(id: node.ret, p: p) }
+        mut val assocTy: TypeAst = emptyTypeAst()
+        match node.kind {
+            MemberKind.AssocType => { assocTy = self.materializeType(id: node.assocTy, p: p) }
+            _ => {}
+        }
+        mut val factoryErr: TypeAst = emptyTypeAst()
+        if node.factoryKind == 2U64 { factoryErr = self.materializeType(id: node.factoryErr, p: p) }
+        return <MemberAst
+            kind=node.kind name=self.materializeText(p: p, span: node.name) nameSpan=node.name
+            typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable)
+            params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret
+            whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p)
+            whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p)
+            isAsync=node.isAsync selfInout=node.selfInout selfMove=node.selfMove isVia=node.isVia viaName=self.materializeText(p: p, span: node.viaName) viaNameSpan=node.viaName
+            body=self.materializeBlock(id: node.body, p: p) assocTy=assocTy
+            isFactory=node.isFactory factoryKind=node.factoryKind factoryErr=factoryErr
+        />
+    }
+
+    fn materializeMembers(slice: SyntaxSlice, p: P) -> Array[MemberAst] {
+        mut val result: Array[MemberAst] = []
+        mut val i: U64 = 0U64
+        while i < slice.count {
+            result.append(self.materializeMember(id: self.memberIds[slice.start + i], p: p))
+            i += 1U64
+        }
+        return result
+    }
+
+    fn materializeDecl(id: DeclId, p: P) -> DeclAst {
+        val node: SyntaxDecl = self.decls[id.raw]
+        mut val ret: TypeAst = emptyTypeAst()
+        if node.hasRet { ret = self.materializeType(id: node.ret, p: p) }
+        mut val deinitBody: BlockAst = emptyBlock()
+        if node.hasDeinit { deinitBody = self.materializeBlock(id: node.deinitBody, p: p) }
+        mut val body: BlockAst = emptyBlock()
+        match node.kind {
+            DeclKind.Func => { body = self.materializeBlock(id: node.body, p: p) }
+            _ => {}
+        }
+        return <DeclAst
+            kind=node.kind name=self.materializeText(p: p, span: node.name) nameSpan=node.name
+            typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable)
+            span=node.span isUnique=node.isUnique isNonsendable=node.isNonsendable fields=self.materializeFields(slice: node.fields, p: p)
+            hasDeinit=node.hasDeinit deinitBody=deinitBody
+            variants=self.materializeVariants(slice: node.variants, p: p)
+            params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAsync=node.isAsync
+            whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p)
+            whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p)
+            body=body
+        />
+    }
+
+    fn materializeTrait(id: TraitId, p: P) -> TraitAst {
+        val node: SyntaxTrait = self.traits[id.raw]
+        return <TraitAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) supertraits=self.materializeTexts(p: p, slice: node.supertraits) supertraitSpans=self.spanSlice(slice: node.supertraits) reqs=self.materializeSigs(slice: node.reqs, p: p) assocTypes=self.materializeTexts(p: p, slice: node.assocTypes) assocTypeSpans=self.spanSlice(slice: node.assocTypes) span=node.span />
+    }
+
+    fn materializeDirective(id: DirectiveId, p: P) -> DirectiveAst {
+        val node: SyntaxDirective = self.directives[id.raw]
+        mut val reqs: Array[DeriveReqAst] = []
+        mut val i: U64 = 0U64
+        while i < node.reqs.count {
+            val req: SyntaxDeriveReq = self.deriveReqs[self.deriveReqIds[node.reqs.start + i].raw]
+            reqs.append(<DeriveReqAst name=self.materializeText(p: p, span: req.name) nameSpan=req.name args=self.materializeMakeFields(slice: req.args, p: p) />)
+            i += 1U64
+        }
+        return <DirectiveAst reqs=reqs />
+    }
+
+    fn materializeExtern(id: ExternId, p: P) -> ExternAst {
+        val node: SyntaxExtern = self.externs[id.raw]
+        mut val typeParams: Array[Array[String]] = []
+        mut val typeParamSpans: Array[Array[Span]] = []
+        mut val sendableGroups: Array[Array[Bool]] = []
+        mut val directives: Array[DirectiveAst] = []
+        mut val i: U64 = 0U64
+        while i < node.structNames.count {
+            val params: SyntaxSlice = self.slices[node.structTypeParams.start + i]
+            val flags: SyntaxSlice = self.slices[node.structTypeParamSendable.start + i]
+            typeParams.append(self.materializeTexts(p: p, slice: params))
+            typeParamSpans.append(self.spanSlice(slice: params))
+            sendableGroups.append(self.materializeBools(slice: flags))
+            directives.append(self.materializeDirective(id: self.directiveIds[node.structDirectives.start + i], p: p))
+            i += 1U64
+        }
+        return <ExternAst abiOk=node.abiOk abiC=node.abiC abiSpan=node.abiSpan fns=self.materializeSigs(slice: node.fns, p: p) structNames=self.materializeTexts(p: p, slice: node.structNames) structNameSpans=self.spanSlice(slice: node.structNames) structTypeParams=typeParams structTypeParamSpans=typeParamSpans structTypeParamSendable=sendableGroups structSpans=self.spanSlice(slice: node.structSpans) structDirectives=directives span=node.span />
+    }
+
+    fn materializeImpl(id: ImplId, p: P) -> ImplAst {
+        val node: SyntaxImpl = self.impls[id.raw]
+        return <ImplAst recvType=self.materializeType(id: node.recvType, p: p) implParams=self.materializeTexts(p: p, slice: node.implParams) implParamSpans=self.spanSlice(slice: node.implParams) implParamSendable=self.materializeBools(slice: node.implParamSendable) isTraitImpl=node.isTraitImpl traitName=self.materializeText(p: p, span: node.traitName) traitNameSpan=node.traitNameSpan traitArgs=self.materializeTypeSlice(slice: node.traitArgs, p: p) whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p) whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p) isPub=node.isPub members=self.materializeMembers(slice: node.members, p: p) span=node.span extName=self.materializeText(p: p, span: node.extName) extNameSpan=node.extName />
+    }
+
+    fn materializeImport(id: ImportId, p: P) -> ImportAst {
+        val node: SyntaxImport = self.imports[id.raw]
+        return <ImportAst pathSpan=node.path segSpan=node.segment isImport=node.isImport names=self.materializeTexts(p: p, slice: node.nameSpans) nameSpans=self.spanSlice(slice: node.nameSpans) aliasSpan=node.alias nameAliasSpans=self.spanSlice(slice: node.nameAliases) span=node.span />
+    }
+
+    fn materializeTopItem(id: TopItemId, p: P) -> TopItemAst {
+        val node: SyntaxTopItem = self.topItems[id.raw]
+        match node.kind {
+            SyntaxTopItemKind.Decl => { return <TopItemAst.Decl d=self.materializeDecl(id: <DeclId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.Impl => { return <TopItemAst.Impl im=self.materializeImpl(id: <ImplId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.Trait => { return <TopItemAst.Trait t=self.materializeTrait(id: <TraitId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.Extern => { return <TopItemAst.Extern e=self.materializeExtern(id: <ExternId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.Import => { return <TopItemAst.Import imp=self.materializeImport(id: <ImportId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.Export => { return <TopItemAst.Export inner=self.materializeTopItem(id: <TopItemId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.ReExport => { return <TopItemAst.ReExport imp=self.materializeImport(id: <ImportId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.Directive => { return <TopItemAst.Directive dir=self.materializeDirective(id: <DirectiveId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.GlobalVal => { return <TopItemAst.GlobalVal s=self.materializeStmt(id: <StmtId raw=node.payload />, p: p) /> }
+            SyntaxTopItemKind.NewType => {
+                val newtype: SyntaxNewtype = self.newtypes[node.payload]
+                return <TopItemAst.NewType name=self.materializeText(p: p, span: newtype.name) nameSpan=newtype.name ty=self.materializeType(id: newtype.ty, p: p) isPub=newtype.isPub span=newtype.span />
+            }
+        }
+    }
+}
+
+// Plew visibility requires a `pub impl` bridge for a module-root free function
+// to invoke the private type-owned adapter above.  These are deliberately
+// macro-specific single-node operations: callers must retain the originating
+// P/source, and there is no general SyntaxFile-to-value-tree traversal API for
+// compiler clients.
+pub impl SyntaxFile {
+    fn materializeMacroTopItem(id: TopItemId, p: P) -> TopItemAst {
+        return self.materializeTopItem(id: id, p: p)
+    }
+
+    fn materializeMacroExpr(id: ExprId, p: P) -> ExprAst {
+        return self.materializeExpr(id: id, p: p)
+    }
+
+    fn materializeMacroBlock(id: BlockId, p: P) -> BlockAst {
+        return self.materializeBlock(id: id, p: p)
+    }
+}

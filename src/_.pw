@@ -23,6 +23,7 @@ part ./Lexer
 part ./Parser
 part ./Build
 part ./Arena
+part ./Materialize
 
 // A derive is anything that implements a derive interface; `@[X]` is valid when X
 // does (spec/16). The single axis is whether the derive carries configuration:
@@ -5582,6 +5583,17 @@ pub impl SyntaxFile {
     inout fn parseProgramSyntaxDirect(p: inout P) -> SyntaxSlice {
         return self.parseSyntaxProgramInto(p: inout p)
     }
+
+    // These two narrow bridges exist solely for the macro value adapters below.
+    // They expose canonical parse results, not raw table mutation, and keep the
+    // expression/block grammar in the same direct parser as compiler input.
+    inout fn parseExpressionSyntaxDirect(p: inout P) -> ExprId {
+        return self.parseSyntaxExpr(p: inout p)
+    }
+
+    inout fn parseBlockSyntaxDirect(p: inout P) -> BlockId {
+        return self.parseSyntaxBlock(p: inout p)
+    }
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
@@ -6057,77 +6069,23 @@ export fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
     mut val p: P = <P bytes=sb toks=lx.toks pos=0 base=start />
-    skipLeading(p: inout p)
-    // dispatch the one annotated item, mirroring parseProgramAst (a macro target is
-    // a struct / enum / fn / impl / trait / extern). The result is the `TopItemAst`
-    // the macro's `derive` matches on.
-    match p.curKind() {
-        Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: false) /> }
-        Kind.KwNonsendable => {
-            p.advance()
-            match p.curKind() {
-                Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: false, isNonsendable: true) /> }
-                Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: false, isNonsendable: true) /> }
-                _ => {
-                    p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `nonsendable`")
-                    return emptyTopItem(off: p.base + p.curTok().start)
-                }
-            }
+    mut val file: SyntaxFile = <SyntaxFile.empty />
+    val roots: SyntaxSlice = file.parseProgramSyntaxDirect(p: inout p)
+    // A derive target may have one or more leading directives and `export`.
+    // The old API intentionally returned the target itself rather than either
+    // wrapper, so retain that documented macro boundary while obtaining it from
+    // the canonical parsed rows.
+    mut val i: U64 = roots.count
+    while i > 0U64 {
+        i -= 1U64
+        mut val item: TopItemAst = file.materializeMacroTopItem(id: file.topLevelItem(index: roots.start + i), p: p)
+        match item {
+            TopItemAst.Directive(dir: _) => {}
+            TopItemAst.Export(inner: val inner) => { return inner }
+            _ => { return item }
         }
-        Kind.KwUnique => {
-            // `unique` prefixes a nominal type declaration: struct or enum (spec/03) —
-            // dispatch on the following keyword instead of assuming struct (an
-            // assumed-struct parse silently swallowed `unique enum` as a junk struct).
-            p.advance()
-            match p.curKind() {
-                Kind.KwNonsendable => {
-                    p.advance()
-                    match p.curKind() {
-                        Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true, isNonsendable: true) /> }
-                        Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: true, isNonsendable: true) /> }
-                        _ => {
-                            p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique nonsendable`")
-                            return emptyTopItem(off: p.base + p.curTok().start)
-                        }
-                    }
-                }
-                Kind.KwStruct => { return <TopItemAst.Decl d=parseStructDecl(p: inout p, isUnique: true) /> }
-                Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: true) /> }
-                _ => {
-                    p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique`")
-                    return emptyTopItem(off: p.base + p.curTok().start)
-                }
-            }
-        }
-        Kind.KwEnum => { return <TopItemAst.Decl d=parseEnumDecl(p: inout p, isUnique: false) /> }
-        Kind.KwFn => { return <TopItemAst.Decl d=parseFuncDecl(p: inout p, isAsync: false) /> }
-        Kind.KwSpawn => {
-            p.fail(off: p.base + p.curTok().start, msg: "`spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
-            return emptyTopItem(off: p.base + p.curTok().start)
-        }
-        Kind.KwAsync => {
-            p.advance()
-            return <TopItemAst.Decl d=parseFuncDecl(p: inout p, isAsync: true) />
-        }
-        Kind.KwExtern => { return <TopItemAst.Extern e=parseExternDecl(p: inout p) /> }
-        Kind.Ident => {
-            if curIs(p: inout p, kw: "trait") {
-                return <TopItemAst.Trait t=parseTraitDecl(p: inout p) />
-            }
-            if curIs(p: inout p, kw: "pub") {
-                p.advance()
-                if curIs(p: inout p, kw: "impl") {
-                    return <TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />
-                }
-                return emptyTopItem(off: p.base + p.curTok().start)
-            }
-            if curIs(p: inout p, kw: "impl") {
-                return <TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: false) />
-            }
-            return emptyTopItem(off: p.base + p.curTok().start)
-        }
-        _ => { return emptyTopItem(off: start) }
     }
+    return emptyTopItem(off: start)
 }
 
 // A placeholder `TopItemAst` for an item the parser does not recognize (a macro on
@@ -7133,14 +7091,13 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
 // files. This is the single top-level entry — the compiler has no separate
 // declaration/dispatch parser. Mirrors the compiler's old parseProgram dispatch.
 export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
+    mut val file: SyntaxFile = <SyntaxFile.empty />
+    val roots: SyntaxSlice = file.parseProgramSyntaxDirect(p: inout p)
     mut val items: Array[TopItemAst] = []
-    while p.curKind() != <Kind.Eof /> {
-        val next: Array[TopItemAst] = parseTopItemsAt(p: inout p)
-        mut val i: U64 = 0U64
-        while i < next.count() {
-            items.append(next[i])
-            i += 1U64
-        }
+    mut val i: U64 = 0U64
+    while i < roots.count {
+        items.append(file.materializeMacroTopItem(id: file.topLevelItem(index: roots.start + i), p: p))
+        i += 1U64
     }
     return items
 }
@@ -8615,7 +8572,9 @@ fn parseRangeAst(p: inout P) -> ExprAst {
 // macros that read an expression position). Range (weakest, non-assoc) wraps the
 // binary-operator precedence climb.
 export fn parseExprAst(p: inout P) -> ExprAst {
-    return parseRangeAst(p: inout p)
+    mut val file: SyntaxFile = <SyntaxFile.empty />
+    val id: ExprId = file.parseExpressionSyntaxDirect(p: inout p)
+    return file.materializeMacroExpr(id: id, p: p)
 }
 
 // ---- patterns ----
@@ -9700,36 +9659,9 @@ fn checkGuardElseDiverges(p: inout P, elseBody: BlockAst, off: U64) {
 }
 
 export fn parseBlockAst(p: inout P) -> BlockAst {
-    match p.curKind() {
-        Kind.LBrace => { p.advance() }
-        _ => {
-            p.fail(off: p.base + p.curTok().start, msg: "expected `{` to open a block")
-        }
-    }
-    mut val stmts: Array[StmtAst] = []
-    while true {
-        p.skipNewlines()
-        match p.curKind() {
-            Kind.RBrace => {
-                p.advance()
-                break
-            }
-            Kind.Eof => {
-                // end of input inside a block: an unclosed `{` used to be silently
-                // accepted (the rest of the file was swallowed into this body).
-                p.fail(off: p.base + p.curTok().start, msg: "expected `}` to close this block before the end of input")
-                break
-            }
-            _ => {
-                if curIs(p: inout p, kw: "guard") {
-                    stmts.append(parseGuardStmt(p: inout p))
-                } else {
-                    stmts.append(parseStmtAst(p: inout p))
-                }
-            }
-        }
-    }
-    return <BlockAst stmts=stmts />
+    mut val file: SyntaxFile = <SyntaxFile.empty />
+    val id: BlockId = file.parseBlockSyntaxDirect(p: inout p)
+    return file.materializeMacroBlock(id: id, p: p)
 }
 
 // ---- convenience entry points (build the cursor internally) ----
