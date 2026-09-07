@@ -4869,6 +4869,12 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
     return id
 }
 
+inout fn parseSyntaxGlobalVal(p: inout P, mutable: Bool) -> TopItemId {
+    if mutable { p.advance() }
+    val statement: StmtId = self.parseSyntaxLet(p: inout p, mutable: mutable)
+    return self.pushTopItem(kind: <SyntaxTopItemKind.GlobalVal /> payload: statement.raw span: self.stmts[statement.raw].span)
+}
+
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
