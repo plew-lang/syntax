@@ -4210,6 +4210,93 @@ inout fn parseSyntaxStructDecl(p: inout P, isUnique: Bool, isNonsendable: Bool =
     return self.appendDirectSyntaxDecl(kind: <DeclKind.Struct /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: isUnique isNonsendable: isNonsendable fields: self.pushFieldIdSlice(items: fields) hasDeinit: hasDeinit deinitBody: deinitBody)
 }
 
+inout fn parseSyntaxVariantField(p: inout P) -> FieldId {
+    val start: U64 = p.base + p.curTok().start
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val ty: TypeId = <TypeId raw=0U64 />
+    match p.curKind() {
+        Kind.Colon => { p.advance() ty = self.parseSyntaxType(p: inout p) }
+        _ => {}
+    }
+    return self.appendDirectSyntaxField(name: name, ty: ty, isMut: false, vis: 0U64, hasDefault: false, defaultVal: <ExprId raw=0U64 />, span: <Span start=start end=p.prevEnd() />)
+}
+
+inout fn parseSyntaxEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeParams: Array[Span] = []
+    mut val typeParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => {}
+    }
+    mut val variants: Array[VariantId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.Hash => { p.fail(off: p.base + p.curTok().start, msg: "unexpected `#` in enum body") p.advance() }
+            Kind.Ident => {
+                val variantStart: U64 = p.base + p.curTok().start
+                val variantName: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                mut val fields: Array[FieldId] = []
+                match p.curKind() {
+                    Kind.LBrace => { p.fail(off: p.base + p.curTok().start, msg: "enum variant payloads use parentheses, e.g. `Foo(x: I32, y: I32)`") }
+                    Kind.LParen => {
+                        p.advance()
+                        while true {
+                            p.skipNewlines()
+                            match p.curKind() {
+                                Kind.RParen => { p.advance() break }
+                                Kind.Eof => { break }
+                                Kind.Ident => { fields.append(self.parseSyntaxVariantField(p: inout p)) match p.curKind() { Kind.Comma => { p.advance() } _ => {} } }
+                                _ => { p.advance() }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                val id: VariantId = <VariantId raw=self.variants.count() />
+                self.variants.append(<SyntaxVariant name=variantName fields=self.pushFieldIdSlice(items: fields) span=<Span start=variantStart end=p.prevEnd() /> />)
+                variants.append(id)
+            }
+            _ => { p.advance() }
+        }
+    }
+    return self.appendDirectSyntaxDecl(kind: <DeclKind.Enum /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: isUnique isNonsendable: isNonsendable variants: self.pushVariantIdSlice(items: variants))
+}
+
+inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeParams: Array[Span] = []
+    mut val typeParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
+    val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+    mut val hasRet: Bool = false
+    mut val ret: TypeId = <TypeId raw=0U64 />
+    match p.curKind() {
+        Kind.Arrow => { p.advance() ret = self.parseSyntaxType(p: inout p) hasRet = true }
+        _ => {}
+    }
+    mut val whereParams: Array[Span] = []
+    mut val whereTraits: Array[Span] = []
+    mut val whereTypes: Array[TypeId] = []
+    mut val whereTraitTypes: Array[TypeId] = []
+    self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
+    p.skipNewlines()
+    val body: BlockId = self.parseSyntaxBlock(p: inout p)
+    return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
+}
+
 inout fn syntaxStmtDiverges(id: StmtId) -> Bool {
     val stmt: SyntaxStmt = self.stmts[id.raw]
     match stmt.kind {
