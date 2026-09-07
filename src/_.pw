@@ -5041,6 +5041,311 @@ inout fn parseSyntaxExternDecl(p: inout P) -> ExternId {
     return id
 }
 
+inout fn appendDirectSyntaxMember(node: SyntaxMember) -> MemberId {
+    val id: MemberId = <MemberId raw=self.members.count() />
+    self.members.append(node)
+    return id
+}
+
+// Parse a method or an assoc-fn after the mode and `fn` tokens are consumed.
+// The direct form is the one place that owns a member's signature/body grammar;
+// callers only select the already-known mode.
+inout fn parseSyntaxMethodAfterFn(
+    p: inout P,
+    kind: MemberKind,
+    selfInout: Bool,
+    selfMove: Bool,
+    isAsync: Bool
+) -> MemberId {
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeParams: Array[Span] = []
+    mut val typeParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
+    val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+    mut val hasRet: Bool = false
+    mut val ret: TypeId = <TypeId raw=0U64 />
+    match p.curKind() {
+        Kind.Arrow => { p.advance() ret = self.parseSyntaxType(p: inout p) hasRet = true }
+        _ => {}
+    }
+    mut val whereParams: Array[Span] = []
+    mut val whereTraits: Array[Span] = []
+    mut val whereTypes: Array[TypeId] = []
+    mut val whereTraitTypes: Array[TypeId] = []
+    self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
+    mut val isVia: Bool = false
+    mut val viaName: Span = <Span start=0U64 end=0U64 />
+    if curIs(p: inout p, kw: "via") {
+        p.advance()
+        viaName = p.spanOf(t: p.curTok())
+        p.advance()
+        isVia = true
+    }
+    mut val body: BlockId = self.directBlock(stmts: [])
+    if !(isVia) {
+        p.skipNewlines()
+        body = self.parseSyntaxBlock(p: inout p)
+    }
+    return self.appendDirectSyntaxMember(node: <SyntaxMember
+        kind=kind name=name
+        typeParams=self.pushDirectSyntaxTexts(items: typeParams)
+        typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable)
+        params=params hasRet=hasRet ret=ret
+        whereParams=self.pushDirectSyntaxTexts(items: whereParams)
+        whereTraits=self.pushDirectSyntaxTexts(items: whereTraits)
+        whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes)
+        whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes)
+        isAsync=isAsync selfInout=selfInout selfMove=selfMove
+        isVia=isVia viaName=viaName body=body assocTy=<TypeId raw=0U64 />
+        isFactory=false factoryKind=0U64 factoryErr=<TypeId raw=0U64 />
+    />)
+}
+
+// `assoc val NAME: T = expr` is represented as the existing zero-argument
+// assoc-fn shape.  The return statement and its block are direct rows too;
+// synthesizing a temporary StmtAst here would defeat the direct builder exactly
+// in the constants that occur throughout the compiler source.
+inout fn parseSyntaxAssocValMember(p: inout P) -> MemberId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val ty: TypeId = <TypeId raw=0U64 />
+    match p.curKind() {
+        Kind.Colon => { p.advance() ty = self.parseSyntaxType(p: inout p) }
+        _ => {}
+    }
+    match p.curKind() { Kind.Eq => { p.advance() } _ => {} }
+    val value: ExprId = self.parseSyntaxExpr(p: inout p)
+    val span: Span = <Span start=start end=p.prevEnd() />
+    val result: StmtId = self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Return /> span: span flag0: true child0: value)
+    val body: BlockId = self.directBlock(stmts: [result])
+    return self.appendDirectSyntaxMember(node: <SyntaxMember
+        kind=<MemberKind.AssocFn /> name=name
+        typeParams=self.pushDirectSyntaxTexts(items: []) typeParamSendable=self.pushDirectSyntaxBools(items: [])
+        params=self.pushParamIdSlice(items: []) hasRet=true ret=ty
+        whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
+        whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
+        isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
+        body=body assocTy=<TypeId raw=0U64 /> isFactory=false factoryKind=0U64 factoryErr=<TypeId raw=0U64 />
+    />)
+}
+
+// An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block.  The
+// receiver, trait instance, all member bodies, and every synthesized factory
+// row enter the immutable SyntaxFile directly.  This mirrors the value parser's
+// recovery and dispatch without using ImplAst/MemberAst as an intermediate.
+inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span start=0U64 end=0U64 />) -> ImplId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    mut val implParams: Array[Span] = []
+    mut val implParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout implParams, flags: inout implParamSendable)
+    val recvType: TypeId = self.parseSyntaxType(p: inout p)
+    mut val isTraitImpl: Bool = false
+    mut val traitName: Span = <Span start=0U64 end=0U64 />
+    mut val traitArgs: Array[TypeId] = []
+    match p.curKind() {
+        Kind.KwAs => {
+            p.advance()
+            traitName = p.spanOf(t: p.curTok())
+            p.advance()
+            isTraitImpl = true
+            match p.curKind() {
+                Kind.LBracket => {
+                    p.advance()
+                    while true {
+                        match p.curKind() {
+                            Kind.RBracket => { p.advance() break }
+                            Kind.Eof => { break }
+                            Kind.Comma => { p.advance() }
+                            _ => { traitArgs.append(self.parseSyntaxType(p: inout p)) }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    mut val whereParams: Array[Span] = []
+    mut val whereTraits: Array[Span] = []
+    mut val whereTypes: Array[TypeId] = []
+    mut val whereTraitTypes: Array[TypeId] = []
+    self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
+    match p.curKind() { Kind.LBrace => { p.advance() } _ => {} }
+    mut val members: Array[MemberId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.KwInout => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false))
+            }
+            Kind.KwFn => {
+                p.advance()
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false))
+            }
+            Kind.KwAsync => {
+                p.advance()
+                mut val asyncMove: Bool = false
+                match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true))
+            }
+            Kind.KwMove => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false))
+            }
+            Kind.KwBorrow => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false))
+            }
+            Kind.KwDeinit => {
+                val deinitStart: U64 = p.base + p.curTok().start
+                p.advance()
+                p.skipNewlines()
+                val body: BlockId = self.parseSyntaxBlock(p: inout p)
+                members.append(self.appendDirectSyntaxMember(node: <SyntaxMember
+                    kind=<MemberKind.Deinit /> name=<Span start=deinitStart end=deinitStart />
+                    typeParams=self.pushDirectSyntaxTexts(items: []) typeParamSendable=self.pushDirectSyntaxBools(items: [])
+                    params=self.pushParamIdSlice(items: []) hasRet=false ret=<TypeId raw=0U64 />
+                    whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
+                    whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
+                    isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
+                    body=body assocTy=<TypeId raw=0U64 /> isFactory=false factoryKind=0U64 factoryErr=<TypeId raw=0U64 />
+                />))
+            }
+            _ => {
+                if curIs(p: inout p, kw: "factory") || curIs(p: inout p, kw: "optional") || curIs(p: inout p, kw: "result") {
+                    mut val factoryKind: U64 = 0U64
+                    mut val factoryErr: TypeId = <TypeId raw=0U64 />
+                    if curIs(p: inout p, kw: "optional") {
+                        p.advance()
+                        factoryKind = 1U64
+                    } else if curIs(p: inout p, kw: "result") {
+                        p.advance()
+                        match p.curKind() {
+                            Kind.LBracket => {
+                                p.advance()
+                                factoryErr = self.parseSyntaxType(p: inout p)
+                                match p.curKind() { Kind.RBracket => { p.advance() } _ => {} }
+                            }
+                            _ => {}
+                        }
+                        factoryKind = 2U64
+                    }
+                    val factorySpan: Span = p.spanOf(t: p.curTok())
+                    p.advance()
+                    match p.curKind() {
+                        Kind.Ident => {
+                            val name: Span = p.spanOf(t: p.curTok())
+                            p.advance()
+                            val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+                            p.skipNewlines()
+                            val body: BlockId = self.parseSyntaxBlock(p: inout p)
+                            members.append(self.appendDirectSyntaxMember(node: <SyntaxMember
+                                kind=<MemberKind.AssocFn /> name=name
+                                typeParams=self.pushDirectSyntaxTexts(items: []) typeParamSendable=self.pushDirectSyntaxBools(items: [])
+                                params=params hasRet=false ret=<TypeId raw=0U64 />
+                                whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
+                                whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
+                                isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
+                                body=body assocTy=<TypeId raw=0U64 /> isFactory=true factoryKind=factoryKind factoryErr=factoryErr
+                            />))
+                        }
+                        Kind.LParen => {
+                            val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+                            mut val name: Span = <Span start=factorySpan.end end=factorySpan.end />
+                            // Empty slices start at the current end of the
+                            // typed pool; a nonempty parameter slice has its
+                            // first ID below that end.  Use the pool boundary
+                            // directly instead of treating SyntaxSlice as an
+                            // owned collection.
+                            if params.start < self.paramIds.count() {
+                                // SyntaxSlice addresses the typed ParamId pool,
+                                // not the params table itself.  Going through the
+                                // ID preserves the same selector as the value
+                                // parser's first parameter label.
+                                val firstParam: ParamId = self.paramIds[params.start]
+                                name = self.paramNode(id: firstParam).name
+                            }
+                            p.skipNewlines()
+                            val body: BlockId = self.parseSyntaxBlock(p: inout p)
+                            members.append(self.appendDirectSyntaxMember(node: <SyntaxMember
+                                kind=<MemberKind.AssocFn /> name=name
+                                typeParams=self.pushDirectSyntaxTexts(items: []) typeParamSendable=self.pushDirectSyntaxBools(items: [])
+                                params=params hasRet=false ret=<TypeId raw=0U64 />
+                                whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
+                                whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
+                                isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
+                                body=body assocTy=<TypeId raw=0U64 /> isFactory=true factoryKind=factoryKind factoryErr=factoryErr
+                            />))
+                        }
+                        _ => {
+                            members.append(self.appendDirectSyntaxMember(node: <SyntaxMember
+                                kind=<MemberKind.Factory /> name=factorySpan
+                                typeParams=self.pushDirectSyntaxTexts(items: []) typeParamSendable=self.pushDirectSyntaxBools(items: [])
+                                params=self.pushParamIdSlice(items: []) hasRet=false ret=<TypeId raw=0U64 />
+                                whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
+                                whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
+                                isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
+                                body=self.directBlock(stmts: []) assocTy=<TypeId raw=0U64 /> isFactory=false factoryKind=0U64 factoryErr=<TypeId raw=0U64 />
+                            />))
+                        }
+                    }
+                } else if curIs(p: inout p, kw: "assoc") {
+                    p.advance()
+                    match p.curKind() {
+                        Kind.KwVal => { members.append(self.parseSyntaxAssocValMember(p: inout p)) }
+                        _ => {
+                            match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                            members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false))
+                        }
+                    }
+                } else if curIs(p: inout p, kw: "type") {
+                    p.advance()
+                    val name: Span = p.spanOf(t: p.curTok())
+                    p.advance()
+                    match p.curKind() { Kind.Eq => { p.advance() } _ => {} }
+                    val assocTy: TypeId = self.parseSyntaxType(p: inout p)
+                    members.append(self.appendDirectSyntaxMember(node: <SyntaxMember
+                        kind=<MemberKind.AssocType /> name=name
+                        typeParams=self.pushDirectSyntaxTexts(items: []) typeParamSendable=self.pushDirectSyntaxBools(items: [])
+                        params=self.pushParamIdSlice(items: []) hasRet=false ret=<TypeId raw=0U64 />
+                        whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
+                        whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
+                        isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
+                        body=self.directBlock(stmts: []) assocTy=assocTy isFactory=false factoryKind=0U64 factoryErr=<TypeId raw=0U64 />
+                    />))
+                } else {
+                    p.advance()
+                }
+            }
+        }
+    }
+    val id: ImplId = <ImplId raw=self.impls.count() />
+    self.impls.append(<SyntaxImpl
+        recvType=recvType implParams=self.pushDirectSyntaxTexts(items: implParams)
+        implParamSendable=self.pushDirectSyntaxBools(items: implParamSendable)
+        isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitName
+        traitArgs=self.pushDirectSyntaxTypeIds(items: traitArgs)
+        whereParams=self.pushDirectSyntaxTexts(items: whereParams)
+        whereTraits=self.pushDirectSyntaxTexts(items: whereTraits)
+        whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes)
+        whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes)
+        isPub=isPub members=self.pushMemberIdSlice(items: members)
+        span=<Span start=start end=p.prevEnd() /> extName=extName
+    />)
+    return id
+}
+
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
