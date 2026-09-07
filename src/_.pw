@@ -2471,6 +2471,16 @@ fn parseType(p: inout P) -> TypeAst {
     return <TypeAst name=name nameSpan=nameSpan args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView extViewSpan=extViewSpan viewNames=viewNames viewNameSpans=viewNameSpans projectionTrait=projectionTrait projectionTraitSpan=projectionTraitSpan projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionTraitArgLabelSpans=projectionTraitArgLabelSpans projectionAssoc=projectionAssoc projectionAssocSpan=projectionAssocSpan argLabels=argLabels argLabelSpans=argLabelSpans />
 }
 
+// A condition-chain clause is deliberately only a set of arena IDs.  Unlike the
+// legacy CondClause it never owns a recursive value AST: parsing a condition
+// chain writes its final children directly to SyntaxFile, and this short-lived
+// carrier only decides how those IDs are desugared into If/Match rows.
+struct SyntaxCondClause {
+    pub val isBinding: Bool
+    pub val pattern: PatternId
+    pub val expr: ExprId
+}
+
 impl SyntaxFile {
 fn directEmptySyntaxSlice() -> SyntaxSlice {
     return <SyntaxSlice start=0U64 count=0U64 />
@@ -2642,6 +2652,1584 @@ inout fn emptySyntaxType() -> TypeId {
         isSendable=false
         isRecord=false
     />)
+}
+
+// Keep direct body leaves on the existing private arena construction surface.
+// `pushExprNode` belongs to another anonymous SyntaxFile impl in this module;
+// it is nevertheless the same type-owned private API, not a public raw-row
+// escape hatch.  The full direct expression parser grows from this leaf.
+inout fn emptySyntaxExpr() -> ExprId {
+    return self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: <Span start=0U64 end=0U64 />)
+}
+
+// Call arguments are their own typed rows so a direct call never creates an
+// Array[ArgAst] merely to freeze it immediately afterwards.
+inout fn parseSyntaxCallArgs(p: inout P) -> SyntaxSlice {
+    mut val ids: Array[ArgId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RParen => {
+                p.advance()
+                break
+            }
+            Kind.Eof => { break }
+            _ => {
+                val start: U64 = p.base + p.curTok().start
+                mut val label: Span = <Span start=0U64 end=0U64 />
+                mut val hasLabel: Bool = false
+                match p.curKind() {
+                    Kind.Ident => {
+                        if p.peekKind(off: 1) == <Kind.Colon /> {
+                            label = p.spanOf(t: p.curTok())
+                            hasLabel = true
+                            p.advance()
+                            p.advance()
+                        }
+                    }
+                    _ => {}
+                }
+                mut val isInout: Bool = false
+                match p.curKind() {
+                    Kind.KwInout => {
+                        p.advance()
+                        isInout = true
+                    }
+                    _ => {}
+                }
+                val value: ExprId = self.parseSyntaxExpr(p: inout p)
+                val id: ArgId = <ArgId raw=self.args.count() />
+                self.args.append(<SyntaxArg label=label hasLabel=hasLabel isInout=isInout value=value span=<Span start=start end=p.prevEnd() /> />)
+                ids.append(id)
+                match p.curKind() {
+                    Kind.Comma => { p.advance() }
+                    _ => {}
+                }
+            }
+        }
+    }
+    return self.pushArgIdSlice(items: ids)
+}
+
+// JSX construction emits its selected surface fields directly.  The node keeps
+// the source's type and variant spans; semantic lookup remains a frontend job.
+inout fn parseSyntaxMake(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val typeName: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeArgs: Array[TypeId] = []
+    match p.curKind() {
+        Kind.LBracket => {
+            p.advance()
+            while true {
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() break }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    _ => { typeArgs.append(self.parseSyntaxType(p: inout p)) }
+                }
+            }
+        }
+        _ => {}
+    }
+    mut val variant: Span = <Span start=0U64 end=0U64 />
+    mut val isEnum: Bool = false
+    match p.curKind() {
+        Kind.Dot => {
+            p.advance()
+            variant = p.spanOf(t: p.curTok())
+            p.advance()
+            isEnum = true
+        }
+        _ => {}
+    }
+    mut val fieldIds: Array[MakeFieldId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.SlashGt | Kind.Gt => {
+                p.advance()
+                break
+            }
+            Kind.Eof => { break }
+            Kind.Ident => {
+                val fieldTok: Tok = p.curTok()
+                val fieldStart: U64 = p.base + fieldTok.start
+                val name: Span = p.spanOf(t: fieldTok)
+                p.advance()
+                match p.curKind() {
+                    Kind.Eq => { p.advance() }
+                    _ => {}
+                }
+                val value: ExprId = self.parseSyntaxExpr(p: inout p)
+                val id: MakeFieldId = <MakeFieldId raw=self.makeFields.count() />
+                self.makeFields.append(<SyntaxMakeField name=name value=value span=<Span start=fieldStart end=p.prevEnd() /> />)
+                fieldIds.append(id)
+            }
+            _ => { p.advance() }
+        }
+    }
+    return self.pushExprNode(
+        kind: <SyntaxExprKind.Make /> span: <Span start=start end=p.prevEnd() />
+        name: typeName nameSpan: variant flag0: isEnum
+        fields: self.pushMakeFieldIdSlice(items: fieldIds)
+        typeArgs: self.pushTypeIdSlice(items: typeArgs)
+    )
+}
+
+inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    match p.curKind() {
+        Kind.Int => {
+            val token: Tok = p.curTok()
+            p.advance()
+            mut val suffix: Span = <Span start=0U64 end=0U64 />
+            match p.curKind() {
+                Kind.Ident => {
+                    val next: Tok = p.curTok()
+                    if next.start == token.start + token.len {
+                        if isIntTypeAst(p: inout p, t: next) {
+                            suffix = p.spanOf(t: next)
+                            p.advance()
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token) name: suffix intValue: tokenU64Ast(p: inout p, t: token))
+        }
+        Kind.Float => {
+            val token: Tok = p.curTok()
+            p.advance()
+            mut val suffix: Span = <Span start=0U64 end=0U64 />
+            match p.curKind() {
+                Kind.Ident => {
+                    val next: Tok = p.curTok()
+                    if next.start == token.start + token.len {
+                        if isFloatTypeAst(p: inout p, t: next) {
+                            suffix = p.spanOf(t: next)
+                            p.advance()
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return self.pushExprNode(kind: <SyntaxExprKind.FloatLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token) name: suffix)
+        }
+        Kind.Char => {
+            val token: Tok = p.curTok()
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token) intValue: charValueAst(p: inout p, t: token))
+        }
+        Kind.KwTrue => {
+            val token: Tok = p.curTok()
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token) intValue: 1U64 flag0: true)
+        }
+        Kind.KwFalse => {
+            val token: Tok = p.curTok()
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token) intValue: 0U64 flag0: true)
+        }
+        Kind.Str => {
+            val token: Tok = p.curTok()
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.StrLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token))
+        }
+        Kind.Ident => {
+            val token: Tok = p.curTok()
+            val name: Span = p.spanOf(t: token)
+            match p.peekKind(off: 1) {
+                Kind.LParen => {
+                    p.advance()
+                    p.advance()
+                    return self.pushExprNode(kind: <SyntaxExprKind.Call /> span: <Span start=start end=p.prevEnd() /> name: name args: self.parseSyntaxCallArgs(p: inout p))
+                }
+                _ => {
+                    p.advance()
+                    return self.pushExprNode(kind: <SyntaxExprKind.Ident /> span: <Span start=start end=p.prevEnd() /> name: name)
+                }
+            }
+        }
+        Kind.LParen => {
+            val recordStart: U64 = p.base + p.curTok().start
+            p.advance()
+            match p.curKind() {
+                Kind.RParen => {
+                    p.advance()
+                    return self.pushExprNode(kind: <SyntaxExprKind.RecordLit /> span: <Span start=recordStart end=p.prevEnd() /> fields: self.pushMakeFieldIdSlice(items: []))
+                }
+                _ => {}
+            }
+            mut val isRecord: Bool = false
+            match p.curKind() {
+                Kind.Ident => {
+                    if p.peekKind(off: 1) == <Kind.Colon /> { isRecord = true }
+                    if p.peekKind(off: 1) == <Kind.Comma /> { isRecord = true }
+                }
+                _ => {}
+            }
+            if isRecord {
+                mut val fieldIds: Array[MakeFieldId] = []
+                while true {
+                    match p.curKind() {
+                        Kind.RParen => { p.advance() break }
+                        Kind.Eof => { break }
+                        Kind.Comma => { p.advance() }
+                        _ => {
+                            val fieldTok: Tok = p.curTok()
+                            val fieldStart: U64 = p.base + fieldTok.start
+                            val name: Span = p.spanOf(t: fieldTok)
+                            p.advance()
+                            mut val value: ExprId = <ExprId raw=0U64 />
+                            match p.curKind() {
+                                Kind.Colon => {
+                                    p.advance()
+                                    value = self.parseSyntaxExpr(p: inout p)
+                                }
+                                _ => {
+                                    value = self.pushExprNode(kind: <SyntaxExprKind.Ident /> span: <Span start=fieldStart end=p.prevEnd() /> name: name)
+                                }
+                            }
+                            val id: MakeFieldId = <MakeFieldId raw=self.makeFields.count() />
+                            self.makeFields.append(<SyntaxMakeField name=name value=value span=<Span start=fieldStart end=p.prevEnd() /> />)
+                            fieldIds.append(id)
+                        }
+                    }
+                }
+                return self.pushExprNode(kind: <SyntaxExprKind.RecordLit /> span: <Span start=recordStart end=p.prevEnd() /> fields: self.pushMakeFieldIdSlice(items: fieldIds))
+            }
+            val inner: ExprId = self.parseSyntaxExpr(p: inout p)
+            match p.curKind() {
+                Kind.RParen => { p.advance() }
+                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected ')' to close a parenthesized expression") }
+            }
+            return inner
+        }
+        Kind.KwFn => {
+            p.advance()
+            val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+            mut val hasRet: Bool = false
+            mut val ret: TypeId = self.emptySyntaxType()
+            match p.curKind() {
+                Kind.Arrow => {
+                    p.advance()
+                    ret = self.parseSyntaxType(p: inout p)
+                    hasRet = true
+                }
+                _ => {}
+            }
+            p.skipNewlines()
+            return self.pushExprNode(kind: <SyntaxExprKind.Closure /> span: <Span start=start end=p.prevEnd() /> flag0: hasRet type0: ret block0: self.parseSyntaxBlock(p: inout p) params: params)
+        }
+        Kind.KwSendable => {
+            if p.peekKind(off: 1) == <Kind.KwFn /> {
+                p.fail(off: start, msg: "`sendable fn` literals are rejected in v1 until sendable capture/effect checking is available")
+                p.advance()
+                p.advance()
+                val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+                mut val hasRet: Bool = false
+                mut val ret: TypeId = self.emptySyntaxType()
+                match p.curKind() {
+                    Kind.Arrow => {
+                        p.advance()
+                        ret = self.parseSyntaxType(p: inout p)
+                        hasRet = true
+                    }
+                    _ => {}
+                }
+                p.skipNewlines()
+                return self.pushExprNode(kind: <SyntaxExprKind.Closure /> span: <Span start=start end=p.prevEnd() /> flag0: hasRet type0: ret block0: self.parseSyntaxBlock(p: inout p) params: params)
+            }
+            p.fail(off: start, msg: "`sendable` is only valid in type syntax before `fn` or in generic parameter lists")
+            p.advance()
+            return self.emptySyntaxExpr()
+        }
+        Kind.KwSpawn => {
+            p.fail(off: start, msg: "`spawn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            p.advance()
+            match p.curKind() {
+                Kind.LBrace => { self.parseSyntaxBlock(p: inout p) }
+                _ => {}
+            }
+            return self.emptySyntaxExpr()
+        }
+        Kind.Lt => { return self.parseSyntaxMake(p: inout p) }
+        Kind.KwMatch => { return self.parseSyntaxMatchExpr(p: inout p) }
+        Kind.KwIf => { return self.parseSyntaxIfExpr(p: inout p) }
+        Kind.LBracket => {
+            p.advance()
+            p.skipNewlines()
+            match p.curKind() {
+                Kind.Colon => {
+                    p.advance()
+                    p.skipNewlines()
+                    match p.curKind() {
+                        Kind.RBracket => { p.advance() }
+                        _ => {}
+                    }
+                    return self.pushExprNode(kind: <SyntaxExprKind.DictLit /> span: <Span start=start end=p.prevEnd() /> keys: self.pushExprIdSlice(items: []) values: self.pushExprIdSlice(items: []))
+                }
+                Kind.RBracket => {
+                    p.advance()
+                    return self.pushExprNode(kind: <SyntaxExprKind.ArrayLit /> span: <Span start=start end=p.prevEnd() /> elems: self.pushExprIdSlice(items: []))
+                }
+                _ => {}
+            }
+            mut val elems: Array[ExprId] = []
+            elems.append(self.parseSyntaxExpr(p: inout p))
+            match p.curKind() {
+                Kind.Colon => {
+                    p.advance()
+                    mut val values: Array[ExprId] = []
+                    values.append(self.parseSyntaxExpr(p: inout p))
+                    match p.curKind() {
+                        Kind.Comma => { p.advance() }
+                        _ => {}
+                    }
+                    while true {
+                        p.skipNewlines()
+                        match p.curKind() {
+                            Kind.RBracket => { p.advance() break }
+                            Kind.Eof => { break }
+                            _ => {
+                                elems.append(self.parseSyntaxExpr(p: inout p))
+                                match p.curKind() {
+                                    Kind.Colon => { p.advance() }
+                                    _ => {}
+                                }
+                                values.append(self.parseSyntaxExpr(p: inout p))
+                                match p.curKind() {
+                                    Kind.Comma => { p.advance() }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    return self.pushExprNode(kind: <SyntaxExprKind.DictLit /> span: <Span start=start end=p.prevEnd() /> keys: self.pushExprIdSlice(items: elems) values: self.pushExprIdSlice(items: values))
+                }
+                _ => {}
+            }
+            match p.curKind() {
+                Kind.Comma => { p.advance() }
+                _ => {}
+            }
+            while true {
+                p.skipNewlines()
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() break }
+                    Kind.Eof => { break }
+                    _ => {
+                        elems.append(self.parseSyntaxExpr(p: inout p))
+                        match p.curKind() {
+                            Kind.Comma => { p.advance() }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            return self.pushExprNode(kind: <SyntaxExprKind.ArrayLit /> span: <Span start=start end=p.prevEnd() /> elems: self.pushExprIdSlice(items: elems))
+        }
+        _ => {
+            val token: Tok = p.curTok()
+            if p.text(t: token) == ";" {
+                p.fail(off: start, msg: "`;` is not a statement separator in Plew; put each statement on its own line")
+            } else {
+                p.fail(off: start, msg: "expected an expression")
+            }
+            p.advance()
+            return self.emptySyntaxExpr()
+        }
+    }
+}
+
+inout fn parseSyntaxUnary(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    if curIs(p: inout p, kw: "try") {
+        p.advance()
+        return self.pushExprNode(kind: <SyntaxExprKind.Try /> span: <Span start=start end=p.prevEnd() /> child0: self.parseSyntaxPostfix(p: inout p))
+    }
+    match p.curKind() {
+        Kind.KwAwait => {
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.Await /> span: <Span start=start end=p.prevEnd() /> child0: self.parseSyntaxPostfix(p: inout p))
+        }
+        Kind.KwMove => {
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.Move /> span: <Span start=start end=p.prevEnd() /> child0: self.parseSyntaxPostfix(p: inout p))
+        }
+        Kind.KwBorrow => {
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.Move /> span: <Span start=start end=p.prevEnd() /> flag0: true child0: self.parseSyntaxPostfix(p: inout p))
+        }
+        Kind.Minus | Kind.Bang | Kind.Tilde => {
+            val op: I64 = kindCode(k: p.curKind())
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.Unary /> span: <Span start=start end=p.prevEnd() /> op: op child0: self.parseSyntaxUnary(p: inout p))
+        }
+        _ => { return self.parseSyntaxPostfix(p: inout p) }
+    }
+}
+
+inout fn parseSyntaxOptChainMember(p: inout P, base: ExprId, start: U64) -> ExprId {
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    match p.curKind() {
+        Kind.LParen => {
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.Method /> span: <Span start=start end=p.prevEnd() /> name: name child0: base args: self.parseSyntaxCallArgs(p: inout p))
+        }
+        _ => { return self.pushExprNode(kind: <SyntaxExprKind.Field /> span: <Span start=start end=p.prevEnd() /> name: name child0: base) }
+    }
+}
+
+inout fn parseSyntaxOptChainCont(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    mut val value: ExprId = self.pushExprNode(kind: <SyntaxExprKind.ChainHole /> span: <Span start=start end=start />)
+    value = self.parseSyntaxOptChainMember(p: inout p, base: value, start: start)
+    while true {
+        match p.curKind() {
+            Kind.Dot => {
+                p.advance()
+                value = self.parseSyntaxOptChainMember(p: inout p, base: value, start: start)
+            }
+            Kind.LBracket => {
+                p.advance()
+                val index: ExprId = self.parseSyntaxExpr(p: inout p)
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() }
+                    _ => { p.fail(off: p.base + p.curTok().start, msg: "expected ']' to close an index") }
+                }
+                value = self.pushExprNode(kind: <SyntaxExprKind.Index /> span: <Span start=start end=p.prevEnd() /> child0: value child1: index)
+            }
+            Kind.Arrow => {
+                p.advance()
+                val name: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                match p.curKind() {
+                    Kind.LParen => {
+                        p.advance()
+                        value = self.pushExprNode(kind: <SyntaxExprKind.ArrowMethod /> span: <Span start=start end=p.prevEnd() /> name: name child0: value args: self.parseSyntaxCallArgs(p: inout p))
+                    }
+                    _ => { value = self.pushExprNode(kind: <SyntaxExprKind.Arrow /> span: <Span start=start end=p.prevEnd() /> name: name child0: value) }
+                }
+            }
+            _ => { return value }
+        }
+    }
+    return value
+}
+
+inout fn parseSyntaxPostfix(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    mut val value: ExprId = self.parseSyntaxPrimary(p: inout p)
+    while true {
+        match p.curKind() {
+            Kind.Dot => {
+                p.advance()
+                val name: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                match p.curKind() {
+                    Kind.LParen => {
+                        p.advance()
+                        value = self.pushExprNode(kind: <SyntaxExprKind.Method /> span: <Span start=start end=p.prevEnd() /> name: name child0: value args: self.parseSyntaxCallArgs(p: inout p))
+                    }
+                    _ => { value = self.pushExprNode(kind: <SyntaxExprKind.Field /> span: <Span start=start end=p.prevEnd() /> name: name child0: value) }
+                }
+            }
+            Kind.OptChain => {
+                p.advance()
+                val member: Span = p.spanOf(t: p.curTok())
+                val cont: ExprId = self.parseSyntaxOptChainCont(p: inout p)
+                value = self.pushExprNode(kind: <SyntaxExprKind.OptChain /> span: <Span start=start end=p.prevEnd() /> text: member child0: value child1: cont)
+            }
+            Kind.Hash => {
+                p.advance()
+                mut val strip: Bool = false
+                match p.curKind() {
+                    Kind.Bang => { strip = true p.advance() }
+                    _ => {}
+                }
+                val source: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                mut val isMethod: Bool = false
+                match p.curKind() {
+                    Kind.Dot => {
+                        if p.peekKind(off: 1) == <Kind.Ident /> && p.peekKind(off: 2) == <Kind.LParen /> { isMethod = true }
+                    }
+                    _ => {}
+                }
+                if isMethod {
+                    if strip {
+                        value = self.pushExprNode(kind: <SyntaxExprKind.ExtView /> span: <Span start=start end=p.prevEnd() /> text: source flag0: true child0: value)
+                    } else {
+                        p.advance()
+                        val name: Span = p.spanOf(t: p.curTok())
+                        p.advance()
+                        p.advance()
+                        value = self.pushExprNode(kind: <SyntaxExprKind.ExtMethod /> span: <Span start=start end=p.prevEnd() /> text: source name: name child0: value args: self.parseSyntaxCallArgs(p: inout p))
+                    }
+                } else {
+                    value = self.pushExprNode(kind: <SyntaxExprKind.ExtView /> span: <Span start=start end=p.prevEnd() /> text: source flag0: strip child0: value)
+                }
+            }
+            Kind.LBracket => {
+                p.advance()
+                val index: ExprId = self.parseSyntaxExpr(p: inout p)
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() }
+                    _ => { p.fail(off: p.base + p.curTok().start, msg: "expected ']' to close an index") }
+                }
+                value = self.pushExprNode(kind: <SyntaxExprKind.Index /> span: <Span start=start end=p.prevEnd() /> child0: value child1: index)
+            }
+            Kind.Arrow => {
+                p.advance()
+                val name: Span = p.spanOf(t: p.curTok())
+                p.advance()
+                match p.curKind() {
+                    Kind.LParen => {
+                        p.advance()
+                        value = self.pushExprNode(kind: <SyntaxExprKind.ArrowMethod /> span: <Span start=start end=p.prevEnd() /> name: name child0: value args: self.parseSyntaxCallArgs(p: inout p))
+                    }
+                    _ => { value = self.pushExprNode(kind: <SyntaxExprKind.Arrow /> span: <Span start=start end=p.prevEnd() /> name: name child0: value) }
+                }
+            }
+            Kind.KwAs => {
+                p.advance()
+                value = self.pushExprNode(kind: <SyntaxExprKind.Cast /> span: <Span start=start end=p.prevEnd() /> child0: value type0: self.parseSyntaxType(p: inout p))
+            }
+            Kind.Newline => {
+                mut val offset: U64 = 1U64
+                while p.peekKind(off: offset) == <Kind.Newline /> { offset += 1U64 }
+                if p.peekKind(off: offset) == <Kind.Dot /> { p.skipNewlines() } else { break }
+            }
+            _ => { break }
+        }
+    }
+    return value
+}
+
+inout fn parseSyntaxBin(p: inout P, minPrec: I64) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    mut val left: ExprId = self.parseSyntaxUnary(p: inout p)
+    while true {
+        val kind: Kind = p.curKind()
+        val prec: I64 = binPrecAst(k: kind)
+        if prec == 0 || prec < minPrec { break }
+        val op: I64 = kindCode(k: kind)
+        p.advance()
+        val right: ExprId = self.parseSyntaxBin(p: inout p, minPrec: prec + 1I64)
+        left = self.pushExprNode(kind: <SyntaxExprKind.Binary /> span: <Span start=start end=p.prevEnd() /> op: op child0: left child1: right)
+        if prec == 3I64 && binPrecAst(k: p.curKind()) == 3I64 {
+            p.fail(off: p.base + p.curTok().start, msg: "comparison operators are non-associative; add parentheses (e.g. `(a < b) && (b < c)`)")
+        }
+    }
+    return left
+}
+
+inout fn parseSyntaxExpr(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    val low: ExprId = self.parseSyntaxBin(p: inout p, minPrec: 1I64)
+    mut val inclusive: Bool = false
+    mut val isRange: Bool = false
+    match p.curKind() {
+        Kind.DotDotLt => { p.advance() isRange = true }
+        Kind.DotDotEq => { p.advance() isRange = true inclusive = true }
+        _ => {}
+    }
+    if !isRange { return low }
+    val high: ExprId = self.parseSyntaxBin(p: inout p, minPrec: 1I64)
+    match p.curKind() {
+        Kind.DotDotLt => { p.fail(off: p.base + p.curTok().start, msg: "range is non-associative: write `a..<b` once (e.g. parenthesize: `a..<(b..<c)`)") }
+        Kind.DotDotEq => { p.fail(off: p.base + p.curTok().start, msg: "range is non-associative: write `a..=b` once") }
+        _ => {}
+    }
+    return self.pushExprNode(kind: <SyntaxExprKind.Range /> span: <Span start=start end=p.prevEnd() /> flag0: inclusive child0: low child1: high)
+}
+
+// Parameter rows are shared by function declarations, method declarations,
+// signatures, and closures.  Defaults recurse through the same direct
+// expression parser rather than reopening the value AST path.
+inout fn parseSyntaxParam(p: inout P) -> ParamId {
+    val start: U64 = p.base + p.curTok().start
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val noLabel: Bool = false
+    match p.curKind() {
+        Kind.Tilde => {
+            if p.peekKind(off: 1U64) == <Kind.Colon /> {
+                p.advance()
+                noLabel = true
+            }
+        }
+        _ => {}
+    }
+    mut val ty: TypeId = self.emptySyntaxType()
+    mut val isInout: Bool = false
+    mut val isMove: Bool = false
+    mut val isBorrow: Bool = false
+    match p.curKind() {
+        Kind.Colon => {
+            p.advance()
+            match p.curKind() {
+                Kind.KwInout => { p.advance() isInout = true }
+                Kind.KwMove => { p.advance() isMove = true }
+                Kind.KwBorrow => { p.advance() isBorrow = true }
+                _ => {}
+            }
+            ty = self.parseSyntaxType(p: inout p)
+        }
+        _ => {}
+    }
+    mut val hasDefault: Bool = false
+    mut val defaultVal: ExprId = self.emptySyntaxExpr()
+    match p.curKind() {
+        Kind.Eq => {
+            p.advance()
+            defaultVal = self.parseSyntaxExpr(p: inout p)
+            hasDefault = true
+        }
+        _ => {}
+    }
+    val id: ParamId = <ParamId raw=self.params.count() />
+    self.params.append(<SyntaxParam name=name ty=ty isInout=isInout isMove=isMove isBorrow=isBorrow noLabel=noLabel hasDefault=hasDefault defaultVal=defaultVal span=<Span start=start end=p.prevEnd() /> />)
+    return id
+}
+
+inout fn parseSyntaxParams(p: inout P) -> SyntaxSlice {
+    mut val ids: Array[ParamId] = []
+    match p.curKind() {
+        Kind.LParen => {
+            p.advance()
+            while true {
+                p.skipNewlines()
+                match p.curKind() {
+                    Kind.RParen => { p.advance() break }
+                    Kind.Eof => {
+                        p.fail(off: p.base + p.curTok().start, msg: "expected `)` to close the parameter list before the end of input")
+                        break
+                    }
+                    Kind.Comma => { p.advance() }
+                    _ => { ids.append(self.parseSyntaxParam(p: inout p)) }
+                }
+            }
+        }
+        _ => {}
+    }
+    return self.pushParamIdSlice(items: ids)
+}
+
+inout fn parseSyntaxPatternLiteral(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    match p.curKind() {
+        Kind.Minus => {
+            p.advance()
+            return self.pushExprNode(kind: <SyntaxExprKind.Unary /> span: <Span start=start end=p.prevEnd() /> op: 57I64 child0: self.parseSyntaxPrimary(p: inout p))
+        }
+        _ => { return self.parseSyntaxPrimary(p: inout p) }
+    }
+}
+
+inout fn appendSyntaxPatternBind(field: Span, name: Span, fieldStart: U64, span: Span) -> BindId {
+    val id: BindId = <BindId raw=self.binds.count() />
+    self.binds.append(<SyntaxBind field=field name=name fieldStart=fieldStart span=span isAssign=false />)
+    return id
+}
+
+inout fn parseSyntaxPattern(p: inout P) -> PatternId {
+    val start: U64 = p.base + p.curTok().start
+    val first: Tok = p.curTok()
+    mut val isWildcard: Bool = false
+    mut val isStruct: Bool = false
+    mut val typeName: Span = <Span start=0U64 end=0U64 />
+    mut val variant: Span = <Span start=0U64 end=0U64 />
+    mut val bindIds: Array[BindId] = []
+    mut val isLiteral: Bool = false
+    mut val literal: ExprId = <ExprId raw=0U64 />
+    mut val capture: Span = <Span start=0U64 end=0U64 />
+    if patternStartsLiteral(p: inout p) {
+        isLiteral = true
+        literal = self.parseSyntaxPatternLiteral(p: inout p)
+    } else {
+        match p.curKind() {
+            Kind.KwVal => {
+                p.advance()
+                capture = p.spanOf(t: p.curTok())
+                p.advance()
+                isWildcard = true
+            }
+            _ => {
+                if rangeEquals(bytes: p.bytes, start: first.start, len: first.len, kw: "_") {
+                    isWildcard = true
+                    p.advance()
+                } else {
+                    typeName = p.spanOf(t: first)
+                    p.advance()
+                    mut val opened: Bool = false
+                    match p.curKind() {
+                        Kind.Dot => {
+                            p.advance()
+                            variant = p.spanOf(t: p.curTok())
+                            p.advance()
+                            match p.curKind() {
+                                Kind.LParen => { p.advance() opened = true }
+                                _ => {}
+                            }
+                        }
+                        Kind.LBrace => { isStruct = true p.advance() opened = true }
+                        _ => {}
+                    }
+                    if opened {
+                        while true {
+                            p.skipNewlines()
+                            match p.curKind() {
+                                Kind.RParen | Kind.RBrace => { p.advance() break }
+                                Kind.Eof => { break }
+                                Kind.KwVal => {
+                                    p.advance()
+                                    val token: Tok = p.curTok()
+                                    val name: Span = p.spanOf(t: token)
+                                    val bindStart: U64 = p.base + token.start
+                                    p.advance()
+                                    bindIds.append(self.appendSyntaxPatternBind(field: name, name: name, fieldStart: bindStart, span: <Span start=bindStart end=p.prevEnd() />))
+                                    match p.curKind() {
+                                        Kind.Comma => { p.advance() }
+                                        _ => {}
+                                    }
+                                }
+                                Kind.Ident => {
+                                    val fieldToken: Tok = p.curTok()
+                                    val field: Span = p.spanOf(t: fieldToken)
+                                    val bindStart: U64 = p.base + fieldToken.start
+                                    p.advance()
+                                    match p.curKind() {
+                                        Kind.Colon => { p.advance() }
+                                        _ => {}
+                                    }
+                                    match p.curKind() {
+                                        Kind.KwVal => {
+                                            p.advance()
+                                            val name: Span = p.spanOf(t: p.curTok())
+                                            p.advance()
+                                            bindIds.append(self.appendSyntaxPatternBind(field: field, name: name, fieldStart: bindStart, span: <Span start=bindStart end=p.prevEnd() />))
+                                        }
+                                        _ => {
+                                            val discard: Tok = p.curTok()
+                                            if rangeEquals(bytes: p.bytes, start: discard.start, len: discard.len, kw: "_") {
+                                                bindIds.append(self.appendSyntaxPatternBind(field: field, name: <Span start=0U64 end=0U64 />, fieldStart: bindStart, span: <Span start=bindStart end=p.prevEnd() />))
+                                                p.advance()
+                                            } else {
+                                                p.fail(off: p.base + discard.start, msg: "a pattern field binds with `val name` or discards with `_`; patterns are single-level — to match a nested structure, bind the field then `match` on the binding (spec/11)")
+                                                p.advance()
+                                            }
+                                        }
+                                    }
+                                    match p.curKind() {
+                                        Kind.Comma => { p.advance() }
+                                        _ => {}
+                                    }
+                                }
+                                _ => { p.advance() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    val id: PatternId = <PatternId raw=self.patterns.count() />
+    self.patterns.append(<SyntaxPattern isWildcard=isWildcard isStruct=isStruct typeName=typeName variant=variant binds=self.pushBindIdSlice(items: bindIds) isLiteral=isLiteral lit=literal captureName=capture span=<Span start=start end=p.prevEnd() /> />)
+    return id
+}
+
+inout fn parseSyntaxArmPatterns(p: inout P) -> Array[PatternId] {
+    mut val patterns: Array[PatternId] = []
+    patterns.append(self.parseSyntaxPattern(p: inout p))
+    while true {
+        match p.curKind() {
+            Kind.Pipe => { p.advance() p.skipNewlines() patterns.append(self.parseSyntaxPattern(p: inout p)) }
+            _ => { break }
+        }
+    }
+    match p.curKind() {
+        Kind.KwIf => { p.fail(off: p.base + p.curTok().start, msg: "`match` arms have no guards (spec/11): refine with a nested `match`, or a preceding `if`/`guard` condition chain") }
+        _ => {}
+    }
+    match p.curKind() {
+        Kind.FatArrow => { p.advance() }
+        _ => {}
+    }
+    return patterns
+}
+
+inout fn pushDirectSyntaxStmt(
+    kind: SyntaxStmtKind,
+    span: Span,
+    name: Span = <Span start=0U64 end=0U64 />,
+    typeName: Span = <Span start=0U64 end=0U64 />,
+    op: I64 = 0I64,
+    flag0: Bool = false,
+    flag1: Bool = false,
+    flag2: Bool = false,
+    flag3: Bool = false,
+    isRecordPattern: Bool = false,
+    child0: ExprId = <ExprId raw=0U64 />,
+    child1: ExprId = <ExprId raw=0U64 />,
+    child2: ExprId = <ExprId raw=0U64 />,
+    type0: TypeId = <TypeId raw=0U64 />,
+    block0: BlockId = <BlockId raw=0U64 />,
+    block1: BlockId = <BlockId raw=0U64 />,
+    arms: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+    binds: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
+) -> StmtId {
+    val id: StmtId = <StmtId raw=self.stmts.count() />
+    self.stmts.append(<SyntaxStmt kind=kind span=span name=name typeName=typeName op=op flag0=flag0 flag1=flag1 flag2=flag2 flag3=flag3 isRecordPattern=isRecordPattern child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 arms=arms binds=binds />)
+    return id
+}
+
+inout fn appendSyntaxMatchArm(pattern: PatternId, body: BlockId, span: Span) -> MatchArmId {
+    val id: MatchArmId = <MatchArmId raw=self.matchArms.count() />
+    self.matchArms.append(<SyntaxMatchArm pat=pattern body=body span=span />)
+    return id
+}
+
+inout fn directBlock(stmts: Array[StmtId]) -> BlockId {
+    val id: BlockId = <BlockId raw=self.blocks.count() />
+    self.blocks.append(<SyntaxBlock stmts=self.pushStmtIdSlice(items: stmts) />)
+    return id
+}
+
+inout fn parseSyntaxMatchArmBody(p: inout P) -> BlockId {
+    match p.curKind() {
+        Kind.LBrace => { return self.parseSyntaxBlock(p: inout p) }
+        _ => { return self.directBlock(stmts: [self.parseSyntaxStmt(p: inout p)]) }
+    }
+}
+
+inout fn parseSyntaxExprArmBody(p: inout P, start: U64) -> BlockId {
+    match p.curKind() {
+        Kind.LBrace => { return self.parseSyntaxBlock(p: inout p) }
+        Kind.KwReturn => { return self.directBlock(stmts: [self.parseSyntaxStmt(p: inout p)]) }
+        Kind.Ident => {
+            if curIs(p: inout p, kw: "panic") { return self.directBlock(stmts: [self.parseSyntaxPanic(p: inout p)]) }
+            val value: ExprId = self.parseSyntaxExpr(p: inout p)
+            return self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: value)])
+        }
+        _ => {
+            val value: ExprId = self.parseSyntaxExpr(p: inout p)
+            return self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: value)])
+        }
+    }
+}
+
+inout fn parseSyntaxMatchExpr(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val scrutinee: ExprId = self.parseSyntaxExpr(p: inout p)
+    p.skipNewlines()
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => {}
+    }
+    mut val armIds: Array[MatchArmId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            _ => {
+                val armStart: U64 = p.base + p.curTok().start
+                val patterns: Array[PatternId] = self.parseSyntaxArmPatterns(p: inout p)
+                val body: BlockId = self.parseSyntaxExprArmBody(p: inout p, start: armStart)
+                mut val i: U64 = 0U64
+                while i < patterns.count() {
+                    armIds.append(self.appendSyntaxMatchArm(pattern: patterns[i], body: body, span: <Span start=armStart end=p.prevEnd() />))
+                    i += 1U64
+                }
+                match p.curKind() {
+                    Kind.Comma => { p.advance() }
+                    _ => {}
+                }
+            }
+        }
+    }
+    return self.pushExprNode(kind: <SyntaxExprKind.MatchExpr /> span: <Span start=start end=p.prevEnd() /> child0: scrutinee arms: self.pushMatchArmIdSlice(items: armIds))
+}
+
+inout fn parseSyntaxMatchStmt(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val scrutinee: ExprId = self.parseSyntaxExpr(p: inout p)
+    p.skipNewlines()
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => {}
+    }
+    mut val armIds: Array[MatchArmId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            _ => {
+                val armStart: U64 = p.base + p.curTok().start
+                val patterns: Array[PatternId] = self.parseSyntaxArmPatterns(p: inout p)
+                p.skipNewlines()
+                val body: BlockId = self.parseSyntaxMatchArmBody(p: inout p)
+                mut val i: U64 = 0U64
+                while i < patterns.count() {
+                    armIds.append(self.appendSyntaxMatchArm(pattern: patterns[i], body: body, span: <Span start=armStart end=p.prevEnd() />))
+                    i += 1U64
+                }
+            }
+        }
+    }
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Match /> span: <Span start=start end=p.prevEnd() /> child0: scrutinee arms: self.pushMatchArmIdSlice(items: armIds))
+}
+
+// This is a token-only lookahead for the left side of `PATTERN = expression`.
+// It intentionally does not call parseSyntaxPattern: speculative arena writes
+// would leave unreachable rows when the input is an ordinary Bool condition.
+// Keep this grammar-shaped rather than using a loose scan for `=`: `foo(x) = y`
+// is an expression error, not a pattern binding, whereas `E.V(val x) = y` is.
+fn syntaxPatternBindingAhead(p: inout P) -> Bool {
+    mut val scan: P = p
+    if patternStartsLiteral(p: inout scan) {
+        match scan.curKind() {
+            Kind.Minus => {
+                scan.advance()
+                match scan.curKind() {
+                    Kind.Int | Kind.Str | Kind.Char | Kind.KwTrue | Kind.KwFalse => { scan.advance() }
+                    _ => { return false }
+                }
+            }
+            Kind.Int => {
+                val literal: Tok = scan.curTok()
+                scan.advance()
+                match scan.curKind() {
+                    Kind.Ident => {
+                        val suffix: Tok = scan.curTok()
+                        if suffix.start == literal.start + literal.len {
+                            if isIntTypeAst(p: inout scan, t: suffix) { scan.advance() }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => { scan.advance() }
+        }
+        return scan.curKind() == <Kind.Eq />
+    }
+    match scan.curKind() {
+        Kind.KwVal => {
+            scan.advance()
+            match scan.curKind() {
+                Kind.Ident => { scan.advance() }
+                _ => { return false }
+            }
+            return scan.curKind() == <Kind.Eq />
+        }
+        Kind.Ident => {}
+        _ => { return false }
+    }
+    val first: Tok = scan.curTok()
+    if rangeEquals(bytes: scan.bytes, start: first.start, len: first.len, kw: "_") {
+        scan.advance()
+        return scan.curKind() == <Kind.Eq />
+    }
+    scan.advance()
+    mut val close: Kind = <Kind.Eof />
+    match scan.curKind() {
+        Kind.Dot => {
+            scan.advance()
+            match scan.curKind() {
+                Kind.Ident => { scan.advance() }
+                _ => { return false }
+            }
+            match scan.curKind() {
+                Kind.LParen => { close = <Kind.RParen /> scan.advance() }
+                _ => {}
+            }
+        }
+        Kind.LBrace => { close = <Kind.RBrace /> scan.advance() }
+        _ => {}
+    }
+    if close != <Kind.Eof /> {
+        // Pattern fields are deliberately single-level, but recovering through
+        // malformed input must still find the matching delimiter without
+        // allocating a speculative AST.
+        mut val depth: U64 = 1U64
+        while depth > 0U64 {
+            match scan.curKind() {
+                Kind.Eof => { return false }
+                val kind => {
+                    if kind == close { depth -= 1U64 }
+                    if close == <Kind.RParen /> {
+                        if kind == <Kind.LParen /> { depth += 1U64 }
+                    } else {
+                        if kind == <Kind.LBrace /> { depth += 1U64 }
+                    }
+                    scan.advance()
+                }
+            }
+        }
+    }
+    return scan.curKind() == <Kind.Eq />
+}
+
+inout fn parseSyntaxCondClause(p: inout P) -> SyntaxCondClause {
+    if self.syntaxPatternBindingAhead(p: inout p) {
+        val pattern: PatternId = self.parseSyntaxPattern(p: inout p)
+        match p.curKind() {
+            Kind.Eq => { p.advance() }
+            _ => {}
+        }
+        return <SyntaxCondClause isBinding=true pattern=pattern expr=self.parseSyntaxBin(p: inout p, minPrec: 3I64) />
+    }
+    return <SyntaxCondClause isBinding=false pattern=<PatternId raw=0U64 /> expr=self.parseSyntaxBin(p: inout p, minPrec: 3I64) />
+}
+
+// Parse all `&&` clauses once.  The old parser needed a speculative AST pass to
+// decide whether to desugar; direct parsing instead retains only final IDs.  If
+// no clause is a binding, syntaxCondChainBool recreates the ordinary `&&` tree.
+inout fn parseSyntaxCondChain(p: inout P) -> Array[SyntaxCondClause] {
+    mut val clauses: Array[SyntaxCondClause] = []
+    clauses.append(self.parseSyntaxCondClause(p: inout p))
+    while true {
+        match p.curKind() {
+            Kind.AmpAmp => { p.advance() clauses.append(self.parseSyntaxCondClause(p: inout p)) }
+            _ => { break }
+        }
+    }
+    return clauses
+}
+
+fn syntaxCondChainHasBinding(clauses: Array[SyntaxCondClause]) -> Bool {
+    mut val i: U64 = 0U64
+    while i < clauses.count() {
+        if clauses[i].isBinding { return true }
+        i += 1U64
+    }
+    return false
+}
+
+inout fn syntaxCondChainBool(clauses: Array[SyntaxCondClause]) -> ExprId {
+    mut val value: ExprId = clauses[0U64].expr
+    mut val i: U64 = 1U64
+    while i < clauses.count() {
+        val right: ExprId = clauses[i].expr
+        val leftSpan: Span = self.exprs[value.raw].span
+        val rightSpan: Span = self.exprs[right.raw].span
+        value = self.pushExprNode(kind: <SyntaxExprKind.Binary /> span: <Span start=leftSpan.start end=rightSpan.end /> op: kindCode(k: <Kind.AmpAmp />) child0: value child1: right)
+        i += 1U64
+    }
+    return value
+}
+
+// `&&` is split only to recognize refutable bindings.  A chain with no binding
+// remains a normal Bool expression, including its lower-precedence `||` tail.
+// Binding chains deliberately retain the legacy rule that unparenthesized `||`
+// is not a condition-chain separator.
+inout fn parseSyntaxPlainBoolCondition(p: inout P, clauses: Array[SyntaxCondClause]) -> ExprId {
+    mut val value: ExprId = self.syntaxCondChainBool(clauses: clauses)
+    while true {
+        match p.curKind() {
+            Kind.PipePipe => {
+                p.advance()
+                val right: ExprId = self.parseSyntaxBin(p: inout p, minPrec: 2I64)
+                val leftSpan: Span = self.exprs[value.raw].span
+                val rightSpan: Span = self.exprs[right.raw].span
+                value = self.pushExprNode(kind: <SyntaxExprKind.Binary /> span: <Span start=leftSpan.start end=rightSpan.end /> op: kindCode(k: <Kind.PipePipe />) child0: value child1: right)
+            }
+            _ => { return value }
+        }
+    }
+}
+
+inout fn directWildcardPattern(span: Span) -> PatternId {
+    val id: PatternId = <PatternId raw=self.patterns.count() />
+    self.patterns.append(<SyntaxPattern isWildcard=true isStruct=false typeName=<Span start=0U64 end=0U64 /> variant=<Span start=0U64 end=0U64 /> binds=self.pushBindIdSlice(items: []) isLiteral=false lit=<ExprId raw=0U64 /> captureName=<Span start=0U64 end=0U64 /> span=span />)
+    return id
+}
+
+inout fn buildSyntaxCondChainStmt(clauses: Array[SyntaxCondClause], idx: U64, thenBlk: BlockId, elseBlk: BlockId, span: Span) -> StmtId {
+    val clause: SyntaxCondClause = clauses[idx]
+    mut val inner: BlockId = thenBlk
+    if idx + 1U64 < clauses.count() {
+        inner = self.directBlock(stmts: [self.buildSyntaxCondChainStmt(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)])
+    }
+    if clause.isBinding {
+        val arms: SyntaxSlice = self.pushMatchArmIdSlice(items: [
+            self.appendSyntaxMatchArm(pattern: clause.pattern, body: inner, span: span),
+            self.appendSyntaxMatchArm(pattern: self.directWildcardPattern(span: span), body: elseBlk, span: span)
+        ])
+        return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Match /> span: span child0: clause.expr arms: arms)
+    }
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.If /> span: span flag0: true child0: clause.expr block0: inner block1: elseBlk)
+}
+
+inout fn buildSyntaxCondChainExpr(clauses: Array[SyntaxCondClause], idx: U64, thenBlk: BlockId, elseBlk: BlockId, span: Span) -> ExprId {
+    val clause: SyntaxCondClause = clauses[idx]
+    mut val inner: BlockId = thenBlk
+    if idx + 1U64 < clauses.count() {
+        val next: ExprId = self.buildSyntaxCondChainExpr(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
+        inner = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: span child0: next)])
+    }
+    if clause.isBinding {
+        return self.pushExprNode(kind: <SyntaxExprKind.MatchExpr /> span: span child0: clause.expr arms: self.pushMatchArmIdSlice(items: [
+            self.appendSyntaxMatchArm(pattern: clause.pattern, body: inner, span: span),
+            self.appendSyntaxMatchArm(pattern: self.directWildcardPattern(span: span), body: elseBlk, span: span)
+        ]))
+    }
+    return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: clause.expr block0: inner block1: elseBlk)
+}
+
+inout fn parseSyntaxElseStmtBlock(p: inout P) -> BlockId {
+    match p.curKind() {
+        Kind.KwElse => {
+            p.advance()
+            match p.curKind() {
+                Kind.KwIf => { return self.directBlock(stmts: [self.parseSyntaxIfStmt(p: inout p)]) }
+                _ => { return self.parseSyntaxBlock(p: inout p) }
+            }
+        }
+        _ => { return self.directBlock(stmts: []) }
+    }
+}
+
+inout fn parseSyntaxIfStmt(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val clauses: Array[SyntaxCondClause] = self.parseSyntaxCondChain(p: inout p)
+    val hasBinding: Bool = self.syntaxCondChainHasBinding(clauses: clauses)
+    mut val cond: ExprId = <ExprId raw=0U64 />
+    if !hasBinding { cond = self.parseSyntaxPlainBoolCondition(p: inout p, clauses: clauses) }
+    val thenBlk: BlockId = self.parseSyntaxBlock(p: inout p)
+    p.skipNewlines()
+    mut val hasElse: Bool = false
+    match p.curKind() {
+        Kind.KwElse => { hasElse = true }
+        _ => {}
+    }
+    val elseBlk: BlockId = self.parseSyntaxElseStmtBlock(p: inout p)
+    val span: Span = <Span start=start end=p.prevEnd() />
+    if hasBinding {
+        return self.buildSyntaxCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
+    }
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.If /> span: span flag0: hasElse child0: cond block0: thenBlk block1: elseBlk)
+}
+
+inout fn parseSyntaxIfExpr(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val clauses: Array[SyntaxCondClause] = self.parseSyntaxCondChain(p: inout p)
+    val hasBinding: Bool = self.syntaxCondChainHasBinding(clauses: clauses)
+    mut val cond: ExprId = <ExprId raw=0U64 />
+    if !hasBinding { cond = self.parseSyntaxPlainBoolCondition(p: inout p, clauses: clauses) }
+    val thenBlk: BlockId = self.parseSyntaxBlock(p: inout p)
+    p.skipNewlines()
+    match p.curKind() {
+        Kind.KwElse => { p.advance() }
+        _ => {}
+    }
+    mut val elseBlk: BlockId = self.directBlock(stmts: [])
+    match p.curKind() {
+        Kind.KwIf => {
+            val nested: ExprId = self.parseSyntaxIfExpr(p: inout p)
+            elseBlk = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: nested)])
+        }
+        _ => { elseBlk = self.parseSyntaxBlock(p: inout p) }
+    }
+    val span: Span = <Span start=start end=p.prevEnd() />
+    if hasBinding {
+        return self.buildSyntaxCondChainExpr(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
+    }
+    return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: cond block0: thenBlk block1: elseBlk)
+}
+
+inout fn parseSyntaxWhile(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val clauses: Array[SyntaxCondClause] = self.parseSyntaxCondChain(p: inout p)
+    val hasBinding: Bool = self.syntaxCondChainHasBinding(clauses: clauses)
+    mut val cond: ExprId = <ExprId raw=0U64 />
+    if !hasBinding { cond = self.parseSyntaxPlainBoolCondition(p: inout p, clauses: clauses) }
+    val body: BlockId = self.parseSyntaxBlock(p: inout p)
+    val span: Span = <Span start=start end=p.prevEnd() />
+    if !hasBinding {
+        return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.While /> span: span child0: cond block0: body)
+    }
+    val breakBlk: BlockId = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Break /> span: span)])
+    val chain: StmtId = self.buildSyntaxCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: body, elseBlk: breakBlk, span: span)
+    val always: ExprId = self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: span intValue: 1U64 flag0: true)
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.While /> span: span child0: always block0: self.directBlock(stmts: [chain]))
+}
+
+inout fn parseSyntaxLet(p: inout P, mutable: Bool) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val hasType: Bool = false
+    mut val ty: TypeId = <TypeId raw=0U64 />
+    match p.curKind() {
+        Kind.Colon => { p.advance() ty = self.parseSyntaxType(p: inout p) hasType = true }
+        _ => {}
+    }
+    match p.curKind() {
+        Kind.Eq => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected '=' — a variable declaration must be initialized") }
+    }
+    val initial: ExprId = self.parseSyntaxExpr(p: inout p)
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Let /> span: <Span start=start end=p.prevEnd() /> name: name flag0: mutable flag1: hasType child0: initial type0: ty)
+}
+
+inout fn parseSyntaxReturn(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    mut val hasValue: Bool = true
+    mut val value: ExprId = <ExprId raw=0U64 />
+    match p.curKind() {
+        Kind.Newline | Kind.RBrace | Kind.Eof => { hasValue = false }
+        _ => { value = self.parseSyntaxExpr(p: inout p) }
+    }
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Return /> span: <Span start=start end=p.prevEnd() /> flag0: hasValue child0: value)
+}
+
+inout fn parseSyntaxPanic(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Panic /> span: <Span start=start end=p.prevEnd() /> child0: self.parseSyntaxExpr(p: inout p))
+}
+
+inout fn parseSyntaxGive(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: self.parseSyntaxExpr(p: inout p))
+}
+
+inout fn parseSyntaxExprOrAssign(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    val left: ExprId = self.parseSyntaxExpr(p: inout p)
+    val kind: Kind = p.curKind()
+    if isAssignOpAst(k: kind) {
+        p.advance()
+        val right: ExprId = self.parseSyntaxExpr(p: inout p)
+        return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Assign /> span: <Span start=start end=p.prevEnd() /> op: kindCode(k: kind) child0: left child1: right)
+    }
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.ExprStmt /> span: <Span start=start end=p.prevEnd() /> child0: left)
+}
+
+inout fn appendDirectSyntaxBind(field: Span, name: Span, fieldStart: U64, isAssign: Bool, span: Span) -> BindId {
+    val id: BindId = <BindId raw=self.binds.count() />
+    self.binds.append(<SyntaxBind field=field name=name fieldStart=fieldStart span=span isAssign=isAssign />)
+    return id
+}
+
+inout fn parseSyntaxDestructureBind(p: inout P) -> BindId {
+    val start: U64 = p.base + p.curTok().start
+    mut val field: Span = <Span start=0U64 end=0U64 />
+    match p.curKind() {
+        Kind.Ident => {
+            if p.peekKind(off: 1U64) == <Kind.Colon /> {
+                field = p.spanOf(t: p.curTok())
+                p.advance()
+                p.advance()
+            }
+        }
+        _ => {}
+    }
+    mut val discard: Bool = false
+    mut val isAssign: Bool = false
+    match p.curKind() {
+        Kind.KwVal => { p.advance() }
+        Kind.Ident => {
+            val token: Tok = p.curTok()
+            if rangeEquals(bytes: p.bytes, start: token.start, len: token.len, kw: "_") {
+                if field.end > field.start { discard = true } else {
+                    p.fail(off: p.base + token.start, msg: "a destructure discard names its field: `label: _` (a bare `_` does not say which field it covers)")
+                }
+            } else { isAssign = true }
+        }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "a destructuring element is `val name` (new binding), bare `name` (assign to an existing `mut val`), `label: val name`, `label: name`, or `label: _` (discard)") }
+    }
+    val nameToken: Tok = p.curTok()
+    mut val name: Span = p.spanOf(t: nameToken)
+    p.advance()
+    mut val fieldStart: U64 = start
+    if discard {
+        name = <Span start=0U64 end=0U64 />
+    } else if field.end == field.start {
+        field = name
+        fieldStart = name.start
+    } else {
+        fieldStart = field.start
+    }
+    return self.appendDirectSyntaxBind(field: field, name: name, fieldStart: fieldStart, isAssign: isAssign, span: <Span start=start end=p.prevEnd() />)
+}
+
+inout fn parseSyntaxDestructure(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    mut val binds: Array[BindId] = []
+    while true {
+        match p.curKind() {
+            Kind.RParen => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.Comma => { p.advance() }
+            _ => { binds.append(self.parseSyntaxDestructureBind(p: inout p)) }
+        }
+    }
+    match p.curKind() {
+        Kind.Eq => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "record destructuring must be initialized: `(val x, val y) = expr`") }
+    }
+    val initial: ExprId = self.parseSyntaxExpr(p: inout p)
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Destructure /> span: <Span start=start end=p.prevEnd() /> child0: initial binds: self.pushBindIdSlice(items: binds))
+}
+
+inout fn parseSyntaxStructDestructure(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    val typeName: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    p.advance()
+    mut val binds: Array[BindId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.Comma => { p.advance() }
+            _ => { binds.append(self.parseSyntaxDestructureBind(p: inout p)) }
+        }
+    }
+    match p.curKind() {
+        Kind.Eq => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct { val x } = expr`") }
+    }
+    val initial: ExprId = self.parseSyntaxExpr(p: inout p)
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Destructure /> span: <Span start=start end=p.prevEnd() /> typeName: typeName child0: initial binds: self.pushBindIdSlice(items: binds))
+}
+
+// This is purely a token classification.  It cannot call a direct parser while
+// deciding, because that would append speculative rows for a parenthesized
+// expression which turns out not to be a destructure statement.
+fn syntaxDestructureAhead(p: inout P) -> Bool {
+    if p.peekKind(off: 1U64) == <Kind.KwVal /> { return true }
+    if p.peekKind(off: 1U64) == <Kind.Ident /> {
+        if p.peekKind(off: 2U64) == <Kind.Colon /> {
+            if p.peekKind(off: 3U64) == <Kind.KwVal /> { return true }
+        }
+    }
+    mut val depth: U64 = 1U64
+    mut val offset: U64 = 1U64
+    while depth > 0U64 {
+        val kind: Kind = p.peekKind(off: offset)
+        if kind == <Kind.LParen /> { depth += 1U64 }
+        if kind == <Kind.RParen /> { depth -= 1U64 }
+        if kind == <Kind.Eof /> { return false }
+        offset += 1U64
+    }
+    return p.peekKind(off: offset) == <Kind.Eq />
+}
+
+fn syntaxRecordLoopPatternAhead(p: inout P) -> Bool {
+    if p.curKind() != <Kind.LParen /> { return false }
+    if p.peekKind(off: 1U64) == <Kind.KwVal /> { return true }
+    if p.peekKind(off: 1U64) == <Kind.Ident /> {
+        if p.peekKind(off: 2U64) == <Kind.Colon /> {
+            return p.peekKind(off: 3U64) == <Kind.KwVal />
+        }
+    }
+    return false
+}
+
+inout fn parseSyntaxFor(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    if self.syntaxRecordLoopPatternAhead(p: inout p) {
+        p.advance()
+        mut val binds: Array[BindId] = []
+        while true {
+            match p.curKind() {
+                Kind.RParen => { p.advance() break }
+                Kind.Eof => { break }
+                Kind.Comma => { p.advance() }
+                _ => { binds.append(self.parseSyntaxDestructureBind(p: inout p)) }
+            }
+        }
+        match p.curKind() {
+            Kind.KwIn => { p.advance() }
+            _ => {}
+        }
+        val iterable: ExprId = self.parseSyntaxExpr(p: inout p)
+        p.skipNewlines()
+        val body: BlockId = self.parseSyntaxBlock(p: inout p)
+        return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.For /> span: <Span start=start end=p.prevEnd() /> flag0: false flag1: false flag2: false flag3: false isRecordPattern: true child0: iterable child1: <ExprId raw=0U64 /> type0: <TypeId raw=0U64 /> block0: body binds: self.pushBindIdSlice(items: binds))
+    }
+
+    mut val isStruct: Bool = false
+    mut val typeName: Span = <Span start=0U64 end=0U64 />
+    mut val binds: SyntaxSlice = self.pushBindIdSlice(items: [])
+    mut val name: Span = <Span start=0U64 end=0U64 />
+    mut val ty: TypeId = <TypeId raw=0U64 />
+    mut val hasType: Bool = false
+    if p.curKind() == <Kind.Ident /> && p.peekKind(off: 1U64) == <Kind.LBrace /> {
+        val pattern: PatternId = self.parseSyntaxPattern(p: inout p)
+        val parsed: SyntaxPattern = self.patterns[pattern.raw]
+        isStruct = parsed.isStruct
+        typeName = parsed.typeName
+        binds = parsed.binds
+    } else {
+        match p.curKind() {
+            Kind.KwVal => { p.advance() }
+            _ => {}
+        }
+        name = p.spanOf(t: p.curTok())
+        p.advance()
+        match p.curKind() {
+            Kind.Colon => { p.advance() ty = self.parseSyntaxType(p: inout p) hasType = true }
+            _ => {}
+        }
+    }
+    match p.curKind() {
+        Kind.KwIn => { p.advance() }
+        _ => {}
+    }
+    val low: ExprId = self.parseSyntaxBin(p: inout p, minPrec: 1I64)
+    mut val isRange: Bool = false
+    mut val inclusive: Bool = false
+    mut val high: ExprId = <ExprId raw=0U64 />
+    match p.curKind() {
+        Kind.DotDotLt => { p.advance() isRange = true high = self.parseSyntaxBin(p: inout p, minPrec: 1I64) }
+        Kind.DotDotEq => { p.advance() isRange = true inclusive = true high = self.parseSyntaxBin(p: inout p, minPrec: 1I64) }
+        _ => {}
+    }
+    p.skipNewlines()
+    val body: BlockId = self.parseSyntaxBlock(p: inout p)
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.For /> span: <Span start=start end=p.prevEnd() /> name: name typeName: typeName flag0: hasType flag1: isRange flag2: inclusive flag3: isStruct child0: low child1: high type0: ty block0: body binds: binds)
+}
+
+inout fn syntaxStmtDiverges(id: StmtId) -> Bool {
+    val stmt: SyntaxStmt = self.stmts[id.raw]
+    match stmt.kind {
+        SyntaxStmtKind.Return | SyntaxStmtKind.Panic | SyntaxStmtKind.Break | SyntaxStmtKind.Continue => { return true }
+        SyntaxStmtKind.If => {
+            if stmt.flag0 { return self.syntaxBlockDiverges(id: stmt.block0) && self.syntaxBlockDiverges(id: stmt.block1) }
+            return false
+        }
+        SyntaxStmtKind.Match => {
+            mut val i: U64 = 0U64
+            while i < stmt.arms.count {
+                val arm: SyntaxMatchArm = self.matchArms[self.matchArmIds[stmt.arms.start + i].raw]
+                if !self.syntaxBlockDiverges(id: arm.body) { return false }
+                i += 1U64
+            }
+            return stmt.arms.count > 0U64
+        }
+        _ => { return false }
+    }
+}
+
+inout fn syntaxBlockDiverges(id: BlockId) -> Bool {
+    val block: SyntaxBlock = self.blocks[id.raw]
+    if block.stmts.count == 0U64 { return false }
+    return self.syntaxStmtDiverges(id: self.stmtIds[block.stmts.start + block.stmts.count - 1U64])
+}
+
+inout fn parseSyntaxStmtsUntilBrace(p: inout P) -> Array[StmtId] {
+    mut val stmts: Array[StmtId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace | Kind.Eof => { return stmts }
+            _ => {
+                if curIs(p: inout p, kw: "guard") {
+                    stmts.append(self.parseSyntaxGuard(p: inout p))
+                    return stmts
+                }
+                stmts.append(self.parseSyntaxStmt(p: inout p))
+            }
+        }
+    }
+}
+
+inout fn parseSyntaxGuard(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val clauses: Array[SyntaxCondClause] = self.parseSyntaxCondChain(p: inout p)
+    val hasBinding: Bool = self.syntaxCondChainHasBinding(clauses: clauses)
+    mut val condition: ExprId = <ExprId raw=0U64 />
+    if !hasBinding { condition = self.parseSyntaxPlainBoolCondition(p: inout p, clauses: clauses) }
+    val elseOffset: U64 = p.base + p.curTok().start
+    val elseBody: BlockId = self.parseSyntaxBlock(p: inout p)
+    if !self.syntaxBlockDiverges(id: elseBody) {
+        p.fail(off: elseOffset, msg: "`guard` else block must diverge (end in return / break / continue / panic) — spec/11")
+    }
+    p.skipNewlines()
+    val continuation: BlockId = self.directBlock(stmts: self.parseSyntaxStmtsUntilBrace(p: inout p))
+    val span: Span = <Span start=start end=p.prevEnd() />
+    if hasBinding {
+        return self.buildSyntaxCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: continuation, elseBlk: elseBody, span: span)
+    }
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.If /> span: span flag0: true child0: condition block0: continuation block1: elseBody)
+}
+
+inout fn parseSyntaxStmt(p: inout P) -> StmtId {
+    val start: U64 = p.base + p.curTok().start
+    match p.curKind() {
+        Kind.KwVal => { return self.parseSyntaxLet(p: inout p, mutable: false) }
+        Kind.KwMut => { p.advance() return self.parseSyntaxLet(p: inout p, mutable: true) }
+        Kind.KwIf => { return self.parseSyntaxIfStmt(p: inout p) }
+        Kind.KwWhile => { return self.parseSyntaxWhile(p: inout p) }
+        Kind.KwFor => { return self.parseSyntaxFor(p: inout p) }
+        Kind.KwMatch => { return self.parseSyntaxMatchStmt(p: inout p) }
+        Kind.KwBreak => { p.advance() return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Break /> span: <Span start=start end=p.prevEnd() />) }
+        Kind.KwContinue => { p.advance() return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Continue /> span: <Span start=start end=p.prevEnd() />) }
+        Kind.KwReturn => { return self.parseSyntaxReturn(p: inout p) }
+        Kind.KwGive => { return self.parseSyntaxGive(p: inout p) }
+        Kind.Ident => {
+            if curIs(p: inout p, kw: "panic") { return self.parseSyntaxPanic(p: inout p) }
+            if p.peekKind(off: 1U64) == <Kind.LBrace /> { return self.parseSyntaxStructDestructure(p: inout p) }
+            return self.parseSyntaxExprOrAssign(p: inout p)
+        }
+        Kind.LParen => {
+            if self.syntaxDestructureAhead(p: inout p) { return self.parseSyntaxDestructure(p: inout p) }
+            return self.parseSyntaxExprOrAssign(p: inout p)
+        }
+        _ => { return self.parseSyntaxExprOrAssign(p: inout p) }
+    }
+}
+
+// `guard` consumes the remainder of its enclosing block.  It is kept as a
+// dedicated direct-parser operation so parseSyntaxBlock can later route it
+// without ever manufacturing `Array[StmtAst]` for that continuation.
+inout fn parseSyntaxBlock(p: inout P) -> BlockId {
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` to open a block") }
+    }
+    mut val stmts: Array[StmtId] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => {
+                p.fail(off: p.base + p.curTok().start, msg: "expected `}` to close this block before the end of input")
+                break
+            }
+            _ => {
+                if curIs(p: inout p, kw: "guard") {
+                    stmts.append(self.parseSyntaxGuard(p: inout p))
+                    // guard consumes its continuation but leaves this block's
+                    // closing brace for the normal loop iteration below.
+                }
+                stmts.append(self.parseSyntaxStmt(p: inout p))
+            }
+        }
+    }
+    return self.directBlock(stmts: stmts)
 }
 
 inout fn parseSyntaxType(p: inout P) -> TypeId {
@@ -7131,6 +8719,7 @@ pub impl MatchArmAst { factory }
 pub impl BlockAst { factory }
 pub impl P { factory }
 pub impl CondClause { factory }
+pub impl SyntaxCondClause { factory }
 pub impl Src { factory }
 
 // A fresh, empty source builder.
