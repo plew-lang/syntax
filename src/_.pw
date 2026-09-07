@@ -4808,6 +4808,67 @@ inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> S
     return id
 }
 
+inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    mut val typeParams: Array[Span] = []
+    mut val typeParamSendable: Array[Bool] = []
+    self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
+    mut val supers: Array[Span] = []
+    match p.curKind() {
+        Kind.Colon => {
+            p.advance()
+            while true {
+                match p.curKind() {
+                    Kind.Ident => { supers.append(p.spanOf(t: p.curTok())) p.advance() }
+                    _ => {}
+                }
+                match p.curKind() { Kind.Plus => { p.advance() } _ => { break } }
+            }
+        }
+        _ => {}
+    }
+    match p.curKind() { Kind.LBrace => { p.advance() } _ => {} }
+    mut val reqs: Array[SigId] = []
+    mut val assocTypes: Array[Span] = []
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            Kind.KwFn => { p.advance() reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false)) }
+            Kind.KwInout => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfInout: true))
+            }
+            _ => {
+                if curIs(p: inout p, kw: "factory") || curIs(p: inout p, kw: "optional") || curIs(p: inout p, kw: "result") {
+                    if curIs(p: inout p, kw: "optional") { p.advance() }
+                    if curIs(p: inout p, kw: "result") {
+                        p.advance()
+                        match p.curKind() { Kind.LBracket => { p.advance() self.parseSyntaxType(p: inout p) match p.curKind() { Kind.RBracket => { p.advance() } _ => {} } } _ => {} }
+                    }
+                    if curIs(p: inout p, kw: "factory") { p.advance() }
+                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true))
+                } else if curIs(p: inout p, kw: "assoc") {
+                    p.advance()
+                    match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true))
+                } else if curIs(p: inout p, kw: "type") {
+                    p.advance()
+                    match p.curKind() { Kind.Ident => { assocTypes.append(p.spanOf(t: p.curTok())) p.advance() } _ => {} }
+                } else { p.advance() }
+            }
+        }
+    }
+    val id: TraitId = <TraitId raw=self.traits.count() />
+    self.traits.append(<SyntaxTrait name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) supertraits=self.pushDirectSyntaxTexts(items: supers) reqs=self.pushSigIdSlice(items: reqs) assocTypes=self.pushDirectSyntaxTexts(items: assocTypes) span=<Span start=start end=p.prevEnd() /> />)
+    return id
+}
+
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
