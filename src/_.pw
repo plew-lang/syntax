@@ -4297,6 +4297,86 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
     return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
 }
 
+inout fn parseSyntaxImport(p: inout P, isImport: Bool, reExport: Bool = false, start: U64 = 0U64) -> ImportId {
+    mut val itemStart: U64 = start
+    if itemStart == 0U64 { itemStart = p.base + p.curTok().start p.advance() }
+    val pathStart: U64 = p.base + p.curTok().start
+    mut val pathEndToken: U64 = p.curTok().start
+    mut val segmentStart: U64 = pathStart
+    mut val segmentLen: U64 = 0U64
+    mut val first: Bool = true
+    mut val sawWith: Bool = false
+    while true {
+        match p.curKind() {
+            Kind.Newline | Kind.Eof | Kind.LBrace => { break }
+            _ => {
+                if curIs(p: inout p, kw: "with") { p.advance() sawWith = true break }
+                val token: Tok = p.curTok()
+                if !first && token.start != pathEndToken { break }
+                first = false
+                pathEndToken = token.start + token.len
+                match token.kind {
+                    Kind.Ident => { segmentStart = p.base + token.start segmentLen = token.len }
+                    _ => {}
+                }
+                p.advance()
+            }
+        }
+    }
+    mut val alias: Span = <Span start=0U64 end=0U64 />
+    match p.curKind() {
+        Kind.KwAs => {
+            p.advance()
+            match p.curKind() {
+                Kind.Ident => { alias = p.spanOf(t: p.curTok()) p.advance() }
+                _ => {}
+            }
+            if curIs(p: inout p, kw: "with") { p.advance() sawWith = true }
+        }
+        _ => {}
+    }
+    if sawWith && !reExport {
+        match p.curKind() {
+            Kind.LBrace => {}
+            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `with *` is not supported (spec/15): use a namespace import `import <path>` (then refer to `Ns.name`) for broad access, or `with { … }` to select names") }
+            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `with` in an import") }
+        }
+    }
+    mut val names: Array[Span] = []
+    mut val aliases: Array[Span] = []
+    match p.curKind() {
+        Kind.LBrace => {
+            p.advance()
+            while true {
+                p.skipNewlines()
+                match p.curKind() {
+                    Kind.RBrace => { p.advance() break }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    Kind.Ident => {
+                        names.append(p.spanOf(t: p.curTok()))
+                        p.advance()
+                        mut val nameAlias: Span = <Span start=0U64 end=0U64 />
+                        match p.curKind() {
+                            Kind.KwAs => {
+                                p.advance()
+                                match p.curKind() { Kind.Ident => { nameAlias = p.spanOf(t: p.curTok()) p.advance() } _ => {} }
+                            }
+                            _ => {}
+                        }
+                        aliases.append(nameAlias)
+                    }
+                    _ => { p.advance() }
+                }
+            }
+        }
+        _ => {}
+    }
+    val id: ImportId = <ImportId raw=self.imports.count() />
+    self.imports.append(<SyntaxImport path=<Span start=pathStart end=p.base + pathEndToken /> segment=<Span start=segmentStart end=segmentStart + segmentLen /> isImport=isImport nameSpans=self.pushDirectSyntaxTexts(items: names) alias=alias nameAliases=self.pushDirectSyntaxTexts(items: aliases) span=<Span start=itemStart end=p.prevEnd() /> />)
+    return id
+}
+
 inout fn syntaxStmtDiverges(id: StmtId) -> Bool {
     val stmt: SyntaxStmt = self.stmts[id.raw]
     match stmt.kind {
