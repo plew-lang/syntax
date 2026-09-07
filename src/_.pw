@@ -4297,9 +4297,9 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
     return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
 }
 
-inout fn parseSyntaxImport(p: inout P, isImport: Bool, reExport: Bool = false, start: U64 = 0U64) -> ImportId {
+inout fn parseSyntaxImport(p: inout P, isImport: Bool, reExport: Bool = false, start: U64 = 0U64, hasStart: Bool = false) -> ImportId {
     mut val itemStart: U64 = start
-    if itemStart == 0U64 { itemStart = p.base + p.curTok().start p.advance() }
+    if !(hasStart) { itemStart = p.base + p.curTok().start p.advance() }
     val pathStart: U64 = p.base + p.curTok().start
     mut val pathEndToken: U64 = p.curTok().start
     mut val segmentStart: U64 = pathStart
@@ -5346,6 +5346,242 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
     return id
 }
 
+inout fn pushDirectSyntaxDeclTop(id: DeclId, span: Span) -> TopItemId {
+    return self.pushTopItem(kind: <SyntaxTopItemKind.Decl /> payload: id.raw span: span)
+}
+
+inout fn parseSyntaxDeclTop(p: inout P) -> TopItemId {
+    match p.curKind() {
+        Kind.KwStruct => {
+            val id: DeclId = self.parseSyntaxStructDecl(p: inout p, isUnique: false)
+            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+        }
+        Kind.KwNonsendable => {
+            p.advance()
+            match p.curKind() {
+                Kind.KwStruct => {
+                    val id: DeclId = self.parseSyntaxStructDecl(p: inout p, isUnique: false, isNonsendable: true)
+                    return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+                }
+                Kind.KwEnum => {
+                    val id: DeclId = self.parseSyntaxEnumDecl(p: inout p, isUnique: false, isNonsendable: true)
+                    return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+                }
+                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `nonsendable`") }
+            }
+        }
+        Kind.KwUnique => {
+            p.advance()
+            match p.curKind() {
+                Kind.KwNonsendable => {
+                    p.advance()
+                    match p.curKind() {
+                        Kind.KwStruct => {
+                            val id: DeclId = self.parseSyntaxStructDecl(p: inout p, isUnique: true, isNonsendable: true)
+                            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+                        }
+                        Kind.KwEnum => {
+                            val id: DeclId = self.parseSyntaxEnumDecl(p: inout p, isUnique: true, isNonsendable: true)
+                            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+                        }
+                        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique nonsendable`") }
+                    }
+                }
+                Kind.KwStruct => {
+                    val id: DeclId = self.parseSyntaxStructDecl(p: inout p, isUnique: true)
+                    return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+                }
+                Kind.KwEnum => {
+                    val id: DeclId = self.parseSyntaxEnumDecl(p: inout p, isUnique: true)
+                    return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+                }
+                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `struct` or `enum` after `unique`") }
+            }
+        }
+        Kind.KwEnum => {
+            val id: DeclId = self.parseSyntaxEnumDecl(p: inout p, isUnique: false)
+            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+        }
+        Kind.KwFn => {
+            val id: DeclId = self.parseSyntaxFuncDecl(p: inout p, isAsync: false)
+            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+        }
+        Kind.KwAsync => {
+            p.advance()
+            val id: DeclId = self.parseSyntaxFuncDecl(p: inout p, isAsync: true)
+            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+        }
+        Kind.KwSpawn => {
+            p.fail(off: p.base + p.curTok().start, msg: "`spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            p.advance()
+        }
+        _ => {}
+    }
+    return self.pushTopItem(kind: <SyntaxTopItemKind.Decl /> payload: 0U64 span: <Span start=p.base + p.curTok().start end=p.base + p.curTok().start />)
+}
+
+// `export <decl>` wraps an already-direct top item; `export <path>` instead
+// creates the ReExport import node.  The wrapper stores only the nested ID.
+inout fn parseSyntaxExport(p: inout P) -> TopItemId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    match p.curKind() {
+        Kind.KwExtern => {
+            val id: ExternId = self.parseSyntaxExternDecl(p: inout p)
+            val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.Extern /> payload: id.raw span: self.externs[id.raw].span)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+        }
+        Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+            val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+        }
+        Kind.KwVal => {
+            val inner: TopItemId = self.parseSyntaxGlobalVal(p: inout p, mutable: false)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+        }
+        Kind.KwMut => {
+            val inner: TopItemId = self.parseSyntaxGlobalVal(p: inout p, mutable: true)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+        }
+        Kind.Ident => {
+            if curIs(p: inout p, kw: "trait") {
+                val id: TraitId = self.parseSyntaxTraitDecl(p: inout p)
+                val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.Trait /> payload: id.raw span: self.traits[id.raw].span)
+                return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            }
+            if curIs(p: inout p, kw: "newtype") {
+                val id: NewtypeId = self.parseSyntaxNewtype(p: inout p, isPub: false)
+                val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.NewType /> payload: id.raw span: self.newtypes[id.raw].span)
+                return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            }
+        }
+        _ => {}
+    }
+    val importId: ImportId = self.parseSyntaxImport(p: inout p, isImport: true, reExport: true, start: start, hasStart: true)
+    return self.pushTopItem(kind: <SyntaxTopItemKind.ReExport /> payload: importId.raw span: self.imports[importId.raw].span)
+}
+
+// An extension expands to ordinary direct Impl top items tagged by one extension
+// name.  No extension AST is retained: source order is the order of returned IDs.
+inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    match p.curKind() {
+        Kind.LBrace => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after `extension Name`") }
+    }
+    while true {
+        p.skipNewlines()
+        match p.curKind() {
+            Kind.RBrace => { p.advance() break }
+            Kind.Eof => { break }
+            _ => {
+                if curIs(p: inout p, kw: "impl") {
+                    val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: false, extName: name)
+                    items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
+                } else if curIs(p: inout p, kw: "pub") {
+                    p.advance()
+                    if curIs(p: inout p, kw: "impl") {
+                        val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: true, extName: name)
+                        items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
+                    } else {
+                        p.advance()
+                    }
+                } else {
+                    p.advance()
+                }
+            }
+        }
+    }
+}
+
+// Parse one source position to one or more top-level IDs.  Only extension
+// expands; every other category produces one scalar root candidate.
+inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
+    mut val items: Array[TopItemId] = []
+    p.skipNewlines()
+    match p.curKind() {
+        Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+            items.append(self.parseSyntaxDeclTop(p: inout p))
+        }
+        Kind.KwExtern => {
+            val id: ExternId = self.parseSyntaxExternDecl(p: inout p)
+            items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Extern /> payload: id.raw span: self.externs[id.raw].span))
+        }
+        Kind.KwVal => { items.append(self.parseSyntaxGlobalVal(p: inout p, mutable: false)) }
+        Kind.KwMut => { items.append(self.parseSyntaxGlobalVal(p: inout p, mutable: true)) }
+        Kind.Ident => {
+            if curIs(p: inout p, kw: "import") {
+                val id: ImportId = self.parseSyntaxImport(p: inout p, isImport: true)
+                items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
+            } else if curIs(p: inout p, kw: "part") {
+                val id: ImportId = self.parseSyntaxImport(p: inout p, isImport: false)
+                items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
+            } else if curIs(p: inout p, kw: "export") {
+                items.append(self.parseSyntaxExport(p: inout p))
+            } else if curIs(p: inout p, kw: "impl") {
+                val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: false)
+                items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
+            } else if curIs(p: inout p, kw: "pub") {
+                p.advance()
+                if curIs(p: inout p, kw: "impl") {
+                    val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: true)
+                    items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
+                } else {
+                    p.fail(off: p.base + p.curTok().start, msg: "expected `impl` after `pub` at the top level (top-level visibility is `export`, spec/15)")
+                    p.advance()
+                }
+            } else if curIs(p: inout p, kw: "trait") {
+                val id: TraitId = self.parseSyntaxTraitDecl(p: inout p)
+                items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Trait /> payload: id.raw span: self.traits[id.raw].span))
+            } else if curIs(p: inout p, kw: "extension") {
+                self.parseSyntaxExtensionInto(p: inout p, items: inout items)
+            } else if curIs(p: inout p, kw: "newtype") {
+                val id: NewtypeId = self.parseSyntaxNewtype(p: inout p, isPub: false)
+                items.append(self.pushTopItem(kind: <SyntaxTopItemKind.NewType /> payload: id.raw span: self.newtypes[id.raw].span))
+            } else {
+                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
+                p.advance()
+            }
+        }
+        Kind.Eof => {}
+        _ => {
+            if p.peekKind(off: 1U64) == <Kind.LBracket /> {
+                val id: DirectiveId = self.parseSyntaxDirective(p: inout p)
+                items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Directive /> payload: id.raw span: <Span start=0U64 end=0U64 />))
+            } else {
+                p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
+                p.advance()
+            }
+        }
+    }
+    return items
+}
+
+inout fn parseSyntaxProgramInto(p: inout P) -> SyntaxSlice {
+    val start: U64 = self.topLevel.count()
+    while p.curKind() != <Kind.Eof /> {
+        val items: Array[TopItemId] = self.parseSyntaxTopItemsAt(p: inout p)
+        mut val i: U64 = 0U64
+        while i < items.count() {
+            self.topLevel.append(items[i])
+            i += 1U64
+        }
+    }
+    return <SyntaxSlice start=start count=self.topLevel.count() - start />
+}
+
+}
+
+// The free compiler entry below is the package API.  Plew methods declared in
+// an anonymous impl are intentionally private to that impl, so this narrow
+// public forwarding method is the sole visibility bridge.  It exposes the same
+// parse-into operation as the free function, never raw table append operations.
+pub impl SyntaxFile {
+    inout fn parseProgramSyntaxDirect(p: inout P) -> SyntaxSlice {
+        return self.parseSyntaxProgramInto(p: inout p)
+    }
 }
 
 // Parse a `newtype Name = Underlying` declaration (spec/10). The contextual `newtype`
@@ -6920,20 +7156,13 @@ export fn parseProgramSyntaxFile(p: inout P) -> SyntaxFile {
 }
 
 // Compiler loader entry: append one source file to the single program-owned
-// syntax store and return precisely the roots added for this file.  This is the
-// only post-factory mutation exposed by SyntaxFile; ordinary consumers receive
-// the completed file as `val` and have read-only ID traversal only.
+// syntax store and return precisely the roots added for this file.  The direct
+// SyntaxFile parser is the canonical compiler input: it never constructs a
+// value TopItemAst or calls the legacy freezer.  This is the only post-factory
+// mutation exposed by SyntaxFile; ordinary consumers receive the completed
+// file as `val` and have read-only ID traversal only.
 export fn parseProgramSyntaxInto(p: inout P, file: inout SyntaxFile) -> SyntaxSlice {
-    val start: U64 = file.topLevelCount()
-    while p.curKind() != <Kind.Eof /> {
-        val items: Array[TopItemAst] = parseTopItemsAt(p: inout p)
-        mut val i: U64 = 0U64
-        while i < items.count() {
-            file.freezeTopItem(ast: items[i])
-            i += 1U64
-        }
-    }
-    return <SyntaxSlice start=start count=file.topLevelCount() - start />
+    return file.parseProgramSyntaxDirect(p: inout p)
 }
 
 // Read-only traversal surface for compiler clients.  Tables stay private so no
