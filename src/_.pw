@@ -4490,8 +4490,9 @@ inout fn parseSyntaxBlock(p: inout P) -> BlockId {
                     stmts.append(self.parseSyntaxGuard(p: inout p))
                     // guard consumes its continuation but leaves this block's
                     // closing brace for the normal loop iteration below.
+                } else {
+                    stmts.append(self.parseSyntaxStmt(p: inout p))
                 }
-                stmts.append(self.parseSyntaxStmt(p: inout p))
             }
         }
     }
@@ -4772,6 +4773,21 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
         projectionAssoc=projectionAssoc isAny=false argLabels=self.pushDirectSyntaxTexts(items: argLabels)
         isSendable=false isRecord=false
     />)
+}
+
+inout fn parseSyntaxNewtype(p: inout P, isPub: Bool) -> NewtypeId {
+    val start: U64 = p.base + p.curTok().start
+    p.advance()
+    val name: Span = p.spanOf(t: p.curTok())
+    p.advance()
+    match p.curKind() {
+        Kind.Eq => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "a newtype declaration is `newtype Name = Underlying`") }
+    }
+    val underlying: TypeId = self.parseSyntaxType(p: inout p)
+    val id: NewtypeId = <NewtypeId raw=self.newtypes.count() />
+    self.newtypes.append(<SyntaxNewtype name=name ty=underlying isPub=isPub span=<Span start=start end=p.prevEnd() /> />)
+    return id
 }
 
 }
