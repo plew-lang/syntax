@@ -4791,13 +4791,23 @@ inout fn parseSyntaxNewtype(p: inout P, isPub: Bool) -> NewtypeId {
     return id
 }
 
-inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> SigId {
-    val name: Span = p.spanOf(t: p.curTok())
-    p.advance()
+inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false) -> SigId {
+    mut val name: Span = p.spanOf(t: p.curTok())
+    mut val anonymous: Bool = false
+    if isFactory {
+        match p.curKind() { Kind.LParen => { anonymous = true } _ => {} }
+    }
+    if !anonymous { p.advance() }
     mut val typeParams: Array[Span] = []
     mut val typeParamSendable: Array[Bool] = []
     self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
     val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+    if anonymous {
+        name = <Span start=name.start end=name.start />
+        if params.start < self.paramIds.count() {
+            name = self.paramNode(id: self.paramIds[params.start]).name
+        }
+    }
     mut val hasRet: Bool = false
     mut val ret: TypeId = <TypeId raw=0U64 />
     match p.curKind() {
@@ -4853,7 +4863,7 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
                         match p.curKind() { Kind.LBracket => { p.advance() self.parseSyntaxType(p: inout p) match p.curKind() { Kind.RBracket => { p.advance() } _ => {} } } _ => {} }
                     }
                     if curIs(p: inout p, kw: "factory") { p.advance() }
-                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true))
+                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isFactory: true))
                 } else if curIs(p: inout p, kw: "assoc") {
                     p.advance()
                     match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
@@ -6458,13 +6468,25 @@ export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSp
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
 // or extern declaration). The leading `fn`/`assoc fn`/`inout fn` is already consumed
 // (the cursor is at the name); `isAssoc` records the form. Mirrors parseReqSig.
-fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false) -> SigAst {
+fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false) -> SigAst {
     val nameTok: Tok = p.curTok()
-    val name: String = p.text(t: nameTok)
-    val nameSpan: Span = p.spanOf(t: nameTok)
-    p.advance()
+    mut val name: String = p.text(t: nameTok)
+    mut val nameSpan: Span = p.spanOf(t: nameTok)
+    mut val anonymous: Bool = false
+    if isFactory {
+        match p.curKind() { Kind.LParen => { anonymous = true } _ => {} }
+    }
+    if !anonymous { p.advance() }
     val tps: TypeParamListAst = parseTypeParamList(p: inout p)
     val params: Array[ParamAst] = parseParamAsts(p: inout p)
+    if anonymous {
+        name = ""
+        nameSpan = <Span start=nameSpan.start end=nameSpan.start />
+        if params.count() > 0U64 {
+            name = params[0U64].name
+            nameSpan = params[0U64].nameSpan
+        }
+    }
     mut val hasRet: Bool = false
     mut val ret: TypeAst = emptyTypeAst()
     match p.curKind() {
@@ -6574,7 +6596,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
                     if curIs(p: inout p, kw: "factory") {
                         p.advance()
                     }
-                    reqs.append(parseSigAst(p: inout p, isAssoc: true))
+                    reqs.append(parseSigAst(p: inout p, isAssoc: true, isFactory: true))
                 } else {
                 if curIs(p: inout p, kw: "assoc") {
                     p.advance()
