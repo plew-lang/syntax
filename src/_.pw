@@ -5442,7 +5442,12 @@ inout fn parseSyntaxExport(p: inout P) -> TopItemId {
             val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.Extern /> payload: id.raw span: self.externs[id.raw].span)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
-        Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+        Kind.KwSpawn => {
+            p.fail(off: p.base + p.curTok().start, msg: "`export spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+        }
+        Kind.KwFn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
