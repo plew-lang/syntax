@@ -59,6 +59,7 @@ pub impl Hash as Derive {
         match input {
             TopItemAst.Decl(val d) => {
                 mut val s: Src = newSrc()
+                s.put("import @Std/Hash with { Hash, Hasher }\n\n")
                 s.put("pub impl ")
                 s.put(d.name)
                 s.put(" as Hash {\n    fn hash[H](hasher: inout H) where H: Hasher {\n")
@@ -162,6 +163,7 @@ fn putEqSignature(s: inout Src, d: DeclAst) {
 
 fn deriveEqStruct(d: DeclAst) -> String {
     mut val s: Src = newSrc()
+    s.put("import @Std/Core with { Eq }\n\n")
     putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
     putEqSignature(s: inout s, d: d)
     s.put("        return ")
@@ -184,6 +186,7 @@ fn deriveEqStruct(d: DeclAst) -> String {
 
 fn deriveEqEnum(d: DeclAst) -> String {
     mut val s: Src = newSrc()
+    s.put("import @Std/Core with { Eq }\n\n")
     putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
     putEqSignature(s: inout s, d: d)
     s.put("        match lhs {\n")
