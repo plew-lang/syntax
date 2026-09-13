@@ -3199,10 +3199,6 @@ inout fn parseSyntaxPostfix(p: inout P) -> ExprId {
                     _ => { value = self.pushExprNode(kind: <SyntaxExprKind.Arrow /> span: <Span start=start end=p.prevEnd() /> name: name child0: value) }
                 }
             }
-            Kind.KwAs => {
-                p.advance()
-                value = self.pushExprNode(kind: <SyntaxExprKind.Cast /> span: <Span start=start end=p.prevEnd() /> child0: value type0: self.parseSyntaxType(p: inout p))
-            }
             Kind.Newline => {
                 mut val offset: U64 = 1U64
                 while p.peekKind(off: offset) == <Kind.Newline /> { offset += 1U64 }
@@ -3214,9 +3210,21 @@ inout fn parseSyntaxPostfix(p: inout P) -> ExprId {
     return value
 }
 
+// Cast binds outside unary/postfix expressions and inside binary operators.
+inout fn parseSyntaxCast(p: inout P) -> ExprId {
+    val start: U64 = p.base + p.curTok().start
+    mut val value: ExprId = self.parseSyntaxUnary(p: inout p)
+    while p.curKind() == <Kind.KwAs /> {
+        p.advance()
+        val target: TypeId = self.parseSyntaxType(p: inout p)
+        value = self.pushExprNode(kind: <SyntaxExprKind.Cast /> span: <Span start=start end=p.prevEnd() /> child0: value type0: target)
+    }
+    return value
+}
+
 inout fn parseSyntaxBin(p: inout P, minPrec: I64) -> ExprId {
     val start: U64 = p.base + p.curTok().start
-    mut val left: ExprId = self.parseSyntaxUnary(p: inout p)
+    mut val left: ExprId = self.parseSyntaxCast(p: inout p)
     while true {
         val kind: Kind = p.curKind()
         val prec: I64 = binPrecAst(k: kind)
@@ -8511,11 +8519,6 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
                     }
                 }
             }
-            Kind.KwAs => {
-                p.advance()
-                val ty: TypeAst = parseType(p: inout p)
-                e = <ExprAst.Cast operand=e ty=ty span=<Span start=sStart end=p.prevEnd() /> />
-            }
             Kind.Newline => {
                 mut val off: U64 = 1
                 while p.peekKind(off: off) == <Kind.Newline /> {
@@ -8533,9 +8536,20 @@ fn parsePostfixAst(p: inout P) -> ExprAst {
     return e
 }
 
+fn parseCastAst(p: inout P) -> ExprAst {
+    val start: U64 = p.base + p.curTok().start
+    mut val value: ExprAst = parseUnaryAst(p: inout p)
+    while p.curKind() == <Kind.KwAs /> {
+        p.advance()
+        val target: TypeAst = parseType(p: inout p)
+        value = <ExprAst.Cast operand=value ty=target span=<Span start=start end=p.prevEnd() /> />
+    }
+    return value
+}
+
 fn parseBinAst(p: inout P, minPrec: I64) -> ExprAst {
     val sStart: U64 = p.base + p.curTok().start
-    mut val left: ExprAst = parseUnaryAst(p: inout p)
+    mut val left: ExprAst = parseCastAst(p: inout p)
     while true {
         val k: Kind = p.curKind()
         val prec: I64 = binPrecAst(k: k)
