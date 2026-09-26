@@ -956,7 +956,6 @@ impl SyntaxFile {
             TopItemAst.Extern(e: val e) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Extern /> payload: self.freezeExternAst(ast: e).raw span: e.span) }
             TopItemAst.Import(imp: val imp) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: self.freezeImportAst(ast: imp).raw span: imp.span) }
             TopItemAst.Export(inner: val inner) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: self.freezeTopItemAst(ast: inner).raw span: <Span start=0 end=0 />) }
-            TopItemAst.ReExport(imp: val imp) => { return self.pushTopItem(kind: <SyntaxTopItemKind.ReExport /> payload: self.freezeImportAst(ast: imp).raw span: imp.span) }
             TopItemAst.Directive(dir: val dir) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Directive /> payload: self.freezeDirectiveAst(ast: dir).raw span: <Span start=0 end=0 />) }
             TopItemAst.GlobalVal(s: val s) => { return self.pushTopItem(kind: <SyntaxTopItemKind.GlobalVal /> payload: self.freezeStmtAst(ast: s).raw span: self.stmts[self.stmts.count() - 1U64].span) }
             TopItemAst.NewType(name: _, nameSpan: val nameSpan, ty: val ty, isPub: val isPub, span: val span) => {

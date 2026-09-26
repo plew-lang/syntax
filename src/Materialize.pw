@@ -438,7 +438,6 @@ impl SyntaxFile {
             SyntaxTopItemKind.Extern => { return <TopItemAst.Extern e=self.materializeExtern(id: <ExternId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.Import => { return <TopItemAst.Import imp=self.materializeImport(id: <ImportId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.Export => { return <TopItemAst.Export inner=self.materializeTopItem(id: <TopItemId raw=node.payload />, p: p) /> }
-            SyntaxTopItemKind.ReExport => { return <TopItemAst.ReExport imp=self.materializeImport(id: <ImportId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.Directive => { return <TopItemAst.Directive dir=self.materializeDirective(id: <DirectiveId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.GlobalVal => { return <TopItemAst.GlobalVal s=self.materializeStmt(id: <StmtId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.NewType => {

@@ -1106,7 +1106,6 @@ pub enum SyntaxTopItemKind {
     Extern
     Import
     Export
-    ReExport
     Directive
     GlobalVal
     NewType
@@ -1870,12 +1869,8 @@ pub struct DirectiveAst {
 // A top-level item of a program (spec/15). The shared `parseProgramAst` returns a
 // list of these; the compiler frontend lowers each (Codegen/Lower.pw) into its arena
 // or Comp state, and follows `Import` nodes to load further files. `Export` wraps the
-// exported inner item (recursive — auto-boxed); `ReExport` is an `export <path> with
-// { … }` (a pure forwarding re-export, spec/15): it carries the same `ImportAst` an
-// `import` would (path + selected names + aliases) so the loader can load the
-// forwarded module and the frontend can republish its names — but unlike `import` it
-// binds NOTHING locally (forwarding only). `imp.isImport` is true (it resolves a fresh
-// module like an import); the `ReExport` wrapper is what marks it as forward-only.
+// published inner item (recursive — auto-boxed). Public imports use Import
+// with isPublic set, sharing both local binding and publication semantics.
 pub enum TopItemAst {
     Decl(d: DeclAst)
     Impl(im: ImplAst)
@@ -1883,7 +1878,6 @@ pub enum TopItemAst {
     Extern(e: ExternAst)
     Import(imp: ImportAst)
     Export(inner: TopItemAst)
-    ReExport(imp: ImportAst)
     Directive(dir: DirectiveAst)
     // a module-level variable (spec/15): `val x = e` / `mut val x = e`. The payload
     // is the same `StmtAst.Let` the local-binding parser produces (name / optional
@@ -2101,8 +2095,8 @@ pub struct P {
     pub mut val errMsg: String = ""
 }
 
-// Does the current token match keyword text `kw` (an Ident like `pub`/`export`/
-// `get`/`where`)? `export`/`pub`/`where` are contextual identifiers, not Kinds.
+// Does the current token match keyword text `kw` (an Ident like `pub`/
+// `get`/`where`)? `pub`/`where` are contextual identifiers, not Kinds.
 fn curIs(p: inout P, kw: String) -> Bool {
     match p.curKind() {
         Kind.Ident => {
@@ -2110,54 +2104,6 @@ fn curIs(p: inout P, kw: String) -> Bool {
             return rangeEquals(bytes: p.bytes, start: t.start, len: t.len, kw: kw)
         }
         _ => { return false }
-    }
-}
-
-// Skip a balanced `[ ... ]` group (current token must be the opening `[`).
-fn skipBracketGroup(p: inout P) {
-    mut val depth: I64 = 0
-    while true {
-        match p.curKind() {
-            Kind.LBracket => {
-                depth += 1
-                p.advance()
-            }
-            Kind.RBracket => {
-                depth -= 1
-                p.advance()
-                if depth == 0 {
-                    break
-                }
-            }
-            Kind.Eof => { break }
-            _ => { p.advance() }
-        }
-    }
-}
-
-// Skip leading newlines, the `@[...]` directive(s), and an `export` modifier, so
-// the cursor lands on the item keyword (`struct`/`enum`/`fn`/`unique`).
-fn skipLeading(p: inout P) {
-    while true {
-        match p.curKind() {
-            Kind.Newline => { p.advance() }
-            Kind.Unknown => {
-                // a directive: `@` lexes as Unknown; skip it and its `[...]`.
-                p.advance()
-                match p.curKind() {
-                    Kind.LBracket => { skipBracketGroup(p: inout p) }
-                    _ => {}
-                }
-            }
-            Kind.Ident => {
-                if curIs(p: inout p, kw: "export") {
-                    p.advance()
-                } else {
-                    break
-                }
-            }
-            _ => { break }
-        }
     }
 }
 
@@ -4311,9 +4257,9 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
     return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
 }
 
-inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false, reExport: Bool = false, start: U64 = 0U64, hasStart: Bool = false) -> ImportId {
-    mut val itemStart: U64 = start
-    if !(hasStart) { itemStart = p.base + p.curTok().start p.advance() }
+inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -> ImportId {
+    val itemStart: U64 = p.base + p.curTok().start
+    p.advance()
     val pathStart: U64 = p.base + p.curTok().start
     mut val pathEndToken: U64 = p.curTok().start
     mut val segmentStart: U64 = pathStart
@@ -4349,7 +4295,7 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false, r
         }
         _ => {}
     }
-    if sawWith && !reExport {
+    if sawWith {
         match p.curKind() {
             Kind.LBrace => {}
             Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `with *` is not supported (spec/15): use a namespace import `import <path>` (then refer to `Ns.name`) for broad access, or `with { … }` to select names") }
@@ -5444,11 +5390,9 @@ inout fn parseSyntaxDeclTop(p: inout P) -> TopItemId {
     return self.pushTopItem(kind: <SyntaxTopItemKind.Decl /> payload: 0U64 span: <Span start=p.base + p.curTok().start end=p.base + p.curTok().start />)
 }
 
-// `export <decl>` wraps an already-direct top item; `export <path>` instead
-// creates the ReExport import node.  The wrapper stores only the nested ID.
-inout fn parseSyntaxExport(p: inout P, prefixConsumed: Bool = false) -> TopItemId {
-    val start: U64 = p.base + p.curTok().start
-    if !prefixConsumed { p.advance() }
+// A published declaration wraps an already-direct top item. The caller has
+// consumed `pub`; `pub import` is handled by the ordinary import parser.
+inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
     match p.curKind() {
         Kind.KwExtern => {
             val id: ExternId = self.parseSyntaxExternDecl(p: inout p)
@@ -5456,7 +5400,7 @@ inout fn parseSyntaxExport(p: inout P, prefixConsumed: Bool = false) -> TopItemI
             return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
         Kind.KwSpawn => {
-            p.fail(off: p.base + p.curTok().start, msg: "`export spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            p.fail(off: p.base + p.curTok().start, msg: "`pub spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
@@ -5486,8 +5430,8 @@ inout fn parseSyntaxExport(p: inout P, prefixConsumed: Bool = false) -> TopItemI
         }
         _ => {}
     }
-    val importId: ImportId = self.parseSyntaxImport(p: inout p, isImport: true, reExport: true, start: start, hasStart: true)
-    return self.pushTopItem(kind: <SyntaxTopItemKind.ReExport /> payload: importId.raw span: self.imports[importId.raw].span)
+    p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
+    return self.parseSyntaxDeclTop(p: inout p)
 }
 
 // An extension expands to ordinary direct Impl top items tagged by one extension
@@ -5548,7 +5492,8 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 val id: ImportId = self.parseSyntaxImport(p: inout p, isImport: false)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
             } else if curIs(p: inout p, kw: "export") {
-                items.append(self.parseSyntaxExport(p: inout p))
+                p.fail(off: p.base + p.curTok().start, msg: "`export` is not supported; use `pub` or `pub import`")
+                p.advance()
             } else if curIs(p: inout p, kw: "impl") {
                 val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: false)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
@@ -5561,7 +5506,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                     val id = self.parseSyntaxImport(p: inout p, isImport: true, isPublic: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
                 } else {
-                    items.append(self.parseSyntaxExport(p: inout p, prefixConsumed: true))
+                    items.append(self.parseSyntaxPublishedItem(p: inout p))
                 }
             } else if curIs(p: inout p, kw: "trait") {
                 val id: TraitId = self.parseSyntaxTraitDecl(p: inout p)
@@ -5572,7 +5517,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 val id: NewtypeId = self.parseSyntaxNewtype(p: inout p, isPub: false)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.NewType /> payload: id.raw span: self.newtypes[id.raw].span))
             } else {
-                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
+                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
                 p.advance()
             }
         }
@@ -5582,7 +5527,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 val id: DirectiveId = self.parseSyntaxDirective(p: inout p)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Directive /> payload: id.raw span: <Span start=0U64 end=0U64 />))
             } else {
-                p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
+                p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
                 p.advance()
             }
         }
@@ -6101,7 +6046,7 @@ pub fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
     mut val p: P = <P bytes=sb toks=lx.toks pos=0 base=start />
     mut val file: SyntaxFile = <SyntaxFile.empty />
     val roots: SyntaxSlice = file.parseProgramSyntaxDirect(p: inout p)
-    // A derive target may have one or more leading directives and `export`.
+    // A derive target may have one or more leading directives and `pub`.
     // The old API intentionally returned the target itself rather than either
     // wrapper, so retain that documented macro boundary while obtaining it from
     // the canonical parsed rows.
@@ -6132,7 +6077,7 @@ fn emptyDeclAst(off: U64) -> DeclAst {
 // Parse a single nominal declaration (`[unique] struct` / `enum` / `fn`) from the
 // compiler's own token stream — the cursor is already at the item keyword (the
 // frontend's `parseProgram` dispatched). Mirrors `parseItem`'s match without the
-// re-lex/skipLeading. The frontend drives this over its `P` (base 0 = absolute
+// re-lexing. The frontend drives this over its `P` (base 0 = absolute
 // c.bytes offsets) and lowers the result into its arena (Codegen/Lower.pw).
 pub fn parseDecl(p: inout P) -> DeclAst {
     match p.curKind() {
@@ -6764,14 +6709,11 @@ pub fn parseExternDecl(p: inout P) -> ExternAst {
 fn parseImportAst(p: inout P, isImport: Bool, isPublic: Bool = false) -> ImportAst {
     val startOff: U64 = p.base + p.curTok().start
     p.advance()
-    return parseImportTail(p: inout p, isImport: isImport, reExport: false, startOff: startOff, isPublic: isPublic)
+    return parseImportTail(p: inout p, isImport: isImport, startOff: startOff, isPublic: isPublic)
 }
 
-// The path + `with { names }` body of an `import`/`part`/re-export, with the cursor
-// already past the leading keyword (`import`/`part`/`export`). `startOff` is the
-// keyword's offset (for the item span). Shared so a re-export (`export <path> with
-// { … }`) parses its path/names with the exact same machinery as `import`.
-fn parseImportTail(p: inout P, isImport: Bool, reExport: Bool, startOff: U64, isPublic: Bool = false) -> ImportAst {
+// Parse the path and selection after import/part; public imports use the same grammar.
+fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = false) -> ImportAst {
     // the path = contiguous tokens (`@`/`.`/`..`/`/` markers + segments), stopping
     // before a space-separated `with`, a `{`, or a newline.
     mut val pathStart: U64 = p.base + p.curTok().start
@@ -6843,12 +6785,10 @@ fn parseImportTail(p: inout P, isImport: Bool, reExport: Bool, startOff: U64, is
     // intentionally not supported (spec/15): it hides provenance — use a namespace
     // import `import <path>` (then `Ns.name`) for broad access, or `with { … }`.
     if sawWith {
-        if !reExport {
-            match p.curKind() {
-                Kind.LBrace => {}
-                Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `with *` is not supported (spec/15): use a namespace import `import <path>` (then refer to `Ns.name`) for broad access, or `with { … }` to select names") }
-                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `with` in an import") }
-            }
+        match p.curKind() {
+            Kind.LBrace => {}
+            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `with *` is not supported (spec/15): use a namespace import `import <path>` (then refer to `Ns.name`) for broad access, or `with { … }` to select names") }
+            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `with` in an import") }
         }
     }
     match p.curKind() {
@@ -6960,21 +6900,13 @@ fn parseDirectiveAst(p: inout P) -> DirectiveAst {
     return <DirectiveAst reqs=reqs />
 }
 
-// `export <decl> | export extern { } | export <path> [with]` (spec/15). The cursor
-// is at the `export` ident. Returns the wrapped item (`Export`) or a re-export path
-// (`ReExport`, recorded as nothing for now). Mirrors the compiler's parseExport.
-fn parseExportAst(p: inout P, prefixConsumed: Bool = false) -> TopItemAst {
-    val startOff: U64 = p.base + p.curTok().start
-    if !prefixConsumed { p.advance() }
-    // A declaration keyword (or contextual `trait`/`newtype`) → `export <decl>`. Anything
-    // else is a re-export path (`export ./X` / `export @Std/X` / `export /X` [with { … }]),
-    // parsed with the shared import-tail machinery (spec/15). The `@…` form is supported:
-    // the `@` lexes as Unknown and is consumed as a contiguous path token like any other.
+// Decode a published declaration after the caller consumes `pub`.
+fn parsePublishedItemAst(p: inout P) -> TopItemAst {
     match p.curKind() {
         Kind.KwExtern => { return <TopItemAst.Export inner=<TopItemAst.Extern e=parseExternDecl(p: inout p) /> /> }
         Kind.KwFn => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwSpawn => {
-            p.fail(off: p.base + p.curTok().start, msg: "`export spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
+            p.fail(off: p.base + p.curTok().start, msg: "`pub spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
             return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> />
         }
         Kind.KwAsync => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
@@ -6991,14 +6923,16 @@ fn parseExportAst(p: inout P, prefixConsumed: Bool = false) -> TopItemAst {
             if curIs(p: inout p, kw: "trait") {
                 return <TopItemAst.Export inner=<TopItemAst.Trait t=parseTraitDecl(p: inout p) /> />
             }
-            // `export newtype Name = Underlying` (spec/10,15): `newtype` is a contextual
+            // `pub newtype Name = Underlying` (spec/10,15): `newtype` is a contextual
             // keyword (an Ident), so it lands here rather than in a `Kind.Kw…` arm.
             if curIs(p: inout p, kw: "newtype") {
                 return <TopItemAst.Export inner=parseNewtypeAst(p: inout p, isPub: false) />
             }
-            return <TopItemAst.ReExport imp=parseImportTail(p: inout p, isImport: true, reExport: true, startOff: startOff) />
+            p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
+            return <TopItemAst.Decl d=parseDecl(p: inout p) />
         }
-        _ => { return <TopItemAst.ReExport imp=parseImportTail(p: inout p, isImport: true, reExport: true, startOff: startOff) /> }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
+            return <TopItemAst.Decl d=parseDecl(p: inout p) /> }
     }
 }
 
@@ -7075,7 +7009,8 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                         items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: false) />)
                     } else {
                         if curIs(p: inout p, kw: "export") {
-                            items.append(parseExportAst(p: inout p))
+                            p.fail(off: p.base + p.curTok().start, msg: "`export` is not supported; use `pub` or `pub import`")
+                            p.advance()
                         } else {
                             if curIs(p: inout p, kw: "impl") {
                                 items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: false) />)
@@ -7087,7 +7022,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                     } else if curIs(p: inout p, kw: "import") {
                                         items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
                                     } else {
-                                        items.append(parseExportAst(p: inout p, prefixConsumed: true))
+                                        items.append(parsePublishedItemAst(p: inout p))
                                     }
                                 } else {
                                     if curIs(p: inout p, kw: "trait") {
@@ -7102,7 +7037,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                                 // an identifier that starts no top-level item: reporting
                                                 // instead of skipping — a silently dropped token is
                                                 // hidden meaning (what was spoken did not manifest).
-                                                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
+                                                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
                                                 p.advance()
                                             }
                                         }
@@ -7120,7 +7055,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                 } else {
                     // a stray token at the top level (`}` from an over-closed block,
                     // punctuation, garbage): report, don't silently swallow.
-                    p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / export / val)")
+                    p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
                     p.advance()
                 }
             }
