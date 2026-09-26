@@ -1468,6 +1468,7 @@ pub struct SyntaxBind {
 }
 
 pub struct SyntaxPattern {
+    pub val typePath: SyntaxSlice = <SyntaxSlice start=0 count=0 />
     pub val isWildcard: Bool
     pub val isStruct: Bool
     pub val typeName: Span
@@ -1958,6 +1959,7 @@ pub struct BindAst {
 // match desugars in lowering to a temp-bound `==` if/else chain, so the arena
 // never sees a literal pattern.
 pub struct PatternAst {
+    pub val typePath: Array[NameSegmentAst] = []
     pub val isWildcard: Bool
     pub val isStruct: Bool
     pub val typeName: String
@@ -3381,6 +3383,7 @@ inout fn parseSyntaxPattern(p: inout P) -> PatternId {
     mut val isStruct: Bool = false
     mut val typeName: Span = <Span start=0U64 end=0U64 />
     mut val variant: Span = <Span start=0U64 end=0U64 />
+    mut val typePath: Array[SyntaxNameSegment] = []
     mut val bindIds: Array[BindId] = []
     mut val isLiteral: Bool = false
     mut val literal: ExprId = <ExprId raw=0U64 />
@@ -3406,11 +3409,16 @@ inout fn parseSyntaxPattern(p: inout P) -> PatternId {
                     mut val opened: Bool = false
                     match p.curKind() {
                         Kind.Dot => {
-                            p.advance()
-                            variant = p.spanOf(t: p.curTok())
-                            p.advance()
+                            typePath.append(<SyntaxNameSegment name=typeName args=self.emptySlice() argLabels=self.emptySlice() />)
+                            while true {
+                                match p.curKind() { Kind.Dot => { p.advance() } _ => { break } }
+                                variant = p.spanOf(t: p.curTok())
+                                typePath.append(<SyntaxNameSegment name=variant args=self.emptySlice() argLabels=self.emptySlice() />)
+                                p.advance()
+                            }
                             match p.curKind() {
                                 Kind.LParen => { p.advance() opened = true }
+                                Kind.LBrace => { isStruct = true p.advance() opened = true }
                                 _ => {}
                             }
                         }
@@ -3476,7 +3484,7 @@ inout fn parseSyntaxPattern(p: inout P) -> PatternId {
         }
     }
     val id: PatternId = <PatternId raw=self.patterns.count() />
-    self.patterns.append(<SyntaxPattern isWildcard=isWildcard isStruct=isStruct typeName=typeName variant=variant binds=self.pushBindIdSlice(items: bindIds) isLiteral=isLiteral lit=literal captureName=capture span=<Span start=start end=p.prevEnd() /> />)
+    self.patterns.append(<SyntaxPattern typePath=self.pushNameSegments(items: typePath) isWildcard=isWildcard isStruct=isStruct typeName=typeName variant=variant binds=self.pushBindIdSlice(items: bindIds) isLiteral=isLiteral lit=literal captureName=capture span=<Span start=start end=p.prevEnd() /> />)
     return id
 }
 
@@ -8705,6 +8713,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
     mut val typeNameSpan: Span = <Span start=0 end=0 />
     mut val variant: String = ""
     mut val variantSpan: Span = <Span start=0 end=0 />
+    mut val typePath: Array[NameSegmentAst] = []
     mut val binds: Array[BindAst] = []
     if patternStartsLiteral(p: inout p) {
         val lit: ExprAst = parsePatternLiteralAst(p: inout p)
@@ -8731,16 +8740,18 @@ fn parsePatternAst(p: inout P) -> PatternAst {
         mut val popen: Bool = false
         match p.curKind() {
             Kind.Dot => {
-                p.advance()
-                val variantTok: Tok = p.curTok()
-                variant = p.text(t: variantTok)
-                variantSpan = p.spanOf(t: variantTok)
-                p.advance()
+                typePath.append(<NameSegmentAst name=typeName nameSpan=typeNameSpan />)
+                while true {
+                    match p.curKind() { Kind.Dot => { p.advance() } _ => { break } }
+                    val token = p.curTok()
+                    variant = p.text(t: token)
+                    variantSpan = p.spanOf(t: token)
+                    typePath.append(<NameSegmentAst name=variant nameSpan=variantSpan />)
+                    p.advance()
+                }
                 match p.curKind() {
-                    Kind.LParen => {
-                        p.advance()
-                        popen = true
-                    }
+                    Kind.LParen => { p.advance() popen = true }
+                    Kind.LBrace => { isStruct = true p.advance() popen = true }
                     _ => {}
                 }
             }
@@ -8823,7 +8834,7 @@ fn parsePatternAst(p: inout P) -> PatternAst {
             }
         }
     }
-    return <PatternAst isWildcard=isWildcard isStruct=isStruct typeName=typeName typeNameSpan=typeNameSpan variant=variant variantSpan=variantSpan binds=binds span=<Span start=sStart end=p.prevEnd() /> />
+    return <PatternAst typePath=typePath isWildcard=isWildcard isStruct=isStruct typeName=typeName typeNameSpan=typeNameSpan variant=variant variantSpan=variantSpan binds=binds span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // Parse an arm's `Pat ( | Pat )*` and consume the `=>`. Returns one PatternAst per

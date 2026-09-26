@@ -618,7 +618,7 @@ impl SyntaxFile {
     }
 
     inout fn freezePatternAst(ast: PatternAst) -> PatternId {
-        self.patterns.append(<SyntaxPattern isWildcard=ast.isWildcard isStruct=ast.isStruct typeName=ast.typeNameSpan variant=ast.variantSpan binds=self.freezeBindAstSlice(items: ast.binds) isLiteral=ast.isLiteral lit=self.freezeExprAst(ast: ast.lit) captureName=ast.captureNameSpan span=ast.span />)
+        self.patterns.append(<SyntaxPattern typePath=self.freezeNamePath(items: ast.typePath) isWildcard=ast.isWildcard isStruct=ast.isStruct typeName=ast.typeNameSpan variant=ast.variantSpan binds=self.freezeBindAstSlice(items: ast.binds) isLiteral=ast.isLiteral lit=self.freezeExprAst(ast: ast.lit) captureName=ast.captureNameSpan span=ast.span />)
         val id: PatternId = <PatternId raw=self.patterns.count() - 1U64 />
         return id
     }
