@@ -363,10 +363,11 @@ impl SyntaxFile {
         fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
         arms: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
         params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        typePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
         typeArgs: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     ) -> ExprId {
         val id: ExprId = <ExprId raw=self.exprs.count() />
-        self.exprs.append(<SyntaxExpr kind=kind span=span text=text name=name nameSpan=nameSpan op=op intValue=intValue flag0=flag0 flag1=flag1 child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 args=args elems=elems keys=keys values=values fields=fields arms=arms params=params typeArgs=typeArgs />)
+        self.exprs.append(<SyntaxExpr kind=kind span=span text=text name=name nameSpan=nameSpan op=op intValue=intValue flag0=flag0 flag1=flag1 child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 args=args elems=elems keys=keys values=values fields=fields arms=arms params=params typePath=typePath typeArgs=typeArgs />)
         return id
     }
 
@@ -532,6 +533,7 @@ impl SyntaxFile {
         val id: TypeId = <TypeId raw=self.types.count() />
         self.types.append(<SyntaxType
             name=ast.nameSpan
+            namePath=self.freezeNamePath(items: ast.namePath)
             args=self.pushTypeIdSlice(items: argIds)
             span=ast.span
             extView=ast.extViewSpan
@@ -732,7 +734,7 @@ impl SyntaxFile {
             ExprAst.ExtMethod(recv: val recv, src: _, srcSpan: val srcSpan, name: _, nameSpan: val nameSpan, args: val args, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ExtMethod /> span: span text: srcSpan name: nameSpan child0: self.freezeExprAst(ast: recv) args: self.freezeArgAstSlice(items: args)) }
             ExprAst.ExtView(recv: val recv, src: _, srcSpan: val srcSpan, strip: val strip, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ExtView /> span: span text: srcSpan flag0: strip child0: self.freezeExprAst(ast: recv)) }
             ExprAst.Index(base: val base, index: val index, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Index /> span: span child0: self.freezeExprAst(ast: base) child1: self.freezeExprAst(ast: index)) }
-            ExprAst.Make(typeName: _, typeNameSpan: val typeNameSpan, typeArgs: val typeArgs, variant: _, variantSpan: val variantSpan, isEnum: val isEnum, fields: val fields, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Make /> span: span name: typeNameSpan nameSpan: variantSpan flag0: isEnum fields: self.freezeMakeFieldAstSlice(items: fields) typeArgs: self.freezeTypeAstSlice(items: typeArgs)) }
+            ExprAst.Make(typeName: _, typeNameSpan: val typeNameSpan, typePath: val typePath, typeArgs: val typeArgs, variant: _, variantSpan: val variantSpan, isEnum: val isEnum, fields: val fields, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Make /> span: span name: typeNameSpan nameSpan: variantSpan flag0: isEnum fields: self.freezeMakeFieldAstSlice(items: fields) typePath: self.freezeNamePath(items: typePath) typeArgs: self.freezeTypeAstSlice(items: typeArgs)) }
             ExprAst.ArrayLit(elems: val elems, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ArrayLit /> span: span elems: self.freezeExprAstSlice(items: elems)) }
             ExprAst.DictLit(keys: val keys, vals: val vals, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.DictLit /> span: span keys: self.freezeExprAstSlice(items: keys) values: self.freezeExprAstSlice(items: vals)) }
             ExprAst.RecordLit(fields: val fields, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.RecordLit /> span: span fields: self.freezeMakeFieldAstSlice(items: fields)) }
@@ -970,4 +972,35 @@ impl SyntaxFile {
         return id
     }
 
+}
+
+impl SyntaxFile {
+    fn nameSegmentAt(path: SyntaxSlice, index: U64) -> SyntaxNameSegment {
+        return self.nameSegments[path.start + index]
+    }
+    fn nameSegmentArg(segment: SyntaxNameSegment, index: U64) -> TypeId {
+        return self.typeIds[segment.args.start + index]
+    }
+    fn nameSegmentArgLabel(segment: SyntaxNameSegment, index: U64) -> Span {
+        return self.texts[segment.argLabels.start + index]
+    }
+    inout fn pushNameSegments(items: Array[SyntaxNameSegment]) -> SyntaxSlice {
+        val start = self.nameSegments.count()
+        mut val index = 0U64
+        while index < items.count() {
+            self.nameSegments.append(items[index])
+            index += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+    inout fn freezeNamePath(items: Array[NameSegmentAst]) -> SyntaxSlice {
+        mut val segments: Array[SyntaxNameSegment] = []
+        mut val index = 0U64
+        while index < items.count() {
+            val item = items[index]
+            segments.append(<SyntaxNameSegment name=item.nameSpan args=self.freezeTypeAstSlice(items: item.args) argLabels=self.pushTextSlice(items: item.argLabelSpans) />)
+            index += 1U64
+        }
+        return self.pushNameSegments(items: segments)
+    }
 }

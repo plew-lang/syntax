@@ -1136,6 +1136,7 @@ pub struct SyntaxFile {
     mut val directives: Array[SyntaxDirective] = []
     mut val newtypes: Array[SyntaxNewtype] = []
     mut val types: Array[SyntaxType] = []
+    mut val nameSegments: Array[SyntaxNameSegment] = []
     mut val fields: Array[SyntaxField] = []
     mut val variants: Array[SyntaxVariant] = []
     mut val params: Array[SyntaxParam] = []
@@ -1185,7 +1186,28 @@ pub impl SyntaxFile {
 // Raw declaration-side nodes. `Span` is also the text reference: all parser
 // input lives in the compiler source arena, so copying a spelling into String is
 // neither necessary nor desirable on the compiler path.
+// A source path segment owns its own positional/named type arguments.
+// The slice fields address the usual TypeId and text pools respectively.
+pub struct SyntaxNameSegment {
+    pub val name: Span
+    pub val args: SyntaxSlice
+    pub val argLabels: SyntaxSlice
+}
+
+pub struct NameSegmentAst {
+    pub val name: String
+    pub val nameSpan: Span = <Span start=0U64 end=0U64 />
+    pub val args: Array[TypeAst] = []
+    pub val argLabels: Array[String] = []
+    pub val argLabelSpans: Array[Span] = []
+}
+
+pub impl SyntaxNameSegment { factory }
+pub impl NameSegmentAst { factory }
+
 pub struct SyntaxType {
+    // Empty for an unqualified head; otherwise includes every path segment.
+    pub val namePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val name: Span
     pub val args: SyntaxSlice
     pub val span: Span
@@ -1394,6 +1416,7 @@ pub enum SyntaxExprKind {
 }
 
 pub struct SyntaxExpr {
+    pub val typePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val kind: SyntaxExprKind
     pub val span: Span
     pub val text: Span
@@ -1518,6 +1541,7 @@ pub struct TypeParamListAst {
 // A type expression. `Array[U8]` -> name="Array", args=[U8]; a bare `T` ->
 // name="T", args=[]. (Function types `fn(...)->T` are an additive follow-up.)
 pub struct TypeAst {
+    pub val namePath: Array[NameSegmentAst] = []
     pub val name: String
     // Exact source spelling of `name`. `span` covers the complete type expression
     // (and may begin at `any`/`sendable`), so it cannot substitute for this when a
@@ -1988,7 +2012,7 @@ pub enum ExprAst {
     // shadowed bare method). The value is unchanged either way.
     ExtView(recv: ExprAst, src: String, srcSpan: Span, strip: Bool, span: Span)
     Index(base: ExprAst, index: ExprAst, span: Span)
-    Make(typeName: String, typeNameSpan: Span, typeArgs: Array[TypeAst], variant: String, variantSpan: Span, isEnum: Bool, fields: Array[MakeFieldAst], span: Span)
+    Make(typeName: String, typeNameSpan: Span, typePath: Array[NameSegmentAst], typeArgs: Array[TypeAst], variant: String, variantSpan: Span, isEnum: Bool, fields: Array[MakeFieldAst], span: Span)
     ArrayLit(elems: Array[ExprAst], span: Span)
     DictLit(keys: Array[ExprAst], vals: Array[ExprAst], span: Span)
     // a labelled anonymous record literal `(x: 1, y: 2)` (spec/02). `fields` reuses
@@ -2033,7 +2057,7 @@ pub fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.ExtMethod(recv: _, src: _, srcSpan: _, name: _, nameSpan: _, args: _, val span) => { return span }
         ExprAst.ExtView(recv: _, src: _, srcSpan: _, strip: _, val span) => { return span }
         ExprAst.Index(base: _, index: _, val span) => { return span }
-        ExprAst.Make(typeName: _, typeNameSpan: _, typeArgs: _, variant: _, variantSpan: _, isEnum: _, fields: _, val span) => { return span }
+        ExprAst.Make(typeName: _, typeNameSpan: _, typePath: _, typeArgs: _, variant: _, variantSpan: _, isEnum: _, fields: _, val span) => { return span }
         ExprAst.ArrayLit(elems: _, val span) => { return span }
         ExprAst.DictLit(keys: _, vals: _, val span) => { return span }
         ExprAst.RecordLit(fields: _, val span) => { return span }
@@ -2112,6 +2136,52 @@ fn curIs(p: inout P, kw: String) -> Bool {
 // args = [R, T1, T2, ...] (labels/`inout` dropped — they aren't part of the C
 // calling convention), mirroring the compiler's parseTypeTok. The current token is
 // the type head.
+fn parseNameSegmentAst(p: inout P, name: String, nameSpan: Span) -> NameSegmentAst {
+    mut val args: Array[TypeAst] = []
+    // binding labels parallel to args: a named associated-type / type-parameter
+    // binding `Name=Type` (spec/08,12 — used by `any P[Item=I32]`) records its name;
+    // an ordinary positional type argument records "".
+    mut val argLabels: Array[String] = []
+    mut val argLabelSpans: Array[Span] = []
+    match p.curKind() {
+        Kind.LBracket => {
+            p.advance()
+            while true {
+                match p.curKind() {
+                    Kind.RBracket => {
+                        p.advance()
+                        break
+                    }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    _ => {
+                        // a named binding `Name = Type` (an Ident immediately followed
+                        // by `=`): record the label and parse the bound type.
+                        mut val lbl: String = ""
+                        mut val lblSpan: Span = <Span start=0 end=0 />
+                        match p.curKind() {
+                            Kind.Ident => {
+                                if p.peekKind(off: 1) == <Kind.Eq /> {
+                                    lbl = p.text(t: p.curTok())
+                                    lblSpan = p.spanOf(t: p.curTok())
+                                    p.advance()
+                                    p.advance()
+                                }
+                            }
+                            _ => {}
+                        }
+                        args.append(parseType(p: inout p))
+                        argLabels.append(lbl)
+                        argLabelSpans.append(lblSpan)
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    return <NameSegmentAst name=name nameSpan=nameSpan args=args argLabels=argLabels argLabelSpans=argLabelSpans />
+}
+
 fn parseType(p: inout P) -> TypeAst {
     // an existential `any P` (spec/08): the lowercase `any` (never a type name —
     // types are PascalCase) followed by a trait type. Parse the trait type and tag
@@ -2136,7 +2206,7 @@ fn parseType(p: inout P) -> TypeAst {
                 _ => {}
             }
             val inner: TypeAst = parseType(p: inout p)
-            return <TypeAst name=inner.name nameSpan=inner.nameSpan args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView extViewSpan=inner.extViewSpan viewNames=inner.viewNames viewNameSpans=inner.viewNameSpans projectionTrait=inner.projectionTrait projectionTraitSpan=inner.projectionTraitSpan projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels projectionTraitArgLabelSpans=inner.projectionTraitArgLabelSpans projectionAssoc=inner.projectionAssoc projectionAssocSpan=inner.projectionAssocSpan isAny=true argLabels=inner.argLabels argLabelSpans=inner.argLabelSpans isSendable=isSendableAny isRecord=inner.isRecord />
+            return <TypeAst name=inner.name nameSpan=inner.nameSpan namePath=inner.namePath args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView extViewSpan=inner.extViewSpan viewNames=inner.viewNames viewNameSpans=inner.viewNameSpans projectionTrait=inner.projectionTrait projectionTraitSpan=inner.projectionTraitSpan projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels projectionTraitArgLabelSpans=inner.projectionTraitArgLabelSpans projectionAssoc=inner.projectionAssoc projectionAssocSpan=inner.projectionAssocSpan isAny=true argLabels=inner.argLabels argLabelSpans=inner.argLabelSpans isSendable=isSendableAny isRecord=inner.isRecord />
         }
     }
     mut val isSendableFn: Bool = false
@@ -2318,6 +2388,14 @@ fn parseType(p: inout P) -> TypeAst {
         }
         _ => {}
     }
+    mut val pathSegments: Array[NameSegmentAst] = []
+    while p.curKind() == <Kind.Dot /> {
+        if pathSegments.count() == 0U64 { pathSegments.append(<NameSegmentAst name=name nameSpan=nameSpan args=args argLabels=argLabels argLabelSpans=argLabelSpans />) }
+        p.advance()
+        val member = p.curTok()
+        p.advance()
+        pathSegments.append(parseNameSegmentAst(p: inout p, name: p.text(t: member), nameSpan: p.spanOf(t: member)))
+    }
     // an extension-view refinement `Person#Ext` (spec/09), or an associated-type
     // projection `T#Trait.Item` / `T.Item` (spec/08). A `#Name` followed by `.Item`
     // is a projection source, not a value/extension view.
@@ -2420,7 +2498,7 @@ fn parseType(p: inout P) -> TypeAst {
             _ => {}
         }
     }
-    return <TypeAst name=name nameSpan=nameSpan args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView extViewSpan=extViewSpan viewNames=viewNames viewNameSpans=viewNameSpans projectionTrait=projectionTrait projectionTraitSpan=projectionTraitSpan projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionTraitArgLabelSpans=projectionTraitArgLabelSpans projectionAssoc=projectionAssoc projectionAssocSpan=projectionAssocSpan argLabels=argLabels argLabelSpans=argLabelSpans />
+    return <TypeAst name=name nameSpan=nameSpan namePath=pathSegments args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView extViewSpan=extViewSpan viewNames=viewNames viewNameSpans=viewNameSpans projectionTrait=projectionTrait projectionTraitSpan=projectionTraitSpan projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionTraitArgLabelSpans=projectionTraitArgLabelSpans projectionAssoc=projectionAssoc projectionAssocSpan=projectionAssocSpan argLabels=argLabels argLabelSpans=argLabelSpans />
 }
 
 // A condition-chain clause is deliberately only a set of arena IDs.  Unlike the
@@ -2670,31 +2748,27 @@ inout fn parseSyntaxMake(p: inout P) -> ExprId {
     p.advance()
     val typeName: Span = p.spanOf(t: p.curTok())
     p.advance()
-    mut val typeArgs: Array[TypeId] = []
-    match p.curKind() {
-        Kind.LBracket => {
-            p.advance()
-            while true {
-                match p.curKind() {
-                    Kind.RBracket => { p.advance() break }
-                    Kind.Eof => { break }
-                    Kind.Comma => { p.advance() }
-                    _ => { typeArgs.append(self.parseSyntaxType(p: inout p)) }
-                }
-            }
-        }
-        _ => {}
+    val head = self.parseSyntaxNameSegment(p: inout p, name: typeName)
+    mut val segments: Array[SyntaxNameSegment] = []
+    while p.curKind() == <Kind.Dot /> {
+        if segments.count() == 0U64 { segments.append(head) }
+        p.advance()
+        val member = p.spanOf(t: p.curTok())
+        p.advance()
+        segments.append(self.parseSyntaxNameSegment(p: inout p, name: member))
     }
-    mut val variant: Span = <Span start=0U64 end=0U64 />
-    mut val isEnum: Bool = false
-    match p.curKind() {
-        Kind.Dot => {
-            p.advance()
-            variant = p.spanOf(t: p.curTok())
-            p.advance()
-            isEnum = true
+    mut val checked: Array[SyntaxNameSegment] = segments
+    if checked.count() == 0U64 { checked.append(head) }
+    mut val segmentIndex = 0U64
+    while segmentIndex < checked.count() {
+        val segment = checked[segmentIndex]
+        mut val labelIndex = 0U64
+        while labelIndex < segment.argLabels.count {
+            val label = self.texts[segment.argLabels.start + labelIndex]
+            if label.end > label.start { p.fail(off: label.start, msg: "construction type arguments must be positional") }
+            labelIndex += 1U64
         }
-        _ => {}
+        segmentIndex += 1U64
     }
     mut val fieldIds: Array[MakeFieldId] = []
     while true {
@@ -2724,9 +2798,10 @@ inout fn parseSyntaxMake(p: inout P) -> ExprId {
     }
     return self.pushExprNode(
         kind: <SyntaxExprKind.Make /> span: <Span start=start end=p.prevEnd() />
-        name: typeName nameSpan: variant flag0: isEnum
+        name: typeName
         fields: self.pushMakeFieldIdSlice(items: fieldIds)
-        typeArgs: self.pushTypeIdSlice(items: typeArgs)
+        typePath: self.pushNameSegments(items: segments)
+        typeArgs: head.args
     )
 }
 
@@ -4459,6 +4534,41 @@ inout fn parseSyntaxBlock(p: inout P) -> BlockId {
     return self.directBlock(stmts: stmts)
 }
 
+inout fn parseSyntaxNameSegment(p: inout P, name: Span) -> SyntaxNameSegment {
+    mut val args: Array[TypeId] = []
+    mut val argLabels: Array[Span] = []
+    match p.curKind() {
+        Kind.LBracket => {
+            p.advance()
+            while true {
+                match p.curKind() {
+                    Kind.RBracket => { p.advance() break }
+                    Kind.Eof => { break }
+                    Kind.Comma => { p.advance() }
+                    _ => {
+                        mut val label: Span = <Span start=0U64 end=0U64 />
+                        match p.curKind() {
+                            Kind.Ident => {
+                                if p.peekKind(off: 1) == <Kind.Eq /> {
+                                    label = p.spanOf(t: p.curTok())
+                                    p.advance()
+                                    p.advance()
+                                }
+                            }
+                            _ => {}
+                        }
+                        args.append(self.parseSyntaxType(p: inout p))
+                        argLabels.append(label)
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    return <SyntaxNameSegment name=name args=self.pushDirectSyntaxTypeIds(items: args) argLabels=self.pushDirectSyntaxTexts(items: argLabels) />
+}
+
 inout fn parseSyntaxType(p: inout P) -> TypeId {
     if curIs(p: inout p, kw: "any") {
         if p.peekKind(off: 1) == <Kind.Ident /> || p.peekKind(off: 1) == <Kind.KwSendable /> {
@@ -4482,7 +4592,7 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
             val innerId: TypeId = self.parseSyntaxType(p: inout p)
             val inner: SyntaxType = self.types[innerId.raw]
             return self.appendDirectSyntaxType(node: <SyntaxType
-                name=inner.name args=inner.args span=<Span start=anyStart end=p.prevEnd() />
+                name=inner.name namePath=inner.namePath args=inner.args span=<Span start=anyStart end=p.prevEnd() />
                 extView=inner.extView viewNames=inner.viewNames projectionTrait=inner.projectionTrait
                 projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels
                 projectionAssoc=inner.projectionAssoc isAny=true argLabels=inner.argLabels
@@ -4651,6 +4761,16 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
         _ => {}
     }
 
+    mut val pathSegments: Array[SyntaxNameSegment] = []
+    while p.curKind() == <Kind.Dot /> {
+        if pathSegments.count() == 0U64 {
+            pathSegments.append(<SyntaxNameSegment name=nameSpan args=self.pushDirectSyntaxTypeIds(items: args) argLabels=self.pushDirectSyntaxTexts(items: argLabels) />)
+        }
+        p.advance()
+        val memberName = p.spanOf(t: p.curTok())
+        p.advance()
+        pathSegments.append(self.parseSyntaxNameSegment(p: inout p, name: memberName))
+    }
     mut val extView: Span = <Span start=0U64 end=0U64 />
     mut val viewNames: Array[Span] = []
     mut val projectionTrait: Span = <Span start=0U64 end=0U64 />
@@ -4726,7 +4846,7 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
         }
     }
     return self.appendDirectSyntaxType(node: <SyntaxType
-        name=nameSpan args=self.pushDirectSyntaxTypeIds(items: args) span=<Span start=start end=p.prevEnd() />
+        name=nameSpan namePath=self.pushNameSegments(items: pathSegments) args=self.pushDirectSyntaxTypeIds(items: args) span=<Span start=start end=p.prevEnd() />
         extView=extView viewNames=self.pushDirectSyntaxTexts(items: viewNames) projectionTrait=projectionTrait
         projectionTraitArgs=self.pushDirectSyntaxTypeIds(items: projectionArgs)
         projectionTraitArgLabels=self.pushDirectSyntaxTexts(items: projectionArgLabels)
@@ -7570,6 +7690,10 @@ pub fn syntaxExprParam(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ParamI
     return file.exprParam(expr: expr, index: index)
 }
 
+pub fn syntaxExprTypeSegment(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> SyntaxNameSegment {
+    return file.nameSegmentAt(path: expr.typePath, index: index)
+}
+
 pub fn syntaxExprTypeArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprTypeArgCount(expr: expr)
 }
@@ -7580,6 +7704,22 @@ pub fn syntaxExprTypeArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> Type
 
 pub fn syntaxType(file: SyntaxFile, id: TypeId) -> SyntaxType {
     return file.typeNode(id: id)
+}
+
+pub fn syntaxTypeNameSegmentCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+    return ty.namePath.count
+}
+
+pub fn syntaxTypeNameSegment(file: SyntaxFile, ty: SyntaxType, index: U64) -> SyntaxNameSegment {
+    return file.nameSegmentAt(path: ty.namePath, index: index)
+}
+
+pub fn syntaxNameSegmentArg(file: SyntaxFile, segment: SyntaxNameSegment, index: U64) -> TypeId {
+    return file.nameSegmentArg(segment: segment, index: index)
+}
+
+pub fn syntaxNameSegmentArgLabel(file: SyntaxFile, segment: SyntaxNameSegment, index: U64) -> Span {
+    return file.nameSegmentArgLabel(segment: segment, index: index)
 }
 
 pub fn syntaxTypeArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
@@ -7864,39 +8004,26 @@ fn parseMakeAst(p: inout P) -> ExprAst {
     val typeName: String = p.text(t: typeNameTok)
     val typeNameSpan: Span = p.spanOf(t: typeNameTok)
     p.advance()
-    mut val typeArgs: Array[TypeAst] = []
-    match p.curKind() {
-        Kind.LBracket => {
-            p.advance()
-            while true {
-                match p.curKind() {
-                    Kind.RBracket => {
-                        p.advance()
-                        break
-                    }
-                    Kind.Eof => { break }
-                    Kind.Comma => { p.advance() }
-                    _ => {
-                        typeArgs.append(parseType(p: inout p))
-                    }
-                }
-            }
-        }
-        _ => {}
+    val head = parseNameSegmentAst(p: inout p, name: typeName, nameSpan: typeNameSpan)
+    mut val segments: Array[NameSegmentAst] = []
+    while p.curKind() == <Kind.Dot /> {
+        if segments.count() == 0U64 { segments.append(head) }
+        p.advance()
+        val member = p.curTok()
+        p.advance()
+        segments.append(parseNameSegmentAst(p: inout p, name: p.text(t: member), nameSpan: p.spanOf(t: member)))
     }
-    mut val variant: String = ""
-    mut val variantSpan: Span = <Span start=0 end=0 />
-    mut val isEnum: Bool = false
-    match p.curKind() {
-        Kind.Dot => {
-            p.advance()
-            val variantTok: Tok = p.curTok()
-            variant = p.text(t: variantTok)
-            variantSpan = p.spanOf(t: variantTok)
-            p.advance()
-            isEnum = true
+    mut val checked: Array[NameSegmentAst] = segments
+    if checked.count() == 0U64 { checked.append(head) }
+    mut val segmentIndex = 0U64
+    while segmentIndex < checked.count() {
+        val segment = checked[segmentIndex]
+        mut val labelIndex = 0U64
+        while labelIndex < segment.argLabels.count() {
+            if segment.argLabels[labelIndex].bytes().count() != 0U64 { p.fail(off: segment.argLabelSpans[labelIndex].start, msg: "construction type arguments must be positional") }
+            labelIndex += 1U64
         }
-        _ => {}
+        segmentIndex += 1U64
     }
     mut val fields: Array[MakeFieldAst] = []
     while true {
@@ -7926,7 +8053,7 @@ fn parseMakeAst(p: inout P) -> ExprAst {
             _ => { p.advance() }
         }
     }
-    return <ExprAst.Make typeName=typeName typeNameSpan=typeNameSpan typeArgs=typeArgs variant=variant variantSpan=variantSpan isEnum=isEnum fields=fields span=<Span start=sStart end=p.prevEnd() /> />
+    return <ExprAst.Make typePath=segments typeName=typeName typeNameSpan=typeNameSpan typeArgs=head.args variant="" variantSpan=<Span start=0U64 end=0U64 /> isEnum=false fields=fields span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 fn parsePrimaryAst(p: inout P) -> ExprAst {
@@ -8549,7 +8676,7 @@ fn parseRangeAst(p: inout P) -> ExprAst {
     fields.append(<MakeFieldAst name="start" value=lo span=sp />)
     fields.append(<MakeFieldAst name="end" value=hi span=sp />)
     mut val noArgs: Array[TypeAst] = []
-    return <ExprAst.Make typeName=tyName typeNameSpan=<Span start=0 end=0 /> typeArgs=noArgs variant="" variantSpan=<Span start=0 end=0 /> isEnum=false fields=fields span=sp />
+    return <ExprAst.Make typePath=[] typeName=tyName typeNameSpan=<Span start=0 end=0 /> typeArgs=noArgs variant="" variantSpan=<Span start=0 end=0 /> isEnum=false fields=fields span=sp />
 }
 
 // Parse a full expression. Exported: the entry point for body parsing (and for

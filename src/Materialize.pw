@@ -61,6 +61,7 @@ impl SyntaxFile {
         }
         return <TypeAst
             name=self.materializeText(p: p, span: node.name) nameSpan=node.name
+            namePath=self.materializeNamePath(path: node.namePath, p: p)
             args=args span=node.span
             extView=self.materializeText(p: p, span: node.extView) extViewSpan=node.extView
             viewNames=self.materializeTexts(p: p, slice: node.viewNames) viewNameSpans=self.spanSlice(slice: node.viewNames)
@@ -73,6 +74,17 @@ impl SyntaxFile {
             argLabels=self.materializeTexts(p: p, slice: node.argLabels) argLabelSpans=self.spanSlice(slice: node.argLabels)
             isSendable=node.isSendable isRecord=node.isRecord
         />
+    }
+
+    fn materializeNamePath(path: SyntaxSlice, p: P) -> Array[NameSegmentAst] {
+        mut val result: Array[NameSegmentAst] = []
+        mut val index = 0U64
+        while index < path.count {
+            val segment = self.nameSegments[path.start + index]
+            result.append(<NameSegmentAst name=self.materializeText(p: p, span: segment.name) nameSpan=segment.name args=self.materializeTypeSlice(slice: segment.args, p: p) argLabels=self.materializeTexts(p: p, slice: segment.argLabels) argLabelSpans=self.spanSlice(slice: segment.argLabels) />)
+            index += 1U64
+        }
+        return result
     }
 
     fn spanSlice(slice: SyntaxSlice) -> Array[Span] {
@@ -246,7 +258,7 @@ impl SyntaxFile {
             SyntaxExprKind.ExtMethod => { return <ExprAst.ExtMethod recv=self.materializeExpr(id: node.child0, p: p) src=self.materializeText(p: p, span: node.text) srcSpan=node.text name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
             SyntaxExprKind.ExtView => { return <ExprAst.ExtView recv=self.materializeExpr(id: node.child0, p: p) src=self.materializeText(p: p, span: node.text) srcSpan=node.text strip=node.flag0 span=node.span /> }
             SyntaxExprKind.Index => { return <ExprAst.Index base=self.materializeExpr(id: node.child0, p: p) index=self.materializeExpr(id: node.child1, p: p) span=node.span /> }
-            SyntaxExprKind.Make => { return <ExprAst.Make typeName=self.materializeText(p: p, span: node.name) typeNameSpan=node.name typeArgs=self.materializeTypeSlice(slice: node.typeArgs, p: p) variant=self.materializeText(p: p, span: node.nameSpan) variantSpan=node.nameSpan isEnum=node.flag0 fields=self.materializeMakeFields(slice: node.fields, p: p) span=node.span /> }
+            SyntaxExprKind.Make => { return <ExprAst.Make typePath=self.materializeNamePath(path: node.typePath, p: p) typeName=self.materializeText(p: p, span: node.name) typeNameSpan=node.name typeArgs=self.materializeTypeSlice(slice: node.typeArgs, p: p) variant=self.materializeText(p: p, span: node.nameSpan) variantSpan=node.nameSpan isEnum=node.flag0 fields=self.materializeMakeFields(slice: node.fields, p: p) span=node.span /> }
             SyntaxExprKind.ArrayLit => { return <ExprAst.ArrayLit elems=self.materializeExprs(slice: node.elems, p: p) span=node.span /> }
             SyntaxExprKind.DictLit => { return <ExprAst.DictLit keys=self.materializeExprs(slice: node.keys, p: p) vals=self.materializeExprs(slice: node.values, p: p) span=node.span /> }
             SyntaxExprKind.RecordLit => { return <ExprAst.RecordLit fields=self.materializeMakeFields(slice: node.fields, p: p) span=node.span /> }
@@ -268,7 +280,7 @@ impl SyntaxFile {
             SyntaxExprKind.Range => {
                 mut val typeName: String = "HalfOpenRange"
                 if node.flag0 { typeName = "ClosedRange" }
-                return <ExprAst.Make typeName=typeName typeNameSpan=<Span start=0U64 end=0U64 /> typeArgs=[] variant="" variantSpan=<Span start=0U64 end=0U64 /> isEnum=false fields=[<MakeFieldAst name="start" value=self.materializeExpr(id: node.child0, p: p) span=node.span />, <MakeFieldAst name="end" value=self.materializeExpr(id: node.child1, p: p) span=node.span />] span=node.span />
+                return <ExprAst.Make typePath=[] typeName=typeName typeNameSpan=<Span start=0U64 end=0U64 /> typeArgs=[] variant="" variantSpan=<Span start=0U64 end=0U64 /> isEnum=false fields=[<MakeFieldAst name="start" value=self.materializeExpr(id: node.child0, p: p) span=node.span />, <MakeFieldAst name="end" value=self.materializeExpr(id: node.child1, p: p) span=node.span />] span=node.span />
             }
         }
     }
