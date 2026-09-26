@@ -1333,6 +1333,7 @@ export struct SyntaxImport {
     pub val path: Span
     pub val segment: Span
     pub val isImport: Bool
+    pub val isPublic: Bool = false
     pub val nameSpans: SyntaxSlice
     pub val alias: Span
     pub val nameAliases: SyntaxSlice
@@ -1839,6 +1840,7 @@ export struct ImportAst {
     pub val pathSpan: Span
     pub val segSpan: Span
     pub val isImport: Bool
+    pub val isPublic: Bool = false
     pub val names: Array[String]
     pub val nameSpans: Array[Span]
     // a path-level alias `import <path> as F` (spec/15): binds the namespace to `F`
@@ -4309,7 +4311,7 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
     return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
 }
 
-inout fn parseSyntaxImport(p: inout P, isImport: Bool, reExport: Bool = false, start: U64 = 0U64, hasStart: Bool = false) -> ImportId {
+inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false, reExport: Bool = false, start: U64 = 0U64, hasStart: Bool = false) -> ImportId {
     mut val itemStart: U64 = start
     if !(hasStart) { itemStart = p.base + p.curTok().start p.advance() }
     val pathStart: U64 = p.base + p.curTok().start
@@ -4385,7 +4387,7 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, reExport: Bool = false, s
         _ => {}
     }
     val id: ImportId = <ImportId raw=self.imports.count() />
-    self.imports.append(<SyntaxImport path=<Span start=pathStart end=p.base + pathEndToken /> segment=<Span start=segmentStart end=segmentStart + segmentLen /> isImport=isImport nameSpans=self.pushDirectSyntaxTexts(items: names) alias=alias nameAliases=self.pushDirectSyntaxTexts(items: aliases) span=<Span start=itemStart end=p.prevEnd() /> />)
+    self.imports.append(<SyntaxImport path=<Span start=pathStart end=p.base + pathEndToken /> segment=<Span start=segmentStart end=segmentStart + segmentLen /> isImport=isImport isPublic=isPublic nameSpans=self.pushDirectSyntaxTexts(items: names) alias=alias nameAliases=self.pushDirectSyntaxTexts(items: aliases) span=<Span start=itemStart end=p.prevEnd() /> />)
     return id
 }
 
@@ -5444,9 +5446,9 @@ inout fn parseSyntaxDeclTop(p: inout P) -> TopItemId {
 
 // `export <decl>` wraps an already-direct top item; `export <path>` instead
 // creates the ReExport import node.  The wrapper stores only the nested ID.
-inout fn parseSyntaxExport(p: inout P) -> TopItemId {
+inout fn parseSyntaxExport(p: inout P, prefixConsumed: Bool = false) -> TopItemId {
     val start: U64 = p.base + p.curTok().start
-    p.advance()
+    if !prefixConsumed { p.advance() }
     match p.curKind() {
         Kind.KwExtern => {
             val id: ExternId = self.parseSyntaxExternDecl(p: inout p)
@@ -5555,9 +5557,11 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 if curIs(p: inout p, kw: "impl") {
                     val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
+                } else if curIs(p: inout p, kw: "import") {
+                    val id = self.parseSyntaxImport(p: inout p, isImport: true, isPublic: true)
+                    items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
                 } else {
-                    p.fail(off: p.base + p.curTok().start, msg: "expected `impl` after `pub` at the top level (top-level visibility is `export`, spec/15)")
-                    p.advance()
+                    items.append(self.parseSyntaxExport(p: inout p, prefixConsumed: true))
                 }
             } else if curIs(p: inout p, kw: "trait") {
                 val id: TraitId = self.parseSyntaxTraitDecl(p: inout p)
@@ -6757,17 +6761,17 @@ export fn parseExternDecl(p: inout P) -> ExternAst {
 // the loader to resolve to a file — parse-driven loading), the last segment, and each
 // `with` name (original span — feeds moduleOf for the importing module). A `part` has
 // no `with` list. Mirrors the compiler's parseImport + collectParts.
-fn parseImportAst(p: inout P, isImport: Bool) -> ImportAst {
+fn parseImportAst(p: inout P, isImport: Bool, isPublic: Bool = false) -> ImportAst {
     val startOff: U64 = p.base + p.curTok().start
     p.advance()
-    return parseImportTail(p: inout p, isImport: isImport, reExport: false, startOff: startOff)
+    return parseImportTail(p: inout p, isImport: isImport, reExport: false, startOff: startOff, isPublic: isPublic)
 }
 
 // The path + `with { names }` body of an `import`/`part`/re-export, with the cursor
 // already past the leading keyword (`import`/`part`/`export`). `startOff` is the
 // keyword's offset (for the item span). Shared so a re-export (`export <path> with
 // { … }`) parses its path/names with the exact same machinery as `import`.
-fn parseImportTail(p: inout P, isImport: Bool, reExport: Bool, startOff: U64) -> ImportAst {
+fn parseImportTail(p: inout P, isImport: Bool, reExport: Bool, startOff: U64, isPublic: Bool = false) -> ImportAst {
     // the path = contiguous tokens (`@`/`.`/`..`/`/` markers + segments), stopping
     // before a space-separated `with`, a `{`, or a newline.
     mut val pathStart: U64 = p.base + p.curTok().start
@@ -6887,7 +6891,7 @@ fn parseImportTail(p: inout P, isImport: Bool, reExport: Bool, startOff: U64) ->
         }
         _ => {}
     }
-    return <ImportAst pathSpan=<Span start=pathStart end=pathEndAbs /> segSpan=<Span start=segStartAbs end=segStartAbs + segLen /> isImport=isImport names=names nameSpans=nameSpans aliasSpan=aliasSpan nameAliasSpans=nameAliasSpans span=<Span start=startOff end=p.prevEnd() /> />
+    return <ImportAst pathSpan=<Span start=pathStart end=pathEndAbs /> segSpan=<Span start=segStartAbs end=segStartAbs + segLen /> isImport=isImport isPublic=isPublic names=names nameSpans=nameSpans aliasSpan=aliasSpan nameAliasSpans=nameAliasSpans span=<Span start=startOff end=p.prevEnd() /> />
 }
 
 // Optional directive arguments `(label: expr, ...)` after a derive name (spec/16).
@@ -6959,9 +6963,9 @@ fn parseDirectiveAst(p: inout P) -> DirectiveAst {
 // `export <decl> | export extern { } | export <path> [with]` (spec/15). The cursor
 // is at the `export` ident. Returns the wrapped item (`Export`) or a re-export path
 // (`ReExport`, recorded as nothing for now). Mirrors the compiler's parseExport.
-fn parseExportAst(p: inout P) -> TopItemAst {
+fn parseExportAst(p: inout P, prefixConsumed: Bool = false) -> TopItemAst {
     val startOff: U64 = p.base + p.curTok().start
-    p.advance()
+    if !prefixConsumed { p.advance() }
     // A declaration keyword (or contextual `trait`/`newtype`) → `export <decl>`. Anything
     // else is a re-export path (`export ./X` / `export @Std/X` / `export /X` [with { … }]),
     // parsed with the shared import-tail machinery (spec/15). The `@…` form is supported:
@@ -7080,9 +7084,10 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                     p.advance()
                                     if curIs(p: inout p, kw: "impl") {
                                         items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
+                                    } else if curIs(p: inout p, kw: "import") {
+                                        items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
                                     } else {
-                                        p.fail(off: p.base + p.curTok().start, msg: "expected `impl` after `pub` at the top level (top-level visibility is `export`, spec/15)")
-                                        p.advance()
+                                        items.append(parseExportAst(p: inout p, prefixConsumed: true))
                                     }
                                 } else {
                                     if curIs(p: inout p, kw: "trait") {

@@ -426,7 +426,7 @@ impl SyntaxFile {
 
     fn materializeImport(id: ImportId, p: P) -> ImportAst {
         val node: SyntaxImport = self.imports[id.raw]
-        return <ImportAst pathSpan=node.path segSpan=node.segment isImport=node.isImport names=self.materializeTexts(p: p, slice: node.nameSpans) nameSpans=self.spanSlice(slice: node.nameSpans) aliasSpan=node.alias nameAliasSpans=self.spanSlice(slice: node.nameAliases) span=node.span />
+        return <ImportAst pathSpan=node.path segSpan=node.segment isImport=node.isImport isPublic=node.isPublic names=self.materializeTexts(p: p, slice: node.nameSpans) nameSpans=self.spanSlice(slice: node.nameSpans) aliasSpan=node.alias nameAliasSpans=self.spanSlice(slice: node.nameAliases) span=node.span />
     }
 
     fn materializeTopItem(id: TopItemId, p: P) -> TopItemAst {

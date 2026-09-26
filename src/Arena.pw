@@ -921,7 +921,7 @@ impl SyntaxFile {
 
     inout fn freezeImportAst(ast: ImportAst) -> ImportId {
         val id: ImportId = <ImportId raw=self.imports.count() />
-        self.imports.append(<SyntaxImport path=ast.pathSpan segment=ast.segSpan isImport=ast.isImport nameSpans=self.pushTextSlice(items: ast.nameSpans) alias=ast.aliasSpan nameAliases=self.pushTextSlice(items: ast.nameAliasSpans) span=ast.span />)
+        self.imports.append(<SyntaxImport path=ast.pathSpan segment=ast.segSpan isImport=ast.isImport isPublic=ast.isPublic nameSpans=self.pushTextSlice(items: ast.nameSpans) alias=ast.aliasSpan nameAliases=self.pushTextSlice(items: ast.nameAliasSpans) span=ast.span />)
         return id
     }
 
