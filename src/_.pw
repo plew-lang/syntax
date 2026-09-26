@@ -17,7 +17,7 @@
 // `stringFromBytesUnchecked` (build a String from a byte slice) is used by the parser to
 // turn token byte-ranges into name Strings.
 import @Std/Core with { Eq, stringFromBytesUnchecked }
-export @Std/Core with { Eq }
+pub import @Std/Core with { Eq }
 
 part ./Lexer
 part ./Parser
@@ -40,10 +40,10 @@ part ./Materialize
 // parseItem(...))` (bare) or `<X args/>.derive(input: parseItem(...))` (config) and
 // writes the returned String — so the runner stays a version-agnostic String↔String
 // machine. (`parseItem` turns the item's source slice into the `TopItemAst`.)
-export trait Derive {
+pub trait Derive {
     assoc fn derive(input: TopItemAst) -> String
 }
-export trait ParameterizedDerive {
+pub trait ParameterizedDerive {
     fn derive(input: TopItemAst) -> String
 }
 
@@ -257,7 +257,7 @@ fn putVariantBinds(s: inout Src, v: VariantAst, prefix: String) {
 // knowledge stays in the hand-written `impl T as TryFrom[I64]` bases in Core — O(8),
 // not the O(56) pair matrix. Used by the standalone-equivalent dogfood path: Core
 // annotates its primitive decls and commits the generated `Core.gen.pw`.
-export struct IntTryFrom {
+pub struct IntTryFrom {
     pub val sources: Array[String]
 }
 pub impl IntTryFrom { factory }
@@ -291,7 +291,7 @@ pub impl IntTryFrom as ParameterizedDerive {
 // at the module root so the parts hold only `impl` blocks — spec/15 part=impl-only) ----
 
 @[Eq]
-export enum Kind {
+pub enum Kind {
     Eof
     Newline
     Int
@@ -378,13 +378,13 @@ export enum Kind {
     Unknown
 }
 
-export struct Tok {
+pub struct Tok {
     pub val kind: Kind
     pub val start: U64
     pub val len: U64
 }
 
-export struct Lexer {
+pub struct Lexer {
     pub val bytes: Array[U8]
     pub mut val pos: U64
     pub mut val toks: Array[Tok]
@@ -445,7 +445,7 @@ fn isAlnum(b: U8) -> Bool {
     return isDigit(b: b)
 }
 
-export fn rangeEquals(bytes: Array[U8], start: U64, len: U64, kw: String) -> Bool {
+pub fn rangeEquals(bytes: Array[U8], start: U64, len: U64, kw: String) -> Bool {
     val kb: Array[U8] = kw.bytes()
     if len != kb.count() {
         return false
@@ -551,7 +551,7 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
     return <Kind.Ident />
 }
 
-export fn lex(lx: inout Lexer) {
+pub fn lex(lx: inout Lexer) {
     while lx.pos < lx.bytes.count() {
         val b: U8 = lx.at(off: 0)
         if b == ' ' {
@@ -961,7 +961,7 @@ export fn lex(lx: inout Lexer) {
     lx.toks.append(<Tok kind=<Kind.Eof /> start=lx.pos len=0 />)
 }
 
-export fn kindCode(k: Kind) -> I64 {
+pub fn kindCode(k: Kind) -> I64 {
     return match k {
         Kind.Eof => 0
         Kind.Newline => 1
@@ -1050,7 +1050,7 @@ export fn kindCode(k: Kind) -> I64 {
     }
 }
 
-export struct Span {
+pub struct Span {
     pub val start: U64
     pub val end: U64
 }
@@ -1067,39 +1067,39 @@ export struct Span {
 // The tables and parser writer are introduced together in subsequent slices.  Do
 // not use these types to put TopItemAst behind a Ref or an Array: that would retain
 // the value tree and defeat the representation boundary.
-export struct SyntaxSlice {
+pub struct SyntaxSlice {
     pub val start: U64
     pub val count: U64
 }
 
-export struct TopItemId { pub val raw: U64 }
-export struct DeclId { pub val raw: U64 }
-export struct ImplId { pub val raw: U64 }
-export struct TraitId { pub val raw: U64 }
-export struct ExternId { pub val raw: U64 }
-export struct ImportId { pub val raw: U64 }
-export struct DirectiveId { pub val raw: U64 }
-export struct NewtypeId { pub val raw: U64 }
-export struct TypeId { pub val raw: U64 }
-export struct FieldId { pub val raw: U64 }
-export struct VariantId { pub val raw: U64 }
-export struct ParamId { pub val raw: U64 }
-export struct MemberId { pub val raw: U64 }
-export struct SigId { pub val raw: U64 }
-export struct StmtId { pub val raw: U64 }
-export struct ExprId { pub val raw: U64 }
-export struct BlockId { pub val raw: U64 }
-export struct PatternId { pub val raw: U64 }
-export struct MatchArmId { pub val raw: U64 }
-export struct ArgId { pub val raw: U64 }
-export struct MakeFieldId { pub val raw: U64 }
-export struct BindId { pub val raw: U64 }
-export struct DeriveReqId { pub val raw: U64 }
+pub struct TopItemId { pub val raw: U64 }
+pub struct DeclId { pub val raw: U64 }
+pub struct ImplId { pub val raw: U64 }
+pub struct TraitId { pub val raw: U64 }
+pub struct ExternId { pub val raw: U64 }
+pub struct ImportId { pub val raw: U64 }
+pub struct DirectiveId { pub val raw: U64 }
+pub struct NewtypeId { pub val raw: U64 }
+pub struct TypeId { pub val raw: U64 }
+pub struct FieldId { pub val raw: U64 }
+pub struct VariantId { pub val raw: U64 }
+pub struct ParamId { pub val raw: U64 }
+pub struct MemberId { pub val raw: U64 }
+pub struct SigId { pub val raw: U64 }
+pub struct StmtId { pub val raw: U64 }
+pub struct ExprId { pub val raw: U64 }
+pub struct BlockId { pub val raw: U64 }
+pub struct PatternId { pub val raw: U64 }
+pub struct MatchArmId { pub val raw: U64 }
+pub struct ArgId { pub val raw: U64 }
+pub struct MakeFieldId { pub val raw: U64 }
+pub struct BindId { pub val raw: U64 }
+pub struct DeriveReqId { pub val raw: U64 }
 
 // This tag is intentionally about the top-level syntax category, not a semantic
 // declaration kind.  A compiler load pass can decide import/predeclare/lower order
 // without materializing a TopItemAst value.
-export enum SyntaxTopItemKind {
+pub enum SyntaxTopItemKind {
     Decl
     Impl
     Trait
@@ -1116,7 +1116,7 @@ export enum SyntaxTopItemKind {
 // table selected by `kind` (DeclId, ImplId, TraitId, …); Export uses another
 // TopItemId.  Keeping it scalar lets the file's top-level walk remain cheap even
 // when one declaration owns a large body.
-export struct SyntaxTopItem {
+pub struct SyntaxTopItem {
     pub val kind: SyntaxTopItemKind
     pub val payload: U64
     pub val span: Span
@@ -1126,7 +1126,7 @@ export struct SyntaxTopItem {
 // added category by category below; all references into them are IDs/slices and
 // never nested Ast values. `topLevel` preserves source order, while `topItems`
 // is the storage addressed by TopItemId.
-export struct SyntaxFile {
+pub struct SyntaxFile {
     mut val topLevel: Array[TopItemId] = []
     mut val topItems: Array[SyntaxTopItem] = []
     mut val decls: Array[SyntaxDecl] = []
@@ -1186,7 +1186,7 @@ pub impl SyntaxFile {
 // Raw declaration-side nodes. `Span` is also the text reference: all parser
 // input lives in the compiler source arena, so copying a spelling into String is
 // neither necessary nor desirable on the compiler path.
-export struct SyntaxType {
+pub struct SyntaxType {
     pub val name: Span
     pub val args: SyntaxSlice
     pub val span: Span
@@ -1202,7 +1202,7 @@ export struct SyntaxType {
     pub val isRecord: Bool
 }
 
-export struct SyntaxField {
+pub struct SyntaxField {
     pub val name: Span
     pub val ty: TypeId
     pub val isMut: Bool
@@ -1212,13 +1212,13 @@ export struct SyntaxField {
     pub val span: Span
 }
 
-export struct SyntaxVariant {
+pub struct SyntaxVariant {
     pub val name: Span
     pub val fields: SyntaxSlice
     pub val span: Span
 }
 
-export struct SyntaxParam {
+pub struct SyntaxParam {
     pub val name: Span
     pub val ty: TypeId
     pub val isInout: Bool
@@ -1230,7 +1230,7 @@ export struct SyntaxParam {
     pub val span: Span
 }
 
-export struct SyntaxDecl {
+pub struct SyntaxDecl {
     pub val kind: DeclKind
     pub val name: Span
     pub val typeParams: SyntaxSlice
@@ -1253,7 +1253,7 @@ export struct SyntaxDecl {
     pub val body: BlockId
 }
 
-export struct SyntaxMember {
+pub struct SyntaxMember {
     pub val kind: MemberKind
     pub val name: Span
     pub val typeParams: SyntaxSlice
@@ -1277,7 +1277,7 @@ export struct SyntaxMember {
     pub val factoryErr: TypeId
 }
 
-export struct SyntaxSig {
+pub struct SyntaxSig {
     pub val name: Span
     pub val typeParams: SyntaxSlice
     pub val typeParamSendable: SyntaxSlice
@@ -1288,7 +1288,7 @@ export struct SyntaxSig {
     pub val selfInout: Bool
 }
 
-export struct SyntaxTrait {
+pub struct SyntaxTrait {
     pub val name: Span
     pub val typeParams: SyntaxSlice
     pub val typeParamSendable: SyntaxSlice
@@ -1298,7 +1298,7 @@ export struct SyntaxTrait {
     pub val span: Span
 }
 
-export struct SyntaxExtern {
+pub struct SyntaxExtern {
     pub val abiOk: Bool
     pub val abiC: Bool
     pub val abiSpan: Span
@@ -1311,7 +1311,7 @@ export struct SyntaxExtern {
     pub val span: Span
 }
 
-export struct SyntaxImpl {
+pub struct SyntaxImpl {
     pub val recvType: TypeId
     pub val implParams: SyntaxSlice
     pub val implParamSendable: SyntaxSlice
@@ -1329,7 +1329,7 @@ export struct SyntaxImpl {
     pub val extName: Span
 }
 
-export struct SyntaxImport {
+pub struct SyntaxImport {
     pub val path: Span
     pub val segment: Span
     pub val isImport: Bool
@@ -1340,16 +1340,16 @@ export struct SyntaxImport {
     pub val span: Span
 }
 
-export struct SyntaxDeriveReq {
+pub struct SyntaxDeriveReq {
     pub val name: Span
     pub val args: SyntaxSlice
 }
 
-export struct SyntaxDirective {
+pub struct SyntaxDirective {
     pub val reqs: SyntaxSlice
 }
 
-export struct SyntaxNewtype {
+pub struct SyntaxNewtype {
     pub val name: Span
     pub val ty: TypeId
     pub val isPub: Bool
@@ -1360,7 +1360,7 @@ export struct SyntaxNewtype {
 // is closed and every child is an ID or a flat slice; fields irrelevant to a tag
 // are zero/empty.  This avoids a nested enum payload while preserving all source
 // forms for a direct compiler lowering.
-export enum SyntaxExprKind {
+pub enum SyntaxExprKind {
     IntLit
     FloatLit
     StrLit
@@ -1394,7 +1394,7 @@ export enum SyntaxExprKind {
     Range
 }
 
-export struct SyntaxExpr {
+pub struct SyntaxExpr {
     pub val kind: SyntaxExprKind
     pub val span: Span
     pub val text: Span
@@ -1422,7 +1422,7 @@ export struct SyntaxExpr {
     pub val typeArgs: SyntaxSlice
 }
 
-export struct SyntaxArg {
+pub struct SyntaxArg {
     pub val label: Span
     pub val hasLabel: Bool
     pub val isInout: Bool
@@ -1430,13 +1430,13 @@ export struct SyntaxArg {
     pub val span: Span
 }
 
-export struct SyntaxMakeField {
+pub struct SyntaxMakeField {
     pub val name: Span
     pub val value: ExprId
     pub val span: Span
 }
 
-export struct SyntaxBind {
+pub struct SyntaxBind {
     pub val field: Span
     pub val name: Span
     pub val fieldStart: U64
@@ -1444,7 +1444,7 @@ export struct SyntaxBind {
     pub val isAssign: Bool
 }
 
-export struct SyntaxPattern {
+pub struct SyntaxPattern {
     pub val isWildcard: Bool
     pub val isStruct: Bool
     pub val typeName: Span
@@ -1456,17 +1456,17 @@ export struct SyntaxPattern {
     pub val span: Span
 }
 
-export struct SyntaxMatchArm {
+pub struct SyntaxMatchArm {
     pub val pat: PatternId
     pub val body: BlockId
     pub val span: Span
 }
 
-export struct SyntaxBlock {
+pub struct SyntaxBlock {
     pub val stmts: SyntaxSlice
 }
 
-export enum SyntaxStmtKind {
+pub enum SyntaxStmtKind {
     Let
     Assign
     ExprStmt
@@ -1482,7 +1482,7 @@ export enum SyntaxStmtKind {
     Destructure
 }
 
-export struct SyntaxStmt {
+pub struct SyntaxStmt {
     pub val kind: SyntaxStmtKind
     pub val span: Span
     pub val name: Span
@@ -1508,7 +1508,7 @@ export struct SyntaxStmt {
     pub val binds: SyntaxSlice
 }
 
-export struct TypeParamListAst {
+pub struct TypeParamListAst {
     pub val names: Array[String]
     pub val isSendable: Array[Bool]
     // Exact source span parallel to `names`; required when the compiler-facing
@@ -1518,7 +1518,7 @@ export struct TypeParamListAst {
 
 // A type expression. `Array[U8]` -> name="Array", args=[U8]; a bare `T` ->
 // name="T", args=[]. (Function types `fn(...)->T` are an additive follow-up.)
-export struct TypeAst {
+pub struct TypeAst {
     pub val name: String
     // Exact source spelling of `name`. `span` covers the complete type expression
     // (and may begin at `any`/`sendable`), so it cannot substitute for this when a
@@ -1576,7 +1576,7 @@ export struct TypeAst {
 // 1 = pub(get), 2 = pub (matches the compiler's encoding). A default value
 // (`val x: T = expr`) is flagged by `hasDefault` and surfaced in `defaultVal` (an
 // `emptyExpr()` placeholder when absent).
-export struct FieldAst {
+pub struct FieldAst {
     pub val name: String
     pub val nameSpan: Span = <Span start=0 end=0 />
     pub val ty: TypeAst
@@ -1589,7 +1589,7 @@ export struct FieldAst {
 
 // An enum variant. `fields` is the record payload `V(x: I32, y: I32)`; empty for a
 // payload-less variant `V`.
-export struct VariantAst {
+pub struct VariantAst {
     pub val name: String
     pub val nameSpan: Span = <Span start=0 end=0 />
     pub val fields: Array[FieldAst]
@@ -1599,7 +1599,7 @@ export struct VariantAst {
 // A function parameter. Access modes (spec/03): `inout`/`move`/`borrow`. A
 // label-suppressed `name~: T` sets `noLabel`. A default value (`name: T = expr`) is
 // flagged by `hasDefault` and surfaced in `defaultVal` (`emptyExpr()` when absent).
-export struct ParamAst {
+pub struct ParamAst {
     pub val name: String
     pub val nameSpan: Span = <Span start=0 end=0 />
     pub val ty: TypeAst
@@ -1613,7 +1613,7 @@ export struct ParamAst {
 }
 
 // Which kind of declaration a `DeclAst` is.
-export enum DeclKind {
+pub enum DeclKind {
     Struct
     Enum
     Func
@@ -1630,7 +1630,7 @@ export enum DeclKind {
 // incomplete type. A struct holding an enum tag + struct fields by value is fine.
 // Restoring the enum form is a follow-up once the backend topologically orders
 // nominal bodies.)
-export struct DeclAst {
+pub struct DeclAst {
     pub val kind: DeclKind
     pub val name: String
     // the NAME token's span (original coordinates). Distinct from `span` (the whole
@@ -1674,12 +1674,12 @@ export struct DeclAst {
 }
 
 // An empty type expression (placeholder for a missing/absent type position).
-export fn emptyTypeAst() -> TypeAst {
+pub fn emptyTypeAst() -> TypeAst {
     return <TypeAst name="" args=[] span=<Span start=0 end=0 /> />
 }
 
 // Which kind of member a `MemberAst` is inside an `impl` block (spec/07,08).
-export enum MemberKind {
+pub enum MemberKind {
     Method      // `[inout|move|borrow] fn` / `async [move] fn` — has self
     AssocFn     // `assoc fn` — namespaced on the type, no self
     Deinit      // `deinit { ... }` — synthetic Type_deinit method
@@ -1692,7 +1692,7 @@ export enum MemberKind {
 // kind-specific fields below are populated accordingly). For Method/AssocFn it is
 // a function signature + body (or a `via real` alias); for Deinit just a body; for
 // AssocType a name + bound type.
-export struct MemberAst {
+pub struct MemberAst {
     pub val kind: MemberKind
     pub val name: String
     pub val nameSpan: Span
@@ -1734,7 +1734,7 @@ export struct MemberAst {
 // A body-less function signature: a trait requirement (`fn req(...) -> T`) or an
 // `extern(plewIntrinsic)` declaration (spec/08,15). `name`/`nameSpan` keep the
 // original coordinates (an extern fn name feeds moduleOf for cross-module calls).
-export struct SigAst {
+pub struct SigAst {
     pub val name: String
     pub val nameSpan: Span
     pub val typeParams: Array[String]
@@ -1752,7 +1752,7 @@ export struct SigAst {
 
 // A `trait Name [: Super + ...] { requirements }` declaration (spec/08). The body
 // holds only requirement signatures (no bodies) + associated-type names.
-export struct TraitAst {
+pub struct TraitAst {
     pub val name: String
     pub val nameSpan: Span
     // trait type parameters `trait Add[Rhs]` (spec/12): the right-operand-type
@@ -1773,7 +1773,7 @@ export struct TraitAst {
 // `abiOk` is true iff the bareword ABI is `plewIntrinsic` or `c`; `abiSpan`
 // points at the `extern` keyword for the error. `fns` are body-less signatures;
 // `structNames`/`structSpans` are opaque intrinsic or foreign-C types.
-export struct ExternAst {
+pub struct ExternAst {
     pub val abiOk: Bool
     // true iff the ABI is the C ABI (`extern(c)` — spec/15 FFI). Distinguishes a
     // foreign-C block (raw symbol names, emitted prototypes) from the intrinsic
@@ -1803,7 +1803,7 @@ export struct ExternAst {
 // An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block (spec/07,08).
 // `recvType` carries the receiver type (its head name is the type the members are
 // registered on; the `[T]` args are redundant with `implParams`).
-export struct ImplAst {
+pub struct ImplAst {
     pub val recvType: TypeAst
     pub val implParams: Array[String]
     pub val implParamSpans: Array[Span] = []
@@ -1836,7 +1836,7 @@ export struct ImplAst {
 // coordinates — the loader resolves it to a file (parse-driven loading). `segSpan`
 // is the last path segment (the submodule). Each `with` name keeps its original span
 // (the importing-side occurrence — feeds moduleOf for the importing module).
-export struct ImportAst {
+pub struct ImportAst {
     pub val pathSpan: Span
     pub val segSpan: Span
     pub val isImport: Bool
@@ -1855,7 +1855,7 @@ export struct ImportAst {
 // One `@[Name(label: expr, ...)]` derive request: the macro/derive name + its
 // directive arguments (each a labelled value that becomes a field on the constructed
 // macro struct). `nameSpan` keeps the original coordinates (text-matched downstream).
-export struct DeriveReqAst {
+pub struct DeriveReqAst {
     pub val name: String
     pub val nameSpan: Span
     pub val args: Array[MakeFieldAst]
@@ -1863,7 +1863,7 @@ export struct DeriveReqAst {
 
 // An `@[Eq, Ord, Name(a: 32), ...]` directive (spec/16): the comma-separated derive
 // requests applied to the next type declaration.
-export struct DirectiveAst {
+pub struct DirectiveAst {
     pub val reqs: Array[DeriveReqAst]
 }
 
@@ -1876,7 +1876,7 @@ export struct DirectiveAst {
 // forwarded module and the frontend can republish its names — but unlike `import` it
 // binds NOTHING locally (forwarding only). `imp.isImport` is true (it resolves a fresh
 // module like an import); the `ReExport` wrapper is what marks it as forward-only.
-export enum TopItemAst {
+pub enum TopItemAst {
     Decl(d: DeclAst)
     Impl(im: ImplAst)
     Trait(t: TraitAst)
@@ -1896,7 +1896,7 @@ export enum TopItemAst {
     NewType(name: String, nameSpan: Span, ty: TypeAst, isPub: Bool, span: Span)
 }
 
-export struct ArgAst {
+pub struct ArgAst {
     pub val label: String
     pub val labelSpan: Span = <Span start=0 end=0 />
     pub val hasLabel: Bool
@@ -1906,7 +1906,7 @@ export struct ArgAst {
 }
 
 // A field binding in a JSX construction `<T field=expr />`.
-export struct MakeFieldAst {
+pub struct MakeFieldAst {
     pub val name: String
     pub val nameSpan: Span = <Span start=0 end=0 />
     pub val value: ExprAst
@@ -1919,7 +1919,7 @@ export struct MakeFieldAst {
 // explicit label, or the bound name when punned) — the source bytes there ARE
 // the field name, so consumers can reference the field by source span directly
 // (precise diagnostics, no interning).
-export struct BindAst {
+pub struct BindAst {
     pub val field: String
     pub val name: String
     pub val fieldStart: U64
@@ -1937,7 +1937,7 @@ export struct BindAst {
 // `true`/`-1` (isLiteral; `lit` is the literal expression — spec/11). A literal
 // match desugars in lowering to a temp-bound `==` if/else chain, so the arena
 // never sees a literal pattern.
-export struct PatternAst {
+pub struct PatternAst {
     pub val isWildcard: Bool
     pub val isStruct: Bool
     pub val typeName: String
@@ -1958,19 +1958,19 @@ export struct PatternAst {
 // position). `match` arms have NO guards (spec/11): refinement is done by binding
 // then a nested `match`, or a preceding `if`/`guard` condition chain — this keeps
 // exhaustiveness purely structural.
-export struct MatchArmAst {
+pub struct MatchArmAst {
     pub val pattern: PatternAst
     pub val body: BlockAst
     pub val span: Span
 }
 
 // A `{ ... }` block: a sequence of statements.
-export struct BlockAst {
+pub struct BlockAst {
     pub val stmts: Array[StmtAst]
 }
 
 // An expression. `op` fields carry the operator's lexer kind code (kindCode).
-export enum ExprAst {
+pub enum ExprAst {
     IntLit(value: U64, isBool: Bool, tySuffix: String, literalSpan: Span, tySuffixSpan: Span, span: Span)
     FloatLit(text: String, tySuffix: String, literalSpan: Span, tySuffixSpan: Span, span: Span)
     StrLit(raw: String, span: Span)
@@ -2025,7 +2025,7 @@ export enum ExprAst {
 }
 
 // The source span of any expression node (every variant carries one).
-export fn exprAstSpan(e: ExprAst) -> Span {
+pub fn exprAstSpan(e: ExprAst) -> Span {
     match e {
         ExprAst.IntLit(value: _, isBool: _, tySuffix: _, literalSpan: _, tySuffixSpan: _, val span) => { return span }
         ExprAst.FloatLit(text: _, tySuffix: _, literalSpan: _, tySuffixSpan: _, val span) => { return span }
@@ -2058,7 +2058,7 @@ export fn exprAstSpan(e: ExprAst) -> Span {
 }
 
 // A statement.
-export enum StmtAst {
+pub enum StmtAst {
     Let(mutable: Bool, name: String, nameSpan: Span, hasTy: Bool, ty: TypeAst, init: ExprAst, span: Span)
     Assign(op: I64, target: ExprAst, value: ExprAst, span: Span)
     ExprStmt(expr: ExprAst, span: Span)
@@ -2078,16 +2078,16 @@ export enum StmtAst {
 }
 
 // A placeholder expression (an absent value position, e.g. `return` with no value).
-export fn emptyExpr() -> ExprAst {
+pub fn emptyExpr() -> ExprAst {
     return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=0 end=0 /> />
 }
 
 // An empty block.
-export fn emptyBlock() -> BlockAst {
+pub fn emptyBlock() -> BlockAst {
     return <BlockAst stmts=[] />
 }
 
-export struct P {
+pub struct P {
     pub val bytes: Array[U8]
     pub val toks: Array[Tok]
     pub mut val pos: U64
@@ -5785,7 +5785,7 @@ fn parseStructField(p: inout P) -> FieldAst {
 
 // A struct declaration. The cursor is at `struct` (modifiers before it are already
 // consumed and passed in).
-export fn parseStructDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclAst {
+pub fn parseStructDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -5855,7 +5855,7 @@ fn parseVariantField(p: inout P) -> FieldAst {
 }
 
 // An enum declaration. The cursor is at `enum`.
-export fn parseEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclAst {
+pub fn parseEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -6059,7 +6059,7 @@ fn parseWhereNames(p: inout P, params: inout Array[String], traits: inout Array[
 // A function declaration `fn name[T,...](params) [-> Ret] [where ...] { body }`.
 // The cursor is at `fn` (a leading `async`, if any, is already consumed and passed
 // as `isAsync`). The body is parsed; the where-bounds are captured.
-export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
+pub fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -6094,7 +6094,7 @@ export fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
 // `Span` is in ORIGINAL coordinates (an input error points at the user's text);
 // `end` (= start + source length) is informational. An item the M1 subset doesn't
 // model yet yields an empty struct decl (logged: traits/impls/newtypes additive).
-export fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
+pub fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
     val sb: Array[U8] = source.bytes()
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
@@ -6134,7 +6134,7 @@ fn emptyDeclAst(off: U64) -> DeclAst {
 // frontend's `parseProgram` dispatched). Mirrors `parseItem`'s match without the
 // re-lex/skipLeading. The frontend drives this over its `P` (base 0 = absolute
 // c.bytes offsets) and lowers the result into its arena (Codegen/Lower.pw).
-export fn parseDecl(p: inout P) -> DeclAst {
+pub fn parseDecl(p: inout P) -> DeclAst {
     match p.curKind() {
         Kind.KwStruct => { return parseStructDecl(p: inout p, isUnique: false) }
         Kind.KwNonsendable => {
@@ -6271,7 +6271,7 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
 // An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block (spec/07,08).
 // The cursor is at the `impl` ident (the leading `pub`, if any, is already consumed
 // and passed as `isPub`). Mirrors the compiler's parseImpl.
-export fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan: Span = <Span start=0 end=0 />) -> ImplAst {
+pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan: Span = <Span start=0 end=0 />) -> ImplAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val implTps: TypeParamListAst = parseTypeParamList(p: inout p)
@@ -6522,7 +6522,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bo
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).
 // The cursor is at the `trait` ident. Mirrors the compiler's parseTrait.
-export fn parseTraitDecl(p: inout P) -> TraitAst {
+pub fn parseTraitDecl(p: inout P) -> TraitAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -6650,7 +6650,7 @@ export fn parseTraitDecl(p: inout P) -> TraitAst {
 
 // An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
 // block (spec/15). The cursor is at the `extern` keyword.
-export fn parseExternDecl(p: inout P) -> ExternAst {
+pub fn parseExternDecl(p: inout P) -> ExternAst {
     val externTok: Tok = p.curTok()
     val abiSpan: Span = p.spanOf(t: externTok)
     p.advance()
@@ -7133,7 +7133,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
 // and lowers each item (Codegen/Lower.pw), following `Import` items to load further
 // files. This is the single top-level entry — the compiler has no separate
 // declaration/dispatch parser. Mirrors the compiler's old parseProgram dispatch.
-export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
+pub fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
     mut val file: SyntaxFile = <SyntaxFile.empty />
     val roots: SyntaxSlice = file.parseProgramSyntaxDirect(p: inout p)
     mut val items: Array[TopItemAst] = []
@@ -7149,7 +7149,7 @@ export fn parseProgramAst(p: inout P) -> Array[TopItemAst] {
 // used by macros; each completed top-level item is immediately frozen into the
 // immutable, ID-addressed representation and the program-sized value array is
 // discarded before returning.
-export fn parseProgramSyntaxFile(p: inout P) -> SyntaxFile {
+pub fn parseProgramSyntaxFile(p: inout P) -> SyntaxFile {
     mut val file: SyntaxFile = <SyntaxFile.empty />
     parseProgramSyntaxInto(p: inout p, file: inout file)
     return file
@@ -7161,542 +7161,542 @@ export fn parseProgramSyntaxFile(p: inout P) -> SyntaxFile {
 // value TopItemAst or calls the legacy freezer.  This is the only post-factory
 // mutation exposed by SyntaxFile; ordinary consumers receive the completed
 // file as `val` and have read-only ID traversal only.
-export fn parseProgramSyntaxInto(p: inout P, file: inout SyntaxFile) -> SyntaxSlice {
+pub fn parseProgramSyntaxInto(p: inout P, file: inout SyntaxFile) -> SyntaxSlice {
     return file.parseProgramSyntaxDirect(p: inout p)
 }
 
 // Read-only traversal surface for compiler clients.  Tables stay private so no
 // caller can append a node after parse/freeze has established the ID graph.
-export fn syntaxFileTopLevelCount(file: SyntaxFile) -> U64 {
+pub fn syntaxFileTopLevelCount(file: SyntaxFile) -> U64 {
     return file.topLevelCount()
 }
 
-export fn syntaxFileTopLevel(file: SyntaxFile, index: U64) -> TopItemId {
+pub fn syntaxFileTopLevel(file: SyntaxFile, index: U64) -> TopItemId {
     return file.topLevelItem(index: index)
 }
 
-export fn syntaxTopItemKind(file: SyntaxFile, item: TopItemId) -> SyntaxTopItemKind {
+pub fn syntaxTopItemKind(file: SyntaxFile, item: TopItemId) -> SyntaxTopItemKind {
     return file.topItemKind(item: item)
 }
 
-export fn syntaxTopItemSpan(file: SyntaxFile, item: TopItemId) -> Span {
+pub fn syntaxTopItemSpan(file: SyntaxFile, item: TopItemId) -> Span {
     return file.topItemSpan(item: item)
 }
 
 // Export stores its wrapped top-level node as the scalar payload.  Other tags
 // also have scalar payloads for their category table, so callers must inspect
 // `syntaxTopItemKind` before interpreting this as a TopItemId.
-export fn syntaxTopItemPayload(file: SyntaxFile, item: TopItemId) -> U64 {
+pub fn syntaxTopItemPayload(file: SyntaxFile, item: TopItemId) -> U64 {
     return file.topItemPayload(item: item)
 }
 
-export fn syntaxImport(file: SyntaxFile, id: ImportId) -> SyntaxImport {
+pub fn syntaxImport(file: SyntaxFile, id: ImportId) -> SyntaxImport {
     return file.importNode(id: id)
 }
 
-export fn syntaxDecl(file: SyntaxFile, id: DeclId) -> SyntaxDecl {
+pub fn syntaxDecl(file: SyntaxFile, id: DeclId) -> SyntaxDecl {
     return file.declNode(id: id)
 }
 
-export fn syntaxDeclFieldCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+pub fn syntaxDeclFieldCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
     return file.declFieldCount(decl: decl)
 }
 
-export fn syntaxDeclField(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> FieldId {
+pub fn syntaxDeclField(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> FieldId {
     return file.declField(decl: decl, index: index)
 }
 
-export fn syntaxField(file: SyntaxFile, id: FieldId) -> SyntaxField {
+pub fn syntaxField(file: SyntaxFile, id: FieldId) -> SyntaxField {
     return file.fieldNode(id: id)
 }
 
-export fn syntaxDeclTypeParamCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+pub fn syntaxDeclTypeParamCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
     return file.declTypeParamCount(decl: decl)
 }
 
-export fn syntaxDeclTypeParamSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
+pub fn syntaxDeclTypeParamSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
     return file.declTypeParamSpan(decl: decl, index: index)
 }
 
-export fn syntaxDeclTypeParamIsSendable(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Bool {
+pub fn syntaxDeclTypeParamIsSendable(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Bool {
     return file.declTypeParamIsSendable(decl: decl, index: index)
 }
 
-export fn syntaxDeclVariantCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+pub fn syntaxDeclVariantCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
     return file.declVariantCount(decl: decl)
 }
 
-export fn syntaxDeclVariant(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> VariantId {
+pub fn syntaxDeclVariant(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> VariantId {
     return file.declVariant(decl: decl, index: index)
 }
 
-export fn syntaxVariant(file: SyntaxFile, id: VariantId) -> SyntaxVariant {
+pub fn syntaxVariant(file: SyntaxFile, id: VariantId) -> SyntaxVariant {
     return file.variantNode(id: id)
 }
 
-export fn syntaxVariantFieldCount(file: SyntaxFile, variant: SyntaxVariant) -> U64 {
+pub fn syntaxVariantFieldCount(file: SyntaxFile, variant: SyntaxVariant) -> U64 {
     return file.variantFieldCount(variant: variant)
 }
 
-export fn syntaxVariantField(file: SyntaxFile, variant: SyntaxVariant, index: U64) -> FieldId {
+pub fn syntaxVariantField(file: SyntaxFile, variant: SyntaxVariant, index: U64) -> FieldId {
     return file.variantField(variant: variant, index: index)
 }
 
-export fn syntaxDeclParamCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+pub fn syntaxDeclParamCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
     return file.declParamCount(decl: decl)
 }
 
-export fn syntaxDeclParam(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> ParamId {
+pub fn syntaxDeclParam(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> ParamId {
     return file.declParam(decl: decl, index: index)
 }
 
-export fn syntaxParam(file: SyntaxFile, id: ParamId) -> SyntaxParam {
+pub fn syntaxParam(file: SyntaxFile, id: ParamId) -> SyntaxParam {
     return file.paramNode(id: id)
 }
 
 // A where-clause entry is one aligned tuple of binder text, trait text, and
 // their respective syntax types.  The count comes from that canonical tuple,
 // rather than exposing any of the four backing pools directly.
-export fn syntaxDeclWhereCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
+pub fn syntaxDeclWhereCount(file: SyntaxFile, decl: SyntaxDecl) -> U64 {
     return file.declWhereCount(decl: decl)
 }
 
-export fn syntaxDeclWhereParamSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
+pub fn syntaxDeclWhereParamSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
     return file.declWhereParamSpan(decl: decl, index: index)
 }
 
-export fn syntaxDeclWhereTraitSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
+pub fn syntaxDeclWhereTraitSpan(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> Span {
     return file.declWhereTraitSpan(decl: decl, index: index)
 }
 
-export fn syntaxDeclWhereType(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> TypeId {
+pub fn syntaxDeclWhereType(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> TypeId {
     return file.declWhereType(decl: decl, index: index)
 }
 
-export fn syntaxDeclWhereTraitType(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> TypeId {
+pub fn syntaxDeclWhereTraitType(file: SyntaxFile, decl: SyntaxDecl, index: U64) -> TypeId {
     return file.declWhereTraitType(decl: decl, index: index)
 }
 
-export fn syntaxImpl(file: SyntaxFile, id: ImplId) -> SyntaxImpl {
+pub fn syntaxImpl(file: SyntaxFile, id: ImplId) -> SyntaxImpl {
     return file.implNode(id: id)
 }
 
-export fn syntaxImplParamCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+pub fn syntaxImplParamCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
     return file.implParamCount(impl: impl)
 }
 
-export fn syntaxImplParamSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
+pub fn syntaxImplParamSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
     return file.implParamSpan(impl: impl, index: index)
 }
 
-export fn syntaxImplParamIsSendable(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Bool {
+pub fn syntaxImplParamIsSendable(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Bool {
     return file.implParamIsSendable(impl: impl, index: index)
 }
 
-export fn syntaxImplTraitArgCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+pub fn syntaxImplTraitArgCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
     return file.implTraitArgCount(impl: impl)
 }
 
-export fn syntaxImplTraitArg(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
+pub fn syntaxImplTraitArg(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
     return file.implTraitArg(impl: impl, index: index)
 }
 
-export fn syntaxImplWhereCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+pub fn syntaxImplWhereCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
     return file.implWhereCount(impl: impl)
 }
 
-export fn syntaxImplWhereParamSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
+pub fn syntaxImplWhereParamSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
     return file.implWhereParamSpan(impl: impl, index: index)
 }
 
-export fn syntaxImplWhereTraitSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
+pub fn syntaxImplWhereTraitSpan(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> Span {
     return file.implWhereTraitSpan(impl: impl, index: index)
 }
 
-export fn syntaxImplWhereType(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
+pub fn syntaxImplWhereType(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
     return file.implWhereType(impl: impl, index: index)
 }
 
-export fn syntaxImplWhereTraitType(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
+pub fn syntaxImplWhereTraitType(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> TypeId {
     return file.implWhereTraitType(impl: impl, index: index)
 }
 
-export fn syntaxImplMemberCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
+pub fn syntaxImplMemberCount(file: SyntaxFile, impl: SyntaxImpl) -> U64 {
     return file.implMemberCount(impl: impl)
 }
 
-export fn syntaxImplMember(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> MemberId {
+pub fn syntaxImplMember(file: SyntaxFile, impl: SyntaxImpl, index: U64) -> MemberId {
     return file.implMember(impl: impl, index: index)
 }
 
-export fn syntaxMember(file: SyntaxFile, id: MemberId) -> SyntaxMember {
+pub fn syntaxMember(file: SyntaxFile, id: MemberId) -> SyntaxMember {
     return file.memberNode(id: id)
 }
 
-export fn syntaxMemberTypeParamCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
+pub fn syntaxMemberTypeParamCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
     return file.memberTypeParamCount(member: member)
 }
 
-export fn syntaxMemberTypeParamSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
+pub fn syntaxMemberTypeParamSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
     return file.memberTypeParamSpan(member: member, index: index)
 }
 
-export fn syntaxMemberTypeParamIsSendable(file: SyntaxFile, member: SyntaxMember, index: U64) -> Bool {
+pub fn syntaxMemberTypeParamIsSendable(file: SyntaxFile, member: SyntaxMember, index: U64) -> Bool {
     return file.memberTypeParamIsSendable(member: member, index: index)
 }
 
-export fn syntaxMemberParamCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
+pub fn syntaxMemberParamCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
     return file.memberParamCount(member: member)
 }
 
-export fn syntaxMemberParam(file: SyntaxFile, member: SyntaxMember, index: U64) -> ParamId {
+pub fn syntaxMemberParam(file: SyntaxFile, member: SyntaxMember, index: U64) -> ParamId {
     return file.memberParam(member: member, index: index)
 }
 
-export fn syntaxMemberWhereCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
+pub fn syntaxMemberWhereCount(file: SyntaxFile, member: SyntaxMember) -> U64 {
     return file.memberWhereCount(member: member)
 }
 
-export fn syntaxMemberWhereParamSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
+pub fn syntaxMemberWhereParamSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
     return file.memberWhereParamSpan(member: member, index: index)
 }
 
-export fn syntaxMemberWhereTraitSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
+pub fn syntaxMemberWhereTraitSpan(file: SyntaxFile, member: SyntaxMember, index: U64) -> Span {
     return file.memberWhereTraitSpan(member: member, index: index)
 }
 
-export fn syntaxMemberWhereType(file: SyntaxFile, member: SyntaxMember, index: U64) -> TypeId {
+pub fn syntaxMemberWhereType(file: SyntaxFile, member: SyntaxMember, index: U64) -> TypeId {
     return file.memberWhereType(member: member, index: index)
 }
 
-export fn syntaxMemberWhereTraitType(file: SyntaxFile, member: SyntaxMember, index: U64) -> TypeId {
+pub fn syntaxMemberWhereTraitType(file: SyntaxFile, member: SyntaxMember, index: U64) -> TypeId {
     return file.memberWhereTraitType(member: member, index: index)
 }
 
 // A scalar trait view is sufficient for declaration prepass clients. Its
 // children remain ID/slice references; no value TraitAst is reconstructed.
-export fn syntaxTrait(file: SyntaxFile, id: TraitId) -> SyntaxTrait {
+pub fn syntaxTrait(file: SyntaxFile, id: TraitId) -> SyntaxTrait {
     return file.traitNode(id: id)
 }
 
-export fn syntaxTraitTypeParamCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+pub fn syntaxTraitTypeParamCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
     return file.traitTypeParamCount(trait: trait)
 }
 
-export fn syntaxTraitTypeParamSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
+pub fn syntaxTraitTypeParamSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
     return file.traitTypeParamSpan(trait: trait, index: index)
 }
 
-export fn syntaxTraitTypeParamIsSendable(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Bool {
+pub fn syntaxTraitTypeParamIsSendable(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Bool {
     return file.traitTypeParamIsSendable(trait: trait, index: index)
 }
 
-export fn syntaxTraitSupertraitCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+pub fn syntaxTraitSupertraitCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
     return file.traitSupertraitCount(trait: trait)
 }
 
-export fn syntaxTraitSupertraitSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
+pub fn syntaxTraitSupertraitSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
     return file.traitSupertraitSpan(trait: trait, index: index)
 }
 
-export fn syntaxTraitAssocTypeCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+pub fn syntaxTraitAssocTypeCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
     return file.traitAssocTypeCount(trait: trait)
 }
 
-export fn syntaxTraitAssocTypeSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
+pub fn syntaxTraitAssocTypeSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
     return file.traitAssocTypeSpan(trait: trait, index: index)
 }
 
-export fn syntaxTraitReqCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
+pub fn syntaxTraitReqCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
     return file.traitReqCount(trait: trait)
 }
 
-export fn syntaxTraitReq(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> SigId {
+pub fn syntaxTraitReq(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> SigId {
     return file.traitReq(trait: trait, index: index)
 }
 
-export fn syntaxSig(file: SyntaxFile, id: SigId) -> SyntaxSig {
+pub fn syntaxSig(file: SyntaxFile, id: SigId) -> SyntaxSig {
     return file.sigNode(id: id)
 }
 
-export fn syntaxSigTypeParamCount(file: SyntaxFile, sig: SyntaxSig) -> U64 {
+pub fn syntaxSigTypeParamCount(file: SyntaxFile, sig: SyntaxSig) -> U64 {
     return file.sigTypeParamCount(sig: sig)
 }
 
-export fn syntaxSigTypeParamSpan(file: SyntaxFile, sig: SyntaxSig, index: U64) -> Span {
+pub fn syntaxSigTypeParamSpan(file: SyntaxFile, sig: SyntaxSig, index: U64) -> Span {
     return file.sigTypeParamSpan(sig: sig, index: index)
 }
 
-export fn syntaxSigTypeParamIsSendable(file: SyntaxFile, sig: SyntaxSig, index: U64) -> Bool {
+pub fn syntaxSigTypeParamIsSendable(file: SyntaxFile, sig: SyntaxSig, index: U64) -> Bool {
     return file.sigTypeParamIsSendable(sig: sig, index: index)
 }
 
-export fn syntaxSigParamCount(file: SyntaxFile, sig: SyntaxSig) -> U64 {
+pub fn syntaxSigParamCount(file: SyntaxFile, sig: SyntaxSig) -> U64 {
     return file.sigParamCount(sig: sig)
 }
 
-export fn syntaxSigParam(file: SyntaxFile, sig: SyntaxSig, index: U64) -> ParamId {
+pub fn syntaxSigParam(file: SyntaxFile, sig: SyntaxSig, index: U64) -> ParamId {
     return file.sigParam(sig: sig, index: index)
 }
 
-export fn syntaxExtern(file: SyntaxFile, id: ExternId) -> SyntaxExtern {
+pub fn syntaxExtern(file: SyntaxFile, id: ExternId) -> SyntaxExtern {
     return file.externNode(id: id)
 }
 
-export fn syntaxExternFnCount(file: SyntaxFile, ext: SyntaxExtern) -> U64 {
+pub fn syntaxExternFnCount(file: SyntaxFile, ext: SyntaxExtern) -> U64 {
     return file.externFnCount(ext: ext)
 }
 
-export fn syntaxExternFn(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> SigId {
+pub fn syntaxExternFn(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> SigId {
     return file.externFn(ext: ext, index: index)
 }
 
-export fn syntaxExternStructCount(file: SyntaxFile, ext: SyntaxExtern) -> U64 {
+pub fn syntaxExternStructCount(file: SyntaxFile, ext: SyntaxExtern) -> U64 {
     return file.externStructCount(ext: ext)
 }
 
-export fn syntaxExternStructNameSpan(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> Span {
+pub fn syntaxExternStructNameSpan(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> Span {
     return file.externStructNameSpan(ext: ext, index: index)
 }
 
-export fn syntaxExternStructSpan(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> Span {
+pub fn syntaxExternStructSpan(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> Span {
     return file.externStructSpan(ext: ext, index: index)
 }
 
-export fn syntaxExternStructTypeParamCount(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> U64 {
+pub fn syntaxExternStructTypeParamCount(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> U64 {
     return file.externStructTypeParamCount(ext: ext, index: index)
 }
 
-export fn syntaxExternStructTypeParamSpan(file: SyntaxFile, ext: SyntaxExtern, structIndex: U64, index: U64) -> Span {
+pub fn syntaxExternStructTypeParamSpan(file: SyntaxFile, ext: SyntaxExtern, structIndex: U64, index: U64) -> Span {
     return file.externStructTypeParamSpan(ext: ext, structIndex: structIndex, index: index)
 }
 
-export fn syntaxExternStructTypeParamIsSendable(file: SyntaxFile, ext: SyntaxExtern, structIndex: U64, index: U64) -> Bool {
+pub fn syntaxExternStructTypeParamIsSendable(file: SyntaxFile, ext: SyntaxExtern, structIndex: U64, index: U64) -> Bool {
     return file.externStructTypeParamIsSendable(ext: ext, structIndex: structIndex, index: index)
 }
 
-export fn syntaxExternStructDirective(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> DirectiveId {
+pub fn syntaxExternStructDirective(file: SyntaxFile, ext: SyntaxExtern, index: U64) -> DirectiveId {
     return file.externStructDirective(ext: ext, index: index)
 }
 
-export fn syntaxDirective(file: SyntaxFile, id: DirectiveId) -> SyntaxDirective {
+pub fn syntaxDirective(file: SyntaxFile, id: DirectiveId) -> SyntaxDirective {
     return file.directiveNode(id: id)
 }
 
-export fn syntaxDirectiveReqCount(file: SyntaxFile, directive: SyntaxDirective) -> U64 {
+pub fn syntaxDirectiveReqCount(file: SyntaxFile, directive: SyntaxDirective) -> U64 {
     return file.directiveReqCount(directive: directive)
 }
 
-export fn syntaxDirectiveReq(file: SyntaxFile, directive: SyntaxDirective, index: U64) -> DeriveReqId {
+pub fn syntaxDirectiveReq(file: SyntaxFile, directive: SyntaxDirective, index: U64) -> DeriveReqId {
     return file.directiveReq(directive: directive, index: index)
 }
 
-export fn syntaxDeriveReq(file: SyntaxFile, id: DeriveReqId) -> SyntaxDeriveReq {
+pub fn syntaxDeriveReq(file: SyntaxFile, id: DeriveReqId) -> SyntaxDeriveReq {
     return file.deriveReqNode(id: id)
 }
 
-export fn syntaxDeriveReqArgCount(file: SyntaxFile, req: SyntaxDeriveReq) -> U64 {
+pub fn syntaxDeriveReqArgCount(file: SyntaxFile, req: SyntaxDeriveReq) -> U64 {
     return file.deriveReqArgCount(req: req)
 }
 
-export fn syntaxDeriveReqArg(file: SyntaxFile, req: SyntaxDeriveReq, index: U64) -> MakeFieldId {
+pub fn syntaxDeriveReqArg(file: SyntaxFile, req: SyntaxDeriveReq, index: U64) -> MakeFieldId {
     return file.deriveReqArg(req: req, index: index)
 }
 
-export fn syntaxNewtype(file: SyntaxFile, id: NewtypeId) -> SyntaxNewtype {
+pub fn syntaxNewtype(file: SyntaxFile, id: NewtypeId) -> SyntaxNewtype {
     return file.newtypeNode(id: id)
 }
 
 // Top-level `val` / `mut val` is represented by a StmtId.  As with every
 // SyntaxFile reader this exposes its scalar node view, never a value StmtAst.
-export fn syntaxStmt(file: SyntaxFile, id: StmtId) -> SyntaxStmt {
+pub fn syntaxStmt(file: SyntaxFile, id: StmtId) -> SyntaxStmt {
     return file.stmtNode(id: id)
 }
 
-export fn syntaxBlock(file: SyntaxFile, id: BlockId) -> SyntaxBlock {
+pub fn syntaxBlock(file: SyntaxFile, id: BlockId) -> SyntaxBlock {
     return file.blockNode(id: id)
 }
 
-export fn syntaxBlockStmtCount(file: SyntaxFile, block: SyntaxBlock) -> U64 {
+pub fn syntaxBlockStmtCount(file: SyntaxFile, block: SyntaxBlock) -> U64 {
     return file.blockStmtCount(block: block)
 }
 
-export fn syntaxBlockStmt(file: SyntaxFile, block: SyntaxBlock, index: U64) -> StmtId {
+pub fn syntaxBlockStmt(file: SyntaxFile, block: SyntaxBlock, index: U64) -> StmtId {
     return file.blockStmt(block: block, index: index)
 }
 
-export fn syntaxExpr(file: SyntaxFile, id: ExprId) -> SyntaxExpr {
+pub fn syntaxExpr(file: SyntaxFile, id: ExprId) -> SyntaxExpr {
     return file.exprNode(id: id)
 }
 
-export fn syntaxExprArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprArgCount(expr: expr)
 }
 
-export fn syntaxExprArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ArgId {
+pub fn syntaxExprArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ArgId {
     return file.exprArg(expr: expr, index: index)
 }
 
-export fn syntaxArg(file: SyntaxFile, id: ArgId) -> SyntaxArg {
+pub fn syntaxArg(file: SyntaxFile, id: ArgId) -> SyntaxArg {
     return file.argNode(id: id)
 }
 
-export fn syntaxExprElemCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprElemCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprElemCount(expr: expr)
 }
 
-export fn syntaxExprElem(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
+pub fn syntaxExprElem(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
     return file.exprElem(expr: expr, index: index)
 }
 
-export fn syntaxExprMakeFieldCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprMakeFieldCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprMakeFieldCount(expr: expr)
 }
 
-export fn syntaxExprMakeField(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> MakeFieldId {
+pub fn syntaxExprMakeField(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> MakeFieldId {
     return file.exprMakeField(expr: expr, index: index)
 }
 
-export fn syntaxMakeField(file: SyntaxFile, id: MakeFieldId) -> SyntaxMakeField {
+pub fn syntaxMakeField(file: SyntaxFile, id: MakeFieldId) -> SyntaxMakeField {
     return file.makeFieldNode(id: id)
 }
 
-export fn syntaxExprDictEntryCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprDictEntryCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprDictEntryCount(expr: expr)
 }
 
-export fn syntaxExprDictKey(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
+pub fn syntaxExprDictKey(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
     return file.exprDictKey(expr: expr, index: index)
 }
 
-export fn syntaxExprDictValue(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
+pub fn syntaxExprDictValue(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ExprId {
     return file.exprDictValue(expr: expr, index: index)
 }
 
-export fn syntaxStmtMatchArmCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
+pub fn syntaxStmtMatchArmCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
     return file.stmtMatchArmCount(stmt: stmt)
 }
 
-export fn syntaxStmtMatchArm(file: SyntaxFile, stmt: SyntaxStmt, index: U64) -> MatchArmId {
+pub fn syntaxStmtMatchArm(file: SyntaxFile, stmt: SyntaxStmt, index: U64) -> MatchArmId {
     return file.stmtMatchArm(stmt: stmt, index: index)
 }
 
-export fn syntaxExprMatchArmCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprMatchArmCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprMatchArmCount(expr: expr)
 }
 
-export fn syntaxExprMatchArm(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> MatchArmId {
+pub fn syntaxExprMatchArm(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> MatchArmId {
     return file.exprMatchArm(expr: expr, index: index)
 }
 
 // Owner-neutral match-arm views.  `SyntaxStmt.arms` and `SyntaxExpr.arms` are
 // slices into the same immutable MatchArmId pool.
-export fn syntaxMatchArmCount(file: SyntaxFile, arms: SyntaxSlice) -> U64 {
+pub fn syntaxMatchArmCount(file: SyntaxFile, arms: SyntaxSlice) -> U64 {
     return file.matchArmCount(arms: arms)
 }
 
-export fn syntaxMatchArmAt(file: SyntaxFile, arms: SyntaxSlice, index: U64) -> MatchArmId {
+pub fn syntaxMatchArmAt(file: SyntaxFile, arms: SyntaxSlice, index: U64) -> MatchArmId {
     return file.matchArm(arms: arms, index: index)
 }
 
-export fn syntaxStmtBindCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
+pub fn syntaxStmtBindCount(file: SyntaxFile, stmt: SyntaxStmt) -> U64 {
     return file.stmtBindCount(stmt: stmt)
 }
 
-export fn syntaxStmtBind(file: SyntaxFile, stmt: SyntaxStmt, index: U64) -> BindId {
+pub fn syntaxStmtBind(file: SyntaxFile, stmt: SyntaxStmt, index: U64) -> BindId {
     return file.stmtBind(stmt: stmt, index: index)
 }
 
-export fn syntaxMatchArm(file: SyntaxFile, id: MatchArmId) -> SyntaxMatchArm {
+pub fn syntaxMatchArm(file: SyntaxFile, id: MatchArmId) -> SyntaxMatchArm {
     return file.matchArmNode(id: id)
 }
 
-export fn syntaxPattern(file: SyntaxFile, id: PatternId) -> SyntaxPattern {
+pub fn syntaxPattern(file: SyntaxFile, id: PatternId) -> SyntaxPattern {
     return file.patternNode(id: id)
 }
 
-export fn syntaxPatternBindCount(file: SyntaxFile, pattern: SyntaxPattern) -> U64 {
+pub fn syntaxPatternBindCount(file: SyntaxFile, pattern: SyntaxPattern) -> U64 {
     return file.patternBindCount(pattern: pattern)
 }
 
-export fn syntaxPatternBind(file: SyntaxFile, pattern: SyntaxPattern, index: U64) -> BindId {
+pub fn syntaxPatternBind(file: SyntaxFile, pattern: SyntaxPattern, index: U64) -> BindId {
     return file.patternBind(pattern: pattern, index: index)
 }
 
-export fn syntaxBind(file: SyntaxFile, id: BindId) -> SyntaxBind {
+pub fn syntaxBind(file: SyntaxFile, id: BindId) -> SyntaxBind {
     return file.bindNode(id: id)
 }
 
-export fn syntaxExprParamCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprParamCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprParamCount(expr: expr)
 }
 
-export fn syntaxExprParam(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ParamId {
+pub fn syntaxExprParam(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> ParamId {
     return file.exprParam(expr: expr, index: index)
 }
 
-export fn syntaxExprTypeArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
+pub fn syntaxExprTypeArgCount(file: SyntaxFile, expr: SyntaxExpr) -> U64 {
     return file.exprTypeArgCount(expr: expr)
 }
 
-export fn syntaxExprTypeArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> TypeId {
+pub fn syntaxExprTypeArg(file: SyntaxFile, expr: SyntaxExpr, index: U64) -> TypeId {
     return file.exprTypeArg(expr: expr, index: index)
 }
 
-export fn syntaxType(file: SyntaxFile, id: TypeId) -> SyntaxType {
+pub fn syntaxType(file: SyntaxFile, id: TypeId) -> SyntaxType {
     return file.typeNode(id: id)
 }
 
-export fn syntaxTypeArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+pub fn syntaxTypeArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
     return file.typeArgCount(ty: ty)
 }
 
-export fn syntaxTypeArg(file: SyntaxFile, ty: SyntaxType, index: U64) -> TypeId {
+pub fn syntaxTypeArg(file: SyntaxFile, ty: SyntaxType, index: U64) -> TypeId {
     return file.typeArg(ty: ty, index: index)
 }
 
-export fn syntaxTypeArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
+pub fn syntaxTypeArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
     return file.typeArgLabel(ty: ty, index: index)
 }
 
-export fn syntaxTypeViewNameCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+pub fn syntaxTypeViewNameCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
     return file.typeViewNameCount(ty: ty)
 }
 
-export fn syntaxTypeViewName(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
+pub fn syntaxTypeViewName(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
     return file.typeViewName(ty: ty, index: index)
 }
 
-export fn syntaxTypeProjectionTraitArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
+pub fn syntaxTypeProjectionTraitArgCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
     return file.typeProjectionTraitArgCount(ty: ty)
 }
 
-export fn syntaxTypeProjectionTraitArg(file: SyntaxFile, ty: SyntaxType, index: U64) -> TypeId {
+pub fn syntaxTypeProjectionTraitArg(file: SyntaxFile, ty: SyntaxType, index: U64) -> TypeId {
     return file.typeProjectionTraitArg(ty: ty, index: index)
 }
 
-export fn syntaxTypeProjectionTraitArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
+pub fn syntaxTypeProjectionTraitArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {
     return file.typeProjectionTraitArgLabel(ty: ty, index: index)
 }
 
 // Import names stay a typed read surface rather than exposing SyntaxSlice's
 // untyped backing pool to compiler clients.
-export fn syntaxImportNameCount(file: SyntaxFile, imp: SyntaxImport) -> U64 {
+pub fn syntaxImportNameCount(file: SyntaxFile, imp: SyntaxImport) -> U64 {
     return file.importNameCount(imp: imp)
 }
 
-export fn syntaxImportNameSpan(file: SyntaxFile, imp: SyntaxImport, index: U64) -> Span {
+pub fn syntaxImportNameSpan(file: SyntaxFile, imp: SyntaxImport, index: U64) -> Span {
     return file.importNameSpan(imp: imp, index: index)
 }
 
-export fn syntaxImportNameAliasSpan(file: SyntaxFile, imp: SyntaxImport, index: U64) -> Span {
+pub fn syntaxImportNameAliasSpan(file: SyntaxFile, imp: SyntaxImport, index: U64) -> Span {
     return file.importNameAliasSpan(imp: imp, index: index)
 }
 
 // The loader only needs to know whether an extern's opaque structs carry a
 // derive request in order to discover the generated part; it need not expose
 // the extern's nested DirectiveId pool.
-export fn syntaxExternHasDeriveDirective(file: SyntaxFile, id: ExternId) -> Bool {
+pub fn syntaxExternHasDeriveDirective(file: SyntaxFile, id: ExternId) -> Bool {
     return file.externHasDeriveDirective(id: id)
 }
 
@@ -8620,7 +8620,7 @@ fn parseRangeAst(p: inout P) -> ExprAst {
 // Parse a full expression. Exported: the entry point for body parsing (and for
 // macros that read an expression position). Range (weakest, non-assoc) wraps the
 // binary-operator precedence climb.
-export fn parseExprAst(p: inout P) -> ExprAst {
+pub fn parseExprAst(p: inout P) -> ExprAst {
     mut val file: SyntaxFile = <SyntaxFile.empty />
     val id: ExprId = file.parseExpressionSyntaxDirect(p: inout p)
     return file.materializeMacroExpr(id: id, p: p)
@@ -9707,7 +9707,7 @@ fn checkGuardElseDiverges(p: inout P, elseBody: BlockAst, off: U64) {
     }
 }
 
-export fn parseBlockAst(p: inout P) -> BlockAst {
+pub fn parseBlockAst(p: inout P) -> BlockAst {
     mut val file: SyntaxFile = <SyntaxFile.empty />
     val id: BlockId = file.parseBlockSyntaxDirect(p: inout p)
     return file.materializeMacroBlock(id: id, p: p)
@@ -9719,7 +9719,7 @@ export fn parseBlockAst(p: inout P) -> BlockAst {
 // tests) parse from source text. `source` is the text; `start` is its absolute
 // offset in the original file (the span base, for original coordinates).
 // Lex `source` and parse a single expression.
-export fn parseExprFrom(source: String, start: U64) -> ExprAst {
+pub fn parseExprFrom(source: String, start: U64) -> ExprAst {
     val sb: Array[U8] = source.bytes()
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
@@ -9728,7 +9728,7 @@ export fn parseExprFrom(source: String, start: U64) -> ExprAst {
 }
 
 // Lex `source` and parse a brace-delimited block `{ ... }`.
-export fn parseBlockFrom(source: String, start: U64) -> BlockAst {
+pub fn parseBlockFrom(source: String, start: U64) -> BlockAst {
     val sb: Array[U8] = source.bytes()
     mut val lx: Lexer = <Lexer bytes=sb pos=0 toks=[] depth=0 />
     lex(lx: inout lx)
@@ -9736,7 +9736,7 @@ export fn parseBlockFrom(source: String, start: U64) -> BlockAst {
     return parseBlockAst(p: inout p)
 }
 
-export struct Src {
+pub struct Src {
     pub mut val bytes: Array[U8]
 }
 
@@ -9771,7 +9771,7 @@ pub impl SyntaxCondClause { factory }
 pub impl Src { factory }
 
 // A fresh, empty source builder.
-export fn newSrc() -> Src {
+pub fn newSrc() -> Src {
     return <Src bytes=[] />
 }
 
