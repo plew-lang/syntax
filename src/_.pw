@@ -1339,6 +1339,7 @@ pub struct SyntaxImpl {
     pub val isTraitImpl: Bool
     pub val traitName: Span
     pub val traitNameSpan: Span
+    pub val traitPath: SyntaxSlice = <SyntaxSlice start=0 count=0 />
     pub val traitArgs: SyntaxSlice
     pub val whereParams: SyntaxSlice
     pub val whereTraits: SyntaxSlice
@@ -1836,6 +1837,7 @@ pub struct ImplAst {
     // Original occurrence after `as`, retained so lowering can resolve a
     // module-local import alias at its actual use site.
     pub val traitNameSpan: Span = <Span start=0 end=0 />
+    pub val traitPath: Array[NameSegmentAst] = []
     // trait type arguments `impl V as Add[V]` (spec/12): bind the trait's type
     // parameters to concrete types. Empty for a bare `impl V as Trait`.
     pub val traitArgs: Array[TypeAst]
@@ -5236,25 +5238,18 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
     mut val isTraitImpl: Bool = false
     mut val traitName: Span = <Span start=0U64 end=0U64 />
     mut val traitArgs: Array[TypeId] = []
+    mut val traitPath = <SyntaxSlice start=0 count=0 />
     match p.curKind() {
         Kind.KwAs => {
             p.advance()
-            traitName = p.spanOf(t: p.curTok())
-            p.advance()
+            val traitType = self.types[self.parseSyntaxType(p: inout p).raw]
+            traitName = traitType.name
+            traitPath = traitType.namePath
             isTraitImpl = true
-            match p.curKind() {
-                Kind.LBracket => {
-                    p.advance()
-                    while true {
-                        match p.curKind() {
-                            Kind.RBracket => { p.advance() break }
-                            Kind.Eof => { break }
-                            Kind.Comma => { p.advance() }
-                            _ => { traitArgs.append(self.parseSyntaxType(p: inout p)) }
-                        }
-                    }
-                }
-                _ => {}
+            mut val arg = 0U64
+            while arg < self.typeArgCount(ty: traitType) {
+                traitArgs.append(self.typeArg(ty: traitType, index: arg))
+                arg += 1U64
             }
         }
         _ => {}
@@ -5424,7 +5419,7 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
     self.impls.append(<SyntaxImpl
         recvType=recvType implParams=self.pushDirectSyntaxTexts(items: implParams)
         implParamSendable=self.pushDirectSyntaxBools(items: implParamSendable)
-        isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitName
+        isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitName traitPath=traitPath
         traitArgs=self.pushDirectSyntaxTypeIds(items: traitArgs)
         whereParams=self.pushDirectSyntaxTexts(items: whereParams)
         whereTraits=self.pushDirectSyntaxTexts(items: whereTraits)
@@ -6345,33 +6340,16 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
     mut val traitName: String = ""
     mut val traitNameSpan: Span = <Span start=0 end=0 />
     mut val traitArgs: Array[TypeAst] = []
+    mut val traitPath: Array[NameSegmentAst] = []
     match p.curKind() {
         Kind.KwAs => {
             p.advance()
-            val traitTok: Tok = p.curTok()
-            traitName = p.text(t: traitTok)
-            traitNameSpan = p.spanOf(t: traitTok)
-            p.advance()
+            val traitType = parseType(p: inout p)
+            traitName = traitType.name
+            traitNameSpan = traitType.nameSpan
+            traitPath = traitType.namePath
+            traitArgs = traitType.args
             isTraitImpl = true
-            // trait type arguments `as Add[V]` (spec/12): bind the trait's type
-            // parameters. Comma-separated full types until `]`.
-            match p.curKind() {
-                Kind.LBracket => {
-                    p.advance()
-                    while true {
-                        match p.curKind() {
-                            Kind.RBracket => {
-                                p.advance()
-                                break
-                            }
-                            Kind.Eof => { break }
-                            Kind.Comma => { p.advance() }
-                            _ => { traitArgs.append(parseType(p: inout p)) }
-                        }
-                    }
-                }
-                _ => {}
-            }
         }
         _ => {}
     }
@@ -6547,7 +6525,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
             }
         }
     }
-    return <ImplAst recvType=recvType implParams=implTps.names implParamSpans=implTps.nameSpans implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitNameSpan traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName extNameSpan=extNameSpan />
+    return <ImplAst recvType=recvType implParams=implTps.names implParamSpans=implTps.nameSpans implParamSendable=implTps.isSendable isTraitImpl=isTraitImpl traitName=traitName traitNameSpan=traitNameSpan traitPath=traitPath traitArgs=traitArgs whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isPub=isPub members=members span=<Span start=sStart end=p.prevEnd() /> extName=extName extNameSpan=extNameSpan />
 }
 
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
