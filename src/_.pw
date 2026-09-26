@@ -17,6 +17,7 @@
 // `stringFromBytesUnchecked` (build a String from a byte slice) is used by the parser to
 // turn token byte-ranges into name Strings.
 import @Std/Core with { Eq, stringFromBytesUnchecked }
+import @Std/Hash with { Hash }
 pub import @Std/Core with { Eq }
 
 part ./Lexer
@@ -30,7 +31,7 @@ part ./Materialize
 //
 // - no config → `Derive` (an `assoc fn derive`, no `self`): invoked bare `@[X]`.
 //   A trait can implement it (`impl Hash as Derive` — the deriver lives here in
-//   Derive's module, coherent, referencing the ambient `Hash`), as can a no-field
+//   Derive's module, coherent, referencing the imported `Hash`), as can a no-field
 //   struct (`impl Show as Derive`). The annotated item arrives as `TopItemAst`
 //   (the deriver `match`es its kind: `Decl` for struct/enum/fn, `Impl`, `Trait`).
 // - config → `ParameterizedDerive` (an instance `fn derive`, `self` = the config
@@ -48,7 +49,7 @@ pub trait ParameterizedDerive {
 }
 
 // Built-in `@[Hash]` derive, dogfooded as a real `Derive` (spec/16). It lives here
-// — in `Derive`'s own module — so conforming the ambient `Hash` trait (Prelude) to
+// — in `Derive`'s own module — so conforming the imported `Hash` trait to
 // `Derive` is coherent (no orphan, no colliding `struct Hash`). It loads only when
 // @Plew/Syntax loads (gen mode + the compiler's own build, where it is dead code);
 // normal builds read the committed `.gen.pw`. Generates a field-wise
