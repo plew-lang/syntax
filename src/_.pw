@@ -1132,6 +1132,7 @@ pub struct SyntaxFile {
     mut val decls: Array[SyntaxDecl] = []
     mut val impls: Array[SyntaxImpl] = []
     mut val traits: Array[SyntaxTrait] = []
+    mut val associatedTypes: Array[SyntaxAssociatedType] = []
     mut val externs: Array[SyntaxExtern] = []
     mut val imports: Array[SyntaxImport] = []
     mut val directives: Array[SyntaxDirective] = []
@@ -1308,6 +1309,12 @@ pub struct SyntaxSig {
     pub val ret: TypeId
     pub val isAssoc: Bool
     pub val selfInout: Bool
+}
+
+pub struct SyntaxAssociatedType {
+    pub val name: Span
+    pub val bounds: SyntaxSlice
+    pub val span: Span
 }
 
 pub struct SyntaxTrait {
@@ -1778,6 +1785,13 @@ pub struct SigAst {
 
 // A `trait Name [: Super + ...] { requirements }` declaration (spec/08). The body
 // holds only requirement signatures (no bodies) + associated-type names.
+pub struct AssociatedTypeAst {
+    pub val name: String
+    pub val nameSpan: Span
+    pub val bounds: Array[TypeAst] = []
+    pub val span: Span
+}
+
 pub struct TraitAst {
     pub val name: String
     pub val nameSpan: Span
@@ -1790,8 +1804,7 @@ pub struct TraitAst {
     pub val supertraits: Array[String]
     pub val supertraitSpans: Array[Span] = []
     pub val reqs: Array[SigAst]
-    pub val assocTypes: Array[String]
-    pub val assocTypeSpans: Array[Span] = []
+    pub val assocTypes: Array[AssociatedTypeAst]
     pub val span: Span
 }
 
@@ -4933,7 +4946,7 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
     }
     match p.curKind() { Kind.LBrace => { p.advance() } _ => {} }
     mut val reqs: Array[SigId] = []
-    mut val assocTypes: Array[Span] = []
+    mut val assocTypes: Array[SyntaxAssociatedType] = []
     while true {
         p.skipNewlines()
         match p.curKind() {
@@ -4960,13 +4973,31 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
                     reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true))
                 } else if curIs(p: inout p, kw: "type") {
                     p.advance()
-                    match p.curKind() { Kind.Ident => { assocTypes.append(p.spanOf(t: p.curTok())) p.advance() } _ => {} }
+                    match p.curKind() {
+                        Kind.Ident => {
+                            val associatedName = p.spanOf(t: p.curTok())
+                            p.advance()
+                            mut val bounds: Array[TypeId] = []
+                            match p.curKind() {
+                                Kind.Colon => {
+                                    p.advance()
+                                    while true {
+                                        bounds.append(self.parseSyntaxType(p: inout p))
+                                        match p.curKind() { Kind.Plus => { p.advance() } _ => { break } }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            assocTypes.append(<SyntaxAssociatedType name=associatedName bounds=self.pushTypeIdSlice(items: bounds) span=<Span start=associatedName.start end=p.prevEnd() /> />)
+                        }
+                        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected an associated type name") }
+                    }
                 } else { p.advance() }
             }
         }
     }
     val id: TraitId = <TraitId raw=self.traits.count() />
-    self.traits.append(<SyntaxTrait name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) supertraits=self.pushDirectSyntaxTexts(items: supers) reqs=self.pushSigIdSlice(items: reqs) assocTypes=self.pushDirectSyntaxTexts(items: assocTypes) span=<Span start=start end=p.prevEnd() /> />)
+    self.traits.append(<SyntaxTrait name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) supertraits=self.pushDirectSyntaxTexts(items: supers) reqs=self.pushSigIdSlice(items: reqs) assocTypes=self.pushAssociatedTypeSlice(items: assocTypes) span=<Span start=start end=p.prevEnd() /> />)
     return id
 }
 
@@ -6609,8 +6640,7 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
         _ => {}
     }
     mut val reqs: Array[SigAst] = []
-    mut val assocTypes: Array[String] = []
-    mut val assocTypeSpans: Array[Span] = []
+    mut val assocTypes: Array[AssociatedTypeAst] = []
     while true {
         p.skipNewlines()
         match p.curKind() {
@@ -6680,9 +6710,19 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
                         match p.curKind() {
                             Kind.Ident => {
                                 val assocTok: Tok = p.curTok()
-                                assocTypes.append(p.text(t: assocTok))
-                                assocTypeSpans.append(p.spanOf(t: assocTok))
                                 p.advance()
+                                mut val bounds: Array[TypeAst] = []
+                                match p.curKind() {
+                                    Kind.Colon => {
+                                        p.advance()
+                                        while true {
+                                            bounds.append(parseType(p: inout p))
+                                            match p.curKind() { Kind.Plus => { p.advance() } _ => { break } }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                assocTypes.append(<AssociatedTypeAst name=p.text(t: assocTok) nameSpan=p.spanOf(t: assocTok) bounds=bounds span=<Span start=p.base + assocTok.start end=p.prevEnd() /> />)
                             }
                             _ => {}
                         }
@@ -6694,7 +6734,7 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
             }
         }
     }
-    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable supertraits=supertraits supertraitSpans=supertraitSpans reqs=reqs assocTypes=assocTypes assocTypeSpans=assocTypeSpans span=<Span start=sStart end=p.prevEnd() /> />
+    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable supertraits=supertraits supertraitSpans=supertraitSpans reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
@@ -7439,6 +7479,14 @@ pub fn syntaxTraitAssocTypeCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
 
 pub fn syntaxTraitAssocTypeSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {
     return file.traitAssocTypeSpan(trait: trait, index: index)
+}
+
+pub fn syntaxTraitAssocType(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> SyntaxAssociatedType {
+    return file.traitAssocType(trait: trait, index: index)
+}
+
+pub fn syntaxAssociatedTypeBound(file: SyntaxFile, associated: SyntaxAssociatedType, index: U64) -> TypeId {
+    return file.associatedTypeBound(associated: associated, index: index)
 }
 
 pub fn syntaxTraitReqCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
@@ -9798,6 +9846,7 @@ pub impl DeclAst { factory }
 pub impl MemberAst { factory }
 pub impl SigAst { factory }
 pub impl TraitAst { factory }
+pub impl AssociatedTypeAst { factory }
 pub impl ExternAst { factory }
 pub impl ImplAst { factory }
 pub impl ImportAst { factory }

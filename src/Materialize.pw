@@ -395,9 +395,20 @@ impl SyntaxFile {
         />
     }
 
+    fn materializeAssociatedTypes(slice: SyntaxSlice, p: P) -> Array[AssociatedTypeAst] {
+        mut val result: Array[AssociatedTypeAst] = []
+        mut val index = 0U64
+        while index < slice.count {
+            val node = self.associatedTypes[slice.start + index]
+            result.append(<AssociatedTypeAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name bounds=self.materializeTypeSlice(slice: node.bounds, p: p) span=node.span />)
+            index += 1U64
+        }
+        return result
+    }
+
     fn materializeTrait(id: TraitId, p: P) -> TraitAst {
         val node: SyntaxTrait = self.traits[id.raw]
-        return <TraitAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) supertraits=self.materializeTexts(p: p, slice: node.supertraits) supertraitSpans=self.spanSlice(slice: node.supertraits) reqs=self.materializeSigs(slice: node.reqs, p: p) assocTypes=self.materializeTexts(p: p, slice: node.assocTypes) assocTypeSpans=self.spanSlice(slice: node.assocTypes) span=node.span />
+        return <TraitAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) supertraits=self.materializeTexts(p: p, slice: node.supertraits) supertraitSpans=self.spanSlice(slice: node.supertraits) reqs=self.materializeSigs(slice: node.reqs, p: p) assocTypes=self.materializeAssociatedTypes(slice: node.assocTypes, p: p) span=node.span />
     }
 
     fn materializeDirective(id: DirectiveId, p: P) -> DirectiveAst {

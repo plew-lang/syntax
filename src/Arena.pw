@@ -35,6 +35,7 @@ pub impl SyntaxDecl { factory }
 pub impl SyntaxMember { factory }
 pub impl SyntaxSig { factory }
 pub impl SyntaxTrait { factory }
+pub impl SyntaxAssociatedType { factory }
 pub impl SyntaxExtern { factory }
 pub impl SyntaxImpl { factory }
 pub impl SyntaxImport { factory }
@@ -144,7 +145,13 @@ pub impl SyntaxFile {
     }
     fn traitAssocTypeCount(trait: SyntaxTrait) -> U64 { return trait.assocTypes.count }
     fn traitAssocTypeSpan(trait: SyntaxTrait, index: U64) -> Span {
-        return self.texts[trait.assocTypes.start + index]
+        return self.associatedTypes[trait.assocTypes.start + index].name
+    }
+    fn traitAssocType(trait: SyntaxTrait, index: U64) -> SyntaxAssociatedType {
+        return self.associatedTypes[trait.assocTypes.start + index]
+    }
+    fn associatedTypeBound(associated: SyntaxAssociatedType, index: U64) -> TypeId {
+        return self.typeIds[associated.bounds.start + index]
     }
     fn traitReqCount(trait: SyntaxTrait) -> U64 { return trait.reqs.count }
     fn traitReq(trait: SyntaxTrait, index: U64) -> SigId {
@@ -861,9 +868,23 @@ impl SyntaxFile {
         return self.pushMemberIdSlice(items: ids)
     }
 
+    inout fn pushAssociatedTypeSlice(items: Array[SyntaxAssociatedType]) -> SyntaxSlice {
+        val start = self.associatedTypes.count()
+        for val item in items { self.associatedTypes.append(item) }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+
+    inout fn freezeAssociatedTypeAstSlice(items: Array[AssociatedTypeAst]) -> SyntaxSlice {
+        mut val rows: Array[SyntaxAssociatedType] = []
+        for val item in items {
+            rows.append(<SyntaxAssociatedType name=item.nameSpan bounds=self.freezeTypeAstSlice(items: item.bounds) span=item.span />)
+        }
+        return self.pushAssociatedTypeSlice(items: rows)
+    }
+
     inout fn freezeTraitAst(ast: TraitAst) -> TraitId {
         val id: TraitId = <TraitId raw=self.traits.count() />
-        self.traits.append(<SyntaxTrait name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) supertraits=self.pushTextSlice(items: ast.supertraitSpans) reqs=self.freezeSigAstSlice(items: ast.reqs) assocTypes=self.pushTextSlice(items: ast.assocTypeSpans) span=ast.span />)
+        self.traits.append(<SyntaxTrait name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) supertraits=self.pushTextSlice(items: ast.supertraitSpans) reqs=self.freezeSigAstSlice(items: ast.reqs) assocTypes=self.freezeAssociatedTypeAstSlice(items: ast.assocTypes) span=ast.span />)
         return id
     }
 
