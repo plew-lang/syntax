@@ -1,0 +1,4 @@
+name = "SyntaxTests"
+
+[dependencies]
+"Plew/Syntax" = { path = ".." }

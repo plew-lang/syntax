@@ -140,8 +140,11 @@ pub impl SyntaxFile {
         return self.bools[trait.typeParamSendable.start + index]
     }
     fn traitSupertraitCount(trait: SyntaxTrait) -> U64 { return trait.supertraits.count }
+    fn traitSupertrait(trait: SyntaxTrait, index: U64) -> TypeId {
+        return self.typeIds[trait.supertraits.start + index]
+    }
     fn traitSupertraitSpan(trait: SyntaxTrait, index: U64) -> Span {
-        return self.texts[trait.supertraits.start + index]
+        return self.types[self.traitSupertrait(trait: trait, index: index).raw].name
     }
     fn traitAssocTypeCount(trait: SyntaxTrait) -> U64 { return trait.assocTypes.count }
     fn traitAssocTypeSpan(trait: SyntaxTrait, index: U64) -> Span {
@@ -884,7 +887,7 @@ impl SyntaxFile {
 
     inout fn freezeTraitAst(ast: TraitAst) -> TraitId {
         val id: TraitId = <TraitId raw=self.traits.count() />
-        self.traits.append(<SyntaxTrait name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) supertraits=self.pushTextSlice(items: ast.supertraitSpans) reqs=self.freezeSigAstSlice(items: ast.reqs) assocTypes=self.freezeAssociatedTypeAstSlice(items: ast.assocTypes) span=ast.span />)
+        self.traits.append(<SyntaxTrait name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) supertraits=self.freezeTypeAstSlice(items: ast.supertraits) reqs=self.freezeSigAstSlice(items: ast.reqs) assocTypes=self.freezeAssociatedTypeAstSlice(items: ast.assocTypes) span=ast.span />)
         return id
     }
 

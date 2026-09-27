@@ -1,0 +1,73 @@
+import @Plew/Syntax as Syntax
+import @Std/Core with { assert }
+import @Std/Io with { print }
+
+fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
+    val declaration = Syntax.syntaxTrait(file: file, id: <Syntax.TraitId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    assert(Syntax.syntaxTraitSupertraitCount(file: file, trait: declaration) == 2U64)
+    val parent = Syntax.syntaxType(file: file, id: Syntax.syntaxTraitSupertrait(file: file, trait: declaration, index: 0U64))
+    val span = Syntax.syntaxTraitSupertraitSpan(file: file, trait: declaration, index: 0U64)
+    assert(span.start == parent.name.start && span.end == parent.name.end)
+    assert(span.start > 17U64 && span.end - span.start == 6U64)
+    assert(Syntax.syntaxTypeArgCount(file: file, ty: parent) == 2U64)
+    val positional = Syntax.syntaxTypeArgLabel(file: file, ty: parent, index: 0U64)
+    val associated = Syntax.syntaxTypeArgLabel(file: file, ty: parent, index: 1U64)
+    assert(positional.start == positional.end)
+    assert(associated.end - associated.start == 4U64)
+    val array = Syntax.syntaxType(file: file, id: Syntax.syntaxTypeArg(file: file, ty: parent, index: 0U64))
+    assert(array.name.end - array.name.start == 5U64)
+    assert(Syntax.syntaxTypeArgCount(file: file, ty: array) == 1U64)
+    val marker = Syntax.syntaxType(file: file, id: Syntax.syntaxTraitSupertrait(file: file, trait: declaration, index: 1U64))
+    assert(marker.name.end - marker.name.start == 6U64)
+    assert(Syntax.syntaxTypeArgCount(file: file, ty: marker) == 0U64)
+}
+fn checkValue(item: Syntax.TopItemAst) {
+    match item {
+        Syntax.TopItemAst.Trait(t: val declaration) => {
+            assert(declaration.supertraits.count() == 2U64)
+            val parent = declaration.supertraits[0U64]
+            assert(parent.name == "Parent")
+            assert(parent.nameSpan.start > 17U64)
+            assert(parent.args.count() == 2U64)
+            assert(parent.args[0U64].name == "Array")
+            assert(parent.args[0U64].args[0U64].name == "T")
+            assert(parent.argLabels[1U64] == "Item")
+            assert(parent.args[1U64].name == "T")
+            assert(declaration.supertraits[1U64].name == "Marker")
+        }
+        _ => { panic "expected a trait declaration" }
+    }
+}
+fn main() {
+    val source = "trait Derived[T]: Parent[Array[T], Item = T] + Marker { type Output }"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val direct = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout direct)
+    assert(!direct.hasErr)
+    check(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64))
+    val materialized = Syntax.parseItem(source: source, start: 17U64, end: 17U64 + source.bytes().count())
+    checkValue(item: materialized)
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val first = frozen.freezeTopItem(ast: materialized)
+    val second = frozen.freezeTopItem(ast: materialized)
+    check(file: frozen, item: first)
+    check(file: frozen, item: second)
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    val values = Syntax.parseProgramAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    checkValue(item: values[0U64])
+    val valueRoot = frozen.freezeTopItem(ast: values[0U64])
+    check(file: frozen, item: valueRoot)
+    for val invalid in ["trait Broken: {}", "trait Broken: Parent + {}", "trait Broken: Parent[Item = ] {}"] {
+        mut val invalidLexer = <Syntax.Lexer bytes=invalid.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout invalidLexer)
+        mut val invalidDirect = <Syntax.P bytes=invalid.bytes() toks=invalidLexer.toks pos=0U64 base=0U64 />
+        Syntax.parseProgramSyntaxFile(p: inout invalidDirect)
+        assert(invalidDirect.hasErr)
+        mut val invalidValue = <Syntax.P bytes=invalid.bytes() toks=invalidLexer.toks pos=0U64 base=0U64 />
+        Syntax.parseProgramAst(p: inout invalidValue)
+        assert(invalidValue.hasErr)
+    }
+    print("ok")
+}

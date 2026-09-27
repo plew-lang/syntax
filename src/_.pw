@@ -1801,8 +1801,7 @@ pub struct TraitAst {
     pub val typeParams: Array[String]
     pub val typeParamSpans: Array[Span] = []
     pub val typeParamSendable: Array[Bool] = []
-    pub val supertraits: Array[String]
-    pub val supertraitSpans: Array[Span] = []
+    pub val supertraits: Array[TypeAst]
     pub val reqs: Array[SigAst]
     pub val assocTypes: Array[AssociatedTypeAst]
     pub val span: Span
@@ -4930,15 +4929,12 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
     mut val typeParams: Array[Span] = []
     mut val typeParamSendable: Array[Bool] = []
     self.parseSyntaxTypeParams(p: inout p, names: inout typeParams, flags: inout typeParamSendable)
-    mut val supers: Array[Span] = []
+    mut val supers: Array[TypeId] = []
     match p.curKind() {
         Kind.Colon => {
             p.advance()
             while true {
-                match p.curKind() {
-                    Kind.Ident => { supers.append(p.spanOf(t: p.curTok())) p.advance() }
-                    _ => {}
-                }
+                supers.append(self.parseSyntaxType(p: inout p))
                 match p.curKind() { Kind.Plus => { p.advance() } _ => { break } }
             }
         }
@@ -4997,7 +4993,7 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
         }
     }
     val id: TraitId = <TraitId raw=self.traits.count() />
-    self.traits.append(<SyntaxTrait name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) supertraits=self.pushDirectSyntaxTexts(items: supers) reqs=self.pushSigIdSlice(items: reqs) assocTypes=self.pushAssociatedTypeSlice(items: assocTypes) span=<Span start=start end=p.prevEnd() /> />)
+    self.traits.append(<SyntaxTrait name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) supertraits=self.pushTypeIdSlice(items: supers) reqs=self.pushSigIdSlice(items: reqs) assocTypes=self.pushAssociatedTypeSlice(items: assocTypes) span=<Span start=start end=p.prevEnd() /> />)
     return id
 }
 
@@ -6611,26 +6607,13 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
     p.advance()
     // trait type parameters `trait Add[Rhs]` (spec/12), before `: Super` / `{`.
     val tps: TypeParamListAst = parseTypeParamList(p: inout p)
-    mut val supertraits: Array[String] = []
-    mut val supertraitSpans: Array[Span] = []
+    mut val supertraits: Array[TypeAst] = []
     match p.curKind() {
         Kind.Colon => {
             p.advance()
-            mut val more: Bool = true
-            while more {
-                match p.curKind() {
-                    Kind.Ident => {
-                        val superTok: Tok = p.curTok()
-                        supertraits.append(p.text(t: superTok))
-                        supertraitSpans.append(p.spanOf(t: superTok))
-                        p.advance()
-                    }
-                    _ => {}
-                }
-                match p.curKind() {
-                    Kind.Plus => { p.advance() }
-                    _ => { more = false }
-                }
+            while true {
+                supertraits.append(parseType(p: inout p))
+                match p.curKind() { Kind.Plus => { p.advance() } _ => { break } }
             }
         }
         _ => {}
@@ -6734,7 +6717,7 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
             }
         }
     }
-    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable supertraits=supertraits supertraitSpans=supertraitSpans reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
+    return <TraitAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable supertraits=supertraits reqs=reqs assocTypes=assocTypes span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 // An `extern(plewIntrinsic) { fn ... ; struct ... }` or `extern(c) { ... }`
@@ -7467,6 +7450,10 @@ pub fn syntaxTraitTypeParamIsSendable(file: SyntaxFile, trait: SyntaxTrait, inde
 
 pub fn syntaxTraitSupertraitCount(file: SyntaxFile, trait: SyntaxTrait) -> U64 {
     return file.traitSupertraitCount(trait: trait)
+}
+
+pub fn syntaxTraitSupertrait(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> TypeId {
+    return file.traitSupertrait(trait: trait, index: index)
 }
 
 pub fn syntaxTraitSupertraitSpan(file: SyntaxFile, trait: SyntaxTrait, index: U64) -> Span {

@@ -20,6 +20,12 @@ exactly why it lives outside `@Std` (where everything must be single-version).
 - `src/Parser.pw` — the parser's `impl` (`[Token] -> AST`).
 - `src/Build.pw` — the source builder's `impl` (output side, `Src`).
 
+## Tests
+
+`tests/` is a local consumer package whose manifest points to this checkout.
+`SupertraitConstraints.pw` checks complete supertrait types through both parsers,
+materialization and freezing; its expected output is `SupertraitConstraints.out`.
+
 ## Usage
 
 Depend on it from a `Plew.toml`:
