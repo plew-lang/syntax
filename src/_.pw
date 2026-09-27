@@ -1106,14 +1106,14 @@ pub enum SyntaxTopItemKind {
     Trait
     Extern
     Import
-    Export
+    Published
     Directive
     GlobalVal
     NewType
 }
 
 // A top-level node never contains a value-AST payload. `payload` indexes the
-// table selected by `kind` (DeclId, ImplId, TraitId, …); Export uses another
+// table selected by `kind` (DeclId, ImplId, TraitId, …); Published uses another
 // TopItemId.  Keeping it scalar lets the file's top-level walk remain cheap even
 // when one declaration owns a large body.
 pub struct SyntaxTopItem {
@@ -1896,7 +1896,7 @@ pub struct DirectiveAst {
 
 // A top-level item of a program (spec/15). The shared `parseProgramAst` returns a
 // list of these; the compiler frontend lowers each (Codegen/Lower.pw) into its arena
-// or Comp state, and follows `Import` nodes to load further files. `Export` wraps the
+// or Comp state, and follows `Import` nodes to load further files. `Published` wraps the
 // published inner item (recursive — auto-boxed). Public imports use Import
 // with isPublic set, sharing both local binding and publication semantics.
 pub enum TopItemAst {
@@ -1905,7 +1905,7 @@ pub enum TopItemAst {
     Trait(t: TraitAst)
     Extern(e: ExternAst)
     Import(imp: ImportAst)
-    Export(inner: TopItemAst)
+    Published(inner: TopItemAst)
     Directive(dir: DirectiveAst)
     // a module-level variable (spec/15): `val x = e` / `mut val x = e`. The payload
     // is the same `StmtAst.Let` the local-binding parser produces (name / optional
@@ -5521,35 +5521,35 @@ inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
         Kind.KwExtern => {
             val id: ExternId = self.parseSyntaxExternDecl(p: inout p)
             val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.Extern /> payload: id.raw span: self.externs[id.raw].span)
-            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
         Kind.KwSpawn => {
             p.fail(off: p.base + p.curTok().start, msg: "`pub spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
-            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
         Kind.KwFn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
-            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
         Kind.KwVal => {
             val inner: TopItemId = self.parseSyntaxGlobalVal(p: inout p, mutable: false)
-            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
         Kind.KwMut => {
             val inner: TopItemId = self.parseSyntaxGlobalVal(p: inout p, mutable: true)
-            return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+            return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
         Kind.Ident => {
             if curIs(p: inout p, kw: "trait") {
                 val id: TraitId = self.parseSyntaxTraitDecl(p: inout p)
                 val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.Trait /> payload: id.raw span: self.traits[id.raw].span)
-                return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+                return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
             }
             if curIs(p: inout p, kw: "newtype") {
                 val id: NewtypeId = self.parseSyntaxNewtype(p: inout p, isPub: false)
                 val inner: TopItemId = self.pushTopItem(kind: <SyntaxTopItemKind.NewType /> payload: id.raw span: self.newtypes[id.raw].span)
-                return self.pushTopItem(kind: <SyntaxTopItemKind.Export /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
+                return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
             }
         }
         _ => {}
@@ -5615,9 +5615,6 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
             } else if curIs(p: inout p, kw: "part") {
                 val id: ImportId = self.parseSyntaxImport(p: inout p, isImport: false)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
-            } else if curIs(p: inout p, kw: "export") {
-                p.fail(off: p.base + p.curTok().start, msg: "`export` is not supported; use `pub` or `pub import`")
-                p.advance()
             } else if curIs(p: inout p, kw: "impl") {
                 val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: false)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
@@ -6180,7 +6177,7 @@ pub fn parseItem(source: String, start: U64, end: U64) -> TopItemAst {
         mut val item: TopItemAst = file.materializeMacroTopItem(id: file.topLevelItem(index: roots.start + i), p: p)
         match item {
             TopItemAst.Directive(dir: _) => {}
-            TopItemAst.Export(inner: val inner) => { return inner }
+            TopItemAst.Published(inner: val inner) => { return inner }
             _ => { return item }
         }
     }
@@ -7010,30 +7007,30 @@ fn parseDirectiveAst(p: inout P) -> DirectiveAst {
 // Decode a published declaration after the caller consumes `pub`.
 fn parsePublishedItemAst(p: inout P) -> TopItemAst {
     match p.curKind() {
-        Kind.KwExtern => { return <TopItemAst.Export inner=<TopItemAst.Extern e=parseExternDecl(p: inout p) /> /> }
-        Kind.KwFn => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwExtern => { return <TopItemAst.Published inner=<TopItemAst.Extern e=parseExternDecl(p: inout p) /> /> }
+        Kind.KwFn => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwSpawn => {
             p.fail(off: p.base + p.curTok().start, msg: "`pub spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
-            return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> />
+            return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> />
         }
-        Kind.KwAsync => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
-        Kind.KwStruct => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
-        Kind.KwUnique => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
-        Kind.KwNonsendable => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
-        Kind.KwEnum => { return <TopItemAst.Export inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
-        Kind.KwVal => { return <TopItemAst.Export inner=<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: false) /> /> }
+        Kind.KwAsync => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwStruct => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwUnique => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwNonsendable => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwEnum => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwVal => { return <TopItemAst.Published inner=<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: false) /> /> }
         Kind.KwMut => {
             p.advance()
-            return <TopItemAst.Export inner=<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: true) /> />
+            return <TopItemAst.Published inner=<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: true) /> />
         }
         Kind.Ident => {
             if curIs(p: inout p, kw: "trait") {
-                return <TopItemAst.Export inner=<TopItemAst.Trait t=parseTraitDecl(p: inout p) /> />
+                return <TopItemAst.Published inner=<TopItemAst.Trait t=parseTraitDecl(p: inout p) /> />
             }
             // `pub newtype Name = Underlying` (spec/10,15): `newtype` is a contextual
             // keyword (an Ident), so it lands here rather than in a `Kind.Kw…` arm.
             if curIs(p: inout p, kw: "newtype") {
-                return <TopItemAst.Export inner=parseNewtypeAst(p: inout p, isPub: false) />
+                return <TopItemAst.Published inner=parseNewtypeAst(p: inout p, isPub: false) />
             }
             p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
             return <TopItemAst.Decl d=parseDecl(p: inout p) />
@@ -7115,38 +7112,33 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                     if curIs(p: inout p, kw: "part") {
                         items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: false) />)
                     } else {
-                        if curIs(p: inout p, kw: "export") {
-                            p.fail(off: p.base + p.curTok().start, msg: "`export` is not supported; use `pub` or `pub import`")
-                            p.advance()
+                        if curIs(p: inout p, kw: "impl") {
+                            items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: false) />)
                         } else {
-                            if curIs(p: inout p, kw: "impl") {
-                                items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: false) />)
-                            } else {
-                                if curIs(p: inout p, kw: "pub") {
-                                    p.advance()
-                                    if curIs(p: inout p, kw: "impl") {
-                                        items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
-                                    } else if curIs(p: inout p, kw: "import") {
-                                        items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
-                                    } else {
-                                        items.append(parsePublishedItemAst(p: inout p))
-                                    }
+                            if curIs(p: inout p, kw: "pub") {
+                                p.advance()
+                                if curIs(p: inout p, kw: "impl") {
+                                    items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
+                                } else if curIs(p: inout p, kw: "import") {
+                                    items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
                                 } else {
-                                    if curIs(p: inout p, kw: "trait") {
-                                        items.append(<TopItemAst.Trait t=parseTraitDecl(p: inout p) />)
+                                    items.append(parsePublishedItemAst(p: inout p))
+                                }
+                            } else {
+                                if curIs(p: inout p, kw: "trait") {
+                                    items.append(<TopItemAst.Trait t=parseTraitDecl(p: inout p) />)
+                                } else {
+                                    if curIs(p: inout p, kw: "extension") {
+                                        parseExtensionInto(p: inout p, items: inout items)
                                     } else {
-                                        if curIs(p: inout p, kw: "extension") {
-                                            parseExtensionInto(p: inout p, items: inout items)
+                                        if curIs(p: inout p, kw: "newtype") {
+                                            items.append(parseNewtypeAst(p: inout p, isPub: false))
                                         } else {
-                                            if curIs(p: inout p, kw: "newtype") {
-                                                items.append(parseNewtypeAst(p: inout p, isPub: false))
-                                            } else {
-                                                // an identifier that starts no top-level item: reporting
-                                                // instead of skipping — a silently dropped token is
-                                                // hidden meaning (what was spoken did not manifest).
-                                                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
-                                                p.advance()
-                                            }
+                                            // an identifier that starts no top-level item: reporting
+                                            // instead of skipping — a silently dropped token is
+                                            // hidden meaning (what was spoken did not manifest).
+                                            p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
+                                            p.advance()
                                         }
                                     }
                                 }
@@ -7225,7 +7217,7 @@ pub fn syntaxTopItemSpan(file: SyntaxFile, item: TopItemId) -> Span {
     return file.topItemSpan(item: item)
 }
 
-// Export stores its wrapped top-level node as the scalar payload.  Other tags
+// Published stores its wrapped top-level node as the scalar payload.  Other tags
 // also have scalar payloads for their category table, so callers must inspect
 // `syntaxTopItemKind` before interpreting this as a TopItemId.
 pub fn syntaxTopItemPayload(file: SyntaxFile, item: TopItemId) -> U64 {

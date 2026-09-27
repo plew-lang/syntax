@@ -2,7 +2,7 @@
 // lexer: both the compiler frontend and the metaprogramming `parseItem` lex
 // through it, so a macro and the compiler never drift on tokenization. Part of
 // the @Plew/Syntax module (root: _.pw). The public surface — `Kind`, `Tok`,
-// `Lexer`, `lex`, `kindCode`, `rangeEquals` — is `export`ed for the compiler to
+// `Lexer`, `lex`, `kindCode`, `rangeEquals` — is published for the compiler to
 // `import`; the byte/keyword helpers stay module-private.
 
 
