@@ -301,6 +301,7 @@ pub enum Kind {
     Char
     Ident
     KwFn
+    KwExpose
     KwStruct
     KwEnum
     KwMatch
@@ -462,6 +463,9 @@ pub fn rangeEquals(bytes: Array[U8], start: U64, len: U64, kw: String) -> Bool {
 }
 
 fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
+    if rangeEquals(bytes: bytes, start: start, len: len, kw: "expose") {
+        return <Kind.KwExpose />
+    }
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "fn") {
         return <Kind.KwFn />
     }
@@ -971,6 +975,7 @@ pub fn kindCode(k: Kind) -> I64 {
         Kind.Str => 3
         Kind.Char => 5
         Kind.Ident => 4
+        Kind.KwExpose => 88
         Kind.KwFn => 10
         Kind.KwStruct => 11
         Kind.KwEnum => 12
@@ -1268,6 +1273,7 @@ pub struct SyntaxDecl {
     pub val params: SyntaxSlice
     pub val hasRet: Bool
     pub val ret: TypeId
+    pub val isExposed: Bool = false
     pub val isAsync: Bool
     pub val whereParams: SyntaxSlice
     pub val whereTraits: SyntaxSlice
@@ -1692,6 +1698,7 @@ pub struct DeclAst {
     // `async fn` (spec/14): the function is a stackless state machine returning a
     // Promise. Default false. (The caller of a top-level `async fn` consumes the
     // `async` keyword and threads it in.)
+    pub val isExposed: Bool = false
     pub val isAsync: Bool
     // `where T: A + B, U: C` trait bounds (spec/08), as parallel lists: each
     // atom (one trait per `+`/`,` expansion) has its subject name, full trait
@@ -4229,9 +4236,9 @@ inout fn parseSyntaxStructField(p: inout P) -> FieldId {
     return self.appendDirectSyntaxField(name: name, ty: ty, isMut: isMut, vis: vis, hasDefault: hasDefault, defaultVal: defaultVal, span: <Span start=start end=p.prevEnd() />)
 }
 
-inout fn appendDirectSyntaxDecl(kind: DeclKind, name: Span, typeParams: SyntaxSlice, typeParamSendable: SyntaxSlice, span: Span, isUnique: Bool, isNonsendable: Bool, fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasDeinit: Bool = false, deinitBody: BlockId = <BlockId raw=0U64 />, variants: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasRet: Bool = false, ret: TypeId = <TypeId raw=0U64 />, isAsync: Bool = false, whereParams: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraitTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, body: BlockId = <BlockId raw=0U64 />) -> DeclId {
+inout fn appendDirectSyntaxDecl(kind: DeclKind, name: Span, typeParams: SyntaxSlice, typeParamSendable: SyntaxSlice, span: Span, isUnique: Bool, isNonsendable: Bool, fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasDeinit: Bool = false, deinitBody: BlockId = <BlockId raw=0U64 />, variants: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasRet: Bool = false, ret: TypeId = <TypeId raw=0U64 />, isAsync: Bool = false, isExposed: Bool = false, whereParams: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraitTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, body: BlockId = <BlockId raw=0U64 />) -> DeclId {
     val id: DeclId = <DeclId raw=self.decls.count() />
-    self.decls.append(<SyntaxDecl kind=kind name=name typeParams=typeParams typeParamSendable=typeParamSendable span=span isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=variants params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />)
+    self.decls.append(<SyntaxDecl kind=kind name=name typeParams=typeParams typeParamSendable=typeParamSendable span=span isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=variants params=params hasRet=hasRet ret=ret isAsync=isAsync isExposed=isExposed whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />)
     return id
 }
 
@@ -4330,7 +4337,7 @@ inout fn parseSyntaxEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = f
     return self.appendDirectSyntaxDecl(kind: <DeclKind.Enum /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: isUnique isNonsendable: isNonsendable variants: self.pushVariantIdSlice(items: variants))
 }
 
-inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
+inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false) -> DeclId {
     val start: U64 = p.base + p.curTok().start
     p.advance()
     val name: Span = p.spanOf(t: p.curTok())
@@ -4352,7 +4359,7 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool) -> DeclId {
     self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     p.skipNewlines()
     val body: BlockId = self.parseSyntaxBlock(p: inout p)
-    return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
+    return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync isExposed: isExposed whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
 }
 
 inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -> ImportId {
@@ -5523,6 +5530,15 @@ inout fn parseSyntaxDeclTop(p: inout P) -> TopItemId {
             val id: DeclId = self.parseSyntaxEnumDecl(p: inout p, isUnique: false)
             return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
         }
+        Kind.KwExpose => {
+            p.advance()
+            if p.curKind() != <Kind.KwFn /> {
+                p.fail(off: p.base + p.curTok().start, msg: "expected `fn` after `expose`")
+                return self.pushTopItem(kind: <SyntaxTopItemKind.Decl /> payload: 0U64 span: <Span start=p.base + p.curTok().start end=p.base + p.curTok().start />)
+            }
+            val id: DeclId = self.parseSyntaxFuncDecl(p: inout p, isAsync: false, isExposed: true)
+            return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
+        }
         Kind.KwFn => {
             val id: DeclId = self.parseSyntaxFuncDecl(p: inout p, isAsync: false)
             return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
@@ -5555,7 +5571,7 @@ inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
-        Kind.KwFn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+        Kind.KwExpose | Kind.KwFn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
@@ -5626,7 +5642,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
     mut val items: Array[TopItemId] = []
     p.skipNewlines()
     match p.curKind() {
-        Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+        Kind.KwExpose | Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
             items.append(self.parseSyntaxDeclTop(p: inout p))
         }
         Kind.KwExtern => {
@@ -6152,7 +6168,7 @@ fn parseWhereNames(p: inout P, params: inout Array[String], traits: inout Array[
 // A function declaration `fn name[T,...](params) [-> Ret] [where ...] { body }`.
 // The cursor is at `fn` (a leading `async`, if any, is already consumed and passed
 // as `isAsync`). The body is parsed; the where-bounds are captured.
-pub fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
+pub fn parseFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -6178,7 +6194,7 @@ pub fn parseFuncDecl(p: inout P, isAsync: Bool) -> DeclAst {
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     p.skipNewlines()
     val body: BlockAst = parseBlockAst(p: inout p)
-    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
+    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync isExposed=isExposed whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
 }
 
 // Parse an item's source into a `DeclAst` (struct / enum / fn). `source` is the
@@ -6266,6 +6282,14 @@ pub fn parseDecl(p: inout P) -> DeclAst {
             }
         }
         Kind.KwEnum => { return parseEnumDecl(p: inout p, isUnique: false) }
+        Kind.KwExpose => {
+            p.advance()
+            if p.curKind() != <Kind.KwFn /> {
+                p.fail(off: p.base + p.curTok().start, msg: "expected `fn` after `expose`")
+                return emptyDeclAst(off: p.base + p.curTok().start)
+            }
+            return parseFuncDecl(p: inout p, isAsync: false, isExposed: true)
+        }
         Kind.KwFn => { return parseFuncDecl(p: inout p, isAsync: false) }
         Kind.KwSpawn => {
             p.fail(off: p.base + p.curTok().start, msg: "`spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
@@ -7031,7 +7055,7 @@ fn parseDirectiveAst(p: inout P) -> DirectiveAst {
 fn parsePublishedItemAst(p: inout P) -> TopItemAst {
     match p.curKind() {
         Kind.KwExtern => { return <TopItemAst.Published inner=<TopItemAst.Extern e=parseExternDecl(p: inout p) /> /> }
-        Kind.KwFn => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwExpose | Kind.KwFn => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwSpawn => {
             p.fail(off: p.base + p.curTok().start, msg: "`pub spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
             return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> />
@@ -7115,7 +7139,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
     mut val items: Array[TopItemAst] = []
     p.skipNewlines()
     match p.curKind() {
-            Kind.KwFn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
+            Kind.KwExpose | Kind.KwFn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwSpawn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwAsync => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwStruct => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }

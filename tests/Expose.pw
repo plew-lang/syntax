@@ -1,0 +1,38 @@
+import @Plew/Syntax as Syntax
+import @Std/Core with { assert }
+import @Std/Io with { print }
+
+fn checkValue(item: Syntax.TopItemAst, exposed: Bool) {
+    match item {
+        Syntax.TopItemAst.Decl(d: val declaration) => {
+            assert(declaration.isExposed == exposed)
+            assert(declaration.name == "sample")
+        }
+        Syntax.TopItemAst.Published(inner: val inner) => { checkValue(item: inner, exposed: exposed) }
+        _ => { panic "expected a function" }
+    }
+}
+fn main() {
+    mut val index = 0U64
+    for val source in ["fn sample(value~: I32) -> I32 { return value }", "expose fn sample(value~: I32) -> I32 { return value }", "pub expose fn sample(value~: I32) -> I32 { return value }"] {
+        val exposed = index != 0U64
+        index += 1U64
+        mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout lexer)
+        mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+        val items = Syntax.parseProgramAst(p: inout parser)
+        assert(!parser.hasErr)
+        checkValue(item: items[0U64], exposed: exposed)
+        checkValue(item: Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count()), exposed: exposed)
+        mut val arena = <Syntax.SyntaxFile.empty />
+        val root = arena.freezeTopItem(ast: items[0U64])
+        mut val declarationRoot = root
+        match Syntax.syntaxTopItemKind(file: arena, item: root) {
+            Syntax.SyntaxTopItemKind.Published => { declarationRoot = <Syntax.TopItemId raw=Syntax.syntaxTopItemPayload(file: arena, item: root) /> }
+            _ => {}
+        }
+        val declaration = Syntax.syntaxDecl(file: arena, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: arena, item: declarationRoot) />)
+        assert(declaration.isExposed == exposed)
+    }
+    print("ok")
+}

@@ -65,6 +65,14 @@ pub impl Kind as Eq {
                     _ => { return false }
                 }
             }
+            Kind.KwExpose => {
+                match rhs {
+                    Kind.KwExpose => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
             Kind.KwStruct => {
                 match rhs {
                     Kind.KwStruct => {
