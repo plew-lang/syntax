@@ -1,3 +1,5 @@
+import @Std/Core with { Eq }
+
 pub impl Kind as Eq {
     assoc fn eq(lhs~: Kind, rhs~: Kind) -> Bool {
         match lhs {
