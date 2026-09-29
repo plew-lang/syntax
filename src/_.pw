@@ -5309,6 +5309,10 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
         match p.curKind() {
             Kind.RBrace => { p.advance() break }
             Kind.Eof => { break }
+            Kind.KwExpose => {
+                p.fail(off: p.base + p.curTok().start, msg: "expose requires a free function; methods and associated functions cannot be exposed")
+                p.advance()
+            }
             Kind.KwInout => {
                 p.advance()
                 match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
@@ -6428,6 +6432,10 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
                 break
             }
             Kind.Eof => { break }
+            Kind.KwExpose => {
+                p.fail(off: p.base + p.curTok().start, msg: "expose requires a free function; methods and associated functions cannot be exposed")
+                p.advance()
+            }
             Kind.KwInout => {
                 p.advance()
                 match p.curKind() {
