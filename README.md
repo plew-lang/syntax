@@ -32,7 +32,7 @@ Depend on it from a `Plew.toml`:
 
 ```toml
 [dependencies]
-"Plew/Syntax" = { git = "git@github.com:plew-lang/syntax.git", version = "0.1.0" }
+"Plew/Syntax" = { git = "git@github.com:plew-lang/syntax.git", version = "0.1.11-dev.6" }
 ```
 
 then `use @Plew/Syntax only { ... }`.
