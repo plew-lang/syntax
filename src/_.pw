@@ -4375,7 +4375,7 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -
         match p.curKind() {
             Kind.Newline | Kind.Eof | Kind.LBrace => { break }
             _ => {
-                if curIs(p: inout p, kw: "with") { p.advance() sawWith = true break }
+                if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) { p.advance() sawWith = true break }
                 val token: Tok = p.curTok()
                 if !first && token.start != pathEndToken { break }
                 first = false
@@ -4396,7 +4396,7 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -
                 Kind.Ident => { alias = p.spanOf(t: p.curTok()) p.advance() }
                 _ => {}
             }
-            if curIs(p: inout p, kw: "with") { p.advance() sawWith = true }
+            if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) { p.advance() sawWith = true }
         }
         _ => {}
     }
@@ -5656,7 +5656,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
         Kind.KwVal => { items.append(self.parseSyntaxGlobalVal(p: inout p, mutable: false)) }
         Kind.KwMut => { items.append(self.parseSyntaxGlobalVal(p: inout p, mutable: true)) }
         Kind.Ident => {
-            if curIs(p: inout p, kw: "import") {
+            if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
                 val id: ImportId = self.parseSyntaxImport(p: inout p, isImport: true)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
             } else if curIs(p: inout p, kw: "part") {
@@ -5670,7 +5670,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 if curIs(p: inout p, kw: "impl") {
                     val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
-                } else if curIs(p: inout p, kw: "import") {
+                } else if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
                     val id = self.parseSyntaxImport(p: inout p, isImport: true, isPublic: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
                 } else {
@@ -6887,7 +6887,7 @@ fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = f
             Kind.Eof => { break }
             Kind.LBrace => { break }
             _ => {
-                if curIs(p: inout p, kw: "with") {
+                if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) {
                     p.advance()
                     sawWith = true
                     break
@@ -6927,7 +6927,7 @@ fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = f
             // `as F with { … }` is allowed; fall through to the `with` scan below.
             match p.curKind() {
                 Kind.Ident => {
-                    if curIs(p: inout p, kw: "with") {
+                    if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) {
                         p.advance()
                         sawWith = true
                     }
@@ -7161,7 +7161,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                 items.append(<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: true) />)
             }
             Kind.Ident => {
-                if curIs(p: inout p, kw: "import") {
+                if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
                     items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true) />)
                 } else {
                     if curIs(p: inout p, kw: "part") {
@@ -7174,7 +7174,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                 p.advance()
                                 if curIs(p: inout p, kw: "impl") {
                                     items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
-                                } else if curIs(p: inout p, kw: "import") {
+                                } else if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
                                     items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
                                 } else {
                                     items.append(parsePublishedItemAst(p: inout p))
