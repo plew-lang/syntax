@@ -16,9 +16,9 @@
 
 // `stringFromBytesUnchecked` (build a String from a byte slice) is used by the parser to
 // turn token byte-ranges into name Strings.
-import @Std/Core with { Eq, stringFromBytesUnchecked }
-import @Std/Hash with { Hash }
-pub import @Std/Core with { Eq }
+use @Std/Core only { Eq, stringFromBytesUnchecked }
+use @Std/Hash only { Hash }
+pub use @Std/Core only { Eq }
 
 part ./Lexer
 part ./Parser
@@ -60,7 +60,7 @@ pub impl Hash as Derive {
         match input {
             TopItemAst.Decl(val d) => {
                 mut val s: Src = newSrc()
-                s.put("import @Std/Hash with { Hash, Hasher }\n\n")
+                s.put("use @Std/Hash only { Hash, Hasher }\n\n")
                 s.put("pub impl ")
                 s.put(d.name)
                 s.put(" as Hash {\n    fn hash[H](hasher: inout H) where H: Hasher {\n")
@@ -164,7 +164,7 @@ fn putEqSignature(s: inout Src, d: DeclAst) {
 
 fn deriveEqStruct(d: DeclAst) -> String {
     mut val s: Src = newSrc()
-    s.put("import @Std/Core with { Eq }\n\n")
+    s.put("use @Std/Core only { Eq }\n\n")
     putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
     putEqSignature(s: inout s, d: d)
     s.put("        return ")
@@ -187,7 +187,7 @@ fn deriveEqStruct(d: DeclAst) -> String {
 
 fn deriveEqEnum(d: DeclAst) -> String {
     mut val s: Src = newSrc()
-    s.put("import @Std/Core with { Eq }\n\n")
+    s.put("use @Std/Core only { Eq }\n\n")
     putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
     putEqSignature(s: inout s, d: d)
     s.put("        match lhs {\n")
@@ -1103,7 +1103,7 @@ pub struct BindId { pub val raw: U64 }
 pub struct DeriveReqId { pub val raw: U64 }
 
 // This tag is intentionally about the top-level syntax category, not a semantic
-// declaration kind.  A compiler load pass can decide import/predeclare/lower order
+// declaration kind.  A compiler load pass can decide use/predeclare/lower order
 // without materializing a TopItemAst value.
 pub enum SyntaxTopItemKind {
     Decl
@@ -1856,7 +1856,7 @@ pub struct ImplAst {
     pub val isTraitImpl: Bool
     pub val traitName: String
     // Original occurrence after `as`, retained so lowering can resolve a
-    // module-local import alias at its actual use site.
+    // module-local use alias at its actual use site.
     pub val traitNameSpan: Span = <Span start=0 end=0 />
     pub val traitPath: Array[NameSegmentAst] = []
     // trait type arguments `impl V as Add[V]` (spec/12): bind the trait's type
@@ -1877,10 +1877,10 @@ pub struct ImplAst {
     pub val extNameSpan: Span = <Span start=0 end=0 />
 }
 
-// An `import <path> [with { name [as Q], ... }]` statement (spec/15). `pathSpan` is
+// An `use <path> [only { name [as Q], ... }]` statement (spec/15). `pathSpan` is
 // the full contiguous path text (`@Std/Io` / `./Foo` / `/Models/User`) in original
 // coordinates — the loader resolves it to a file (parse-driven loading). `segSpan`
-// is the last path segment (the submodule). Each `with` name keeps its original span
+// is the last path segment (the submodule). Each `only` name keeps its original span
 // (the importing-side occurrence — feeds moduleOf for the importing module).
 pub struct ImportAst {
     pub val pathSpan: Span
@@ -1889,10 +1889,10 @@ pub struct ImportAst {
     pub val isPublic: Bool = false
     pub val names: Array[String]
     pub val nameSpans: Array[Span]
-    // a path-level alias `import <path> as F` (spec/15): binds the namespace to `F`
+    // a path-level alias `use <path> as F` (spec/15): binds the namespace to `F`
     // instead of the last path segment. Empty span when absent.
     pub val aliasSpan: Span = <Span start=0 end=0 />
-    // per-name aliases for `with { Bar as Q }` (spec/15), parallel to `names`. An
+    // per-name aliases for `only { Bar as Q }` (spec/15), parallel to `names`. An
     // empty span means the name is imported under its own name.
     pub val nameAliasSpans: Array[Span] = []
     pub val span: Span
@@ -4370,12 +4370,12 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -
     mut val segmentStart: U64 = pathStart
     mut val segmentLen: U64 = 0U64
     mut val first: Bool = true
-    mut val sawWith: Bool = false
+    mut val sawOnly: Bool = false
     while true {
         match p.curKind() {
             Kind.Newline | Kind.Eof | Kind.LBrace => { break }
             _ => {
-                if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) { p.advance() sawWith = true break }
+                if curIs(p: inout p, kw: "only") { p.advance() sawOnly = true break }
                 val token: Tok = p.curTok()
                 if !first && token.start != pathEndToken { break }
                 first = false
@@ -4396,21 +4396,22 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -
                 Kind.Ident => { alias = p.spanOf(t: p.curTok()) p.advance() }
                 _ => {}
             }
-            if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) { p.advance() sawWith = true }
+            if curIs(p: inout p, kw: "only") { p.advance() sawOnly = true }
         }
         _ => {}
     }
-    if sawWith {
+    if sawOnly {
         match p.curKind() {
             Kind.LBrace => {}
-            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `with *` is not supported (spec/15): use a namespace import `import <path>` (then refer to `Ns.name`) for broad access, or `with { … }` to select names") }
-            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `with` in an import") }
+            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `only *` is not supported (spec/15): use a namespace import `use <path>` (then refer to `Ns.name`) for broad access, or `only { … }` to select names") }
+            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `only` in a use") }
         }
     }
     mut val names: Array[Span] = []
     mut val aliases: Array[Span] = []
     match p.curKind() {
         Kind.LBrace => {
+            if isImport && !sawOnly { p.fail(off: p.base + p.curTok().start, msg: "expected `only` before a use selection") }
             p.advance()
             while true {
                 p.skipNewlines()
@@ -5562,7 +5563,7 @@ inout fn parseSyntaxDeclTop(p: inout P) -> TopItemId {
 }
 
 // A published declaration wraps an already-direct top item. The caller has
-// consumed `pub`; `pub import` is handled by the ordinary import parser.
+// consumed `pub`; `pub use` is handled by the ordinary use parser.
 inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
     match p.curKind() {
         Kind.KwExtern => {
@@ -5601,7 +5602,7 @@ inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
         }
         _ => {}
     }
-    p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
+    p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `use` after `pub`")
     return self.parseSyntaxDeclTop(p: inout p)
 }
 
@@ -5656,7 +5657,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
         Kind.KwVal => { items.append(self.parseSyntaxGlobalVal(p: inout p, mutable: false)) }
         Kind.KwMut => { items.append(self.parseSyntaxGlobalVal(p: inout p, mutable: true)) }
         Kind.Ident => {
-            if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
+            if curIs(p: inout p, kw: "use") {
                 val id: ImportId = self.parseSyntaxImport(p: inout p, isImport: true)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
             } else if curIs(p: inout p, kw: "part") {
@@ -5670,7 +5671,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 if curIs(p: inout p, kw: "impl") {
                     val id: ImplId = self.parseSyntaxImplDecl(p: inout p, isPub: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: id.raw span: self.impls[id.raw].span))
-                } else if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
+                } else if curIs(p: inout p, kw: "use") {
                     val id = self.parseSyntaxImport(p: inout p, isImport: true, isPublic: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
                 } else {
@@ -5685,7 +5686,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 val id: NewtypeId = self.parseSyntaxNewtype(p: inout p, isPub: false)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.NewType /> payload: id.raw span: self.newtypes[id.raw].span))
             } else {
-                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
+                p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / use / part / pub / val)")
                 p.advance()
             }
         }
@@ -5695,7 +5696,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 val id: DirectiveId = self.parseSyntaxDirective(p: inout p)
                 items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Directive /> payload: id.raw span: <Span start=0U64 end=0U64 />))
             } else {
-                p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
+                p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / use / part / pub / val)")
                 p.advance()
             }
         }
@@ -6763,7 +6764,7 @@ pub fn parseExternDecl(p: inout P) -> ExternAst {
     match p.curKind() {
         Kind.LParen => {
             // bareword ABI selector `extern(c)` / `extern(plewIntrinsic)` (spec/15):
-            // ABI is a compiler-closed set, written without quotes (like import paths).
+            // ABI is a compiler-closed set, written without quotes (like use paths).
             p.advance()
             val t: Tok = p.curTok()
             if rangeEquals(bytes: p.bytes, start: t.start, len: t.len, kw: "c") {
@@ -6859,37 +6860,37 @@ pub fn parseExternDecl(p: inout P) -> ExternAst {
     return <ExternAst abiOk=abiOk abiC=abiC abiSpan=abiSpan fns=fns structNames=structNames structNameSpans=structNameSpans structTypeParams=structTypeParams structTypeParamSpans=structTypeParamSpans structTypeParamSendable=structTypeParamSendable structSpans=structSpans structDirectives=structDirectives span=<Span start=p.base + externTok.start end=p.prevEnd() /> />
 }
 
-// `import <path> [with { name [as Q], ... }]` or `part <path>` (spec/15). The cursor
-// is at the `import`/`part` ident (`isImport` distinguishes: an import starts a fresh
+// `use <path> [only { name [as Q], ... }]` or `part <path>` (spec/15). The cursor
+// is at the `use`/`part` ident (`isImport` distinguishes: a use starts a fresh
 // module, a part joins the current one). Captures the full contiguous path span (for
 // the loader to resolve to a file — parse-driven loading), the last segment, and each
-// `with` name (original span — feeds moduleOf for the importing module). A `part` has
-// no `with` list. Mirrors the compiler's parseImport + collectParts.
+// `only` name (original span — feeds moduleOf for the importing module). A `part` has
+// no `only` list. Mirrors the compiler's parseImport + collectParts.
 fn parseImportAst(p: inout P, isImport: Bool, isPublic: Bool = false) -> ImportAst {
     val startOff: U64 = p.base + p.curTok().start
     p.advance()
     return parseImportTail(p: inout p, isImport: isImport, startOff: startOff, isPublic: isPublic)
 }
 
-// Parse the path and selection after import/part; public imports use the same grammar.
+// Parse the path and selection after use/part; public imports use the same grammar.
 fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = false) -> ImportAst {
     // the path = contiguous tokens (`@`/`.`/`..`/`/` markers + segments), stopping
-    // before a space-separated `with`, a `{`, or a newline.
+    // before a space-separated `only`, a `{`, or a newline.
     mut val pathStart: U64 = p.base + p.curTok().start
     mut val pathEndSlice: U64 = p.curTok().start
     mut val segStartAbs: U64 = pathStart
     mut val segLen: U64 = 0
     mut val firstPath: Bool = true
-    mut val sawWith: Bool = false
+    mut val sawOnly: Bool = false
     while true {
         match p.curKind() {
             Kind.Newline => { break }
             Kind.Eof => { break }
             Kind.LBrace => { break }
             _ => {
-                if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) {
+                if curIs(p: inout p, kw: "only") {
                     p.advance()
-                    sawWith = true
+                    sawOnly = true
                     break
                 }
                 val t: Tok = p.curTok()
@@ -6912,7 +6913,7 @@ fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = f
         }
     }
     val pathEndAbs: U64 = p.base + pathEndSlice
-    // a path-level alias `import <path> as F` (spec/15): rename the namespace to F.
+    // a path-level alias `use <path> as F` (spec/15): rename the namespace to F.
     mut val aliasSpan: Span = <Span start=0 end=0 />
     match p.curKind() {
         Kind.KwAs => {
@@ -6924,12 +6925,12 @@ fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = f
                 }
                 _ => {}
             }
-            // `as F with { … }` is allowed; fall through to the `with` scan below.
+            // `as F only { … }` is allowed; fall through to the `only` scan below.
             match p.curKind() {
                 Kind.Ident => {
-                    if (curIs(p: inout p, kw: "with") || curIs(p: inout p, kw: "only")) {
+                    if curIs(p: inout p, kw: "only") {
                         p.advance()
-                        sawWith = true
+                        sawOnly = true
                     }
                 }
                 _ => {}
@@ -6940,18 +6941,19 @@ fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = f
     mut val names: Array[String] = []
     mut val nameSpans: Array[Span] = []
     mut val nameAliasSpans: Array[Span] = []
-    // `with` must be followed by a `{ … }` selection. Wildcard `import … with *` is
+    // `only` must be followed by a `{ … }` selection. Wildcard `use … only *` is
     // intentionally not supported (spec/15): it hides provenance — use a namespace
-    // import `import <path>` (then `Ns.name`) for broad access, or `with { … }`.
-    if sawWith {
+    // use `use <path>` (then `Ns.name`) for broad access, or `only { … }`.
+    if sawOnly {
         match p.curKind() {
             Kind.LBrace => {}
-            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `with *` is not supported (spec/15): use a namespace import `import <path>` (then refer to `Ns.name`) for broad access, or `with { … }` to select names") }
-            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `with` in an import") }
+            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `only *` is not supported (spec/15): use a namespace import `use <path>` (then refer to `Ns.name`) for broad access, or `only { … }` to select names") }
+            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `only` in a use") }
         }
     }
     match p.curKind() {
         Kind.LBrace => {
+            if isImport && !sawOnly { p.fail(off: p.base + p.curTok().start, msg: "expected `only` before a use selection") }
             p.advance()
             while true {
                 p.skipNewlines()
@@ -7087,10 +7089,10 @@ fn parsePublishedItemAst(p: inout P) -> TopItemAst {
             if curIs(p: inout p, kw: "newtype") {
                 return <TopItemAst.Published inner=parseNewtypeAst(p: inout p, isPub: false) />
             }
-            p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
+            p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `use` after `pub`")
             return <TopItemAst.Decl d=parseDecl(p: inout p) />
         }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `import` after `pub`")
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected a declaration or `use` after `pub`")
             return <TopItemAst.Decl d=parseDecl(p: inout p) /> }
     }
 }
@@ -7161,7 +7163,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                 items.append(<TopItemAst.GlobalVal s=parseLetAst(p: inout p, mutable: true) />)
             }
             Kind.Ident => {
-                if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
+                if curIs(p: inout p, kw: "use") {
                     items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true) />)
                 } else {
                     if curIs(p: inout p, kw: "part") {
@@ -7174,7 +7176,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                 p.advance()
                                 if curIs(p: inout p, kw: "impl") {
                                     items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
-                                } else if (curIs(p: inout p, kw: "import") || curIs(p: inout p, kw: "use")) {
+                                } else if curIs(p: inout p, kw: "use") {
                                     items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
                                 } else {
                                     items.append(parsePublishedItemAst(p: inout p))
@@ -7192,7 +7194,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                             // an identifier that starts no top-level item: reporting
                                             // instead of skipping — a silently dropped token is
                                             // hidden meaning (what was spoken did not manifest).
-                                            p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
+                                            p.fail(off: p.base + p.curTok().start, msg: "unknown top-level item — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / use / part / pub / val)")
                                             p.advance()
                                         }
                                     }
@@ -7209,7 +7211,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                 } else {
                     // a stray token at the top level (`}` from an over-closed block,
                     // punctuation, garbage): report, don't silently swallow.
-                    p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / import / part / pub / val)")
+                    p.fail(off: p.base + p.curTok().start, msg: "unexpected token at the top level — expected a declaration (fn / struct / enum / trait / impl / extension / newtype / use / part / pub / val)")
                     p.advance()
                 }
             }

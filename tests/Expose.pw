@@ -1,6 +1,6 @@
-import @Plew/Syntax as Syntax
-import @Std/Core with { assert }
-import @Std/Io with { print }
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
 
 fn checkValue(item: Syntax.TopItemAst, exposed: Bool) {
     match item {

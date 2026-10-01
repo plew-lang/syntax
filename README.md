@@ -35,6 +35,6 @@ Depend on it from a `Plew.toml`:
 "Plew/Syntax" = { git = "git@github.com:plew-lang/syntax.git", version = "0.1.0" }
 ```
 
-then `import @Plew/Syntax with { ... }`.
+then `use @Plew/Syntax only { ... }`.
 
 See the Plew spec (`spec/04-execution/16-metaprogramming.md`) for the derive model.
