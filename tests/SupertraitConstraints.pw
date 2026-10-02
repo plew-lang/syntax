@@ -39,7 +39,7 @@ fn checkValue(item: Syntax.TopItemAst) {
     }
 }
 fn main() {
-    val source = "trait Derived[T]: Parent[Array[T], Item = T] + Marker { type Output }"
+    val source = "trait Derived[T]: Parent[Array[T], Item = T] + Marker {{ type Output }}"
     mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
     Syntax.lex(lx: inout lexer)
     mut val direct = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
@@ -59,7 +59,7 @@ fn main() {
     checkValue(item: values[0U64])
     val valueRoot = frozen.freezeTopItem(ast: values[0U64])
     check(file: frozen, item: valueRoot)
-    for val invalid in ["trait Broken: {}", "trait Broken: Parent + {}", "trait Broken: Parent[Item = ] {}"] {
+    for val invalid in ["trait Broken: {{}}", "trait Broken: Parent + {{}}", "trait Broken: Parent[Item = ] {{}}"] {
         mut val invalidLexer = <Syntax.Lexer bytes=invalid.bytes() pos=0U64 toks=[] depth=0I64 />
         Syntax.lex(lx: inout invalidLexer)
         mut val invalidDirect = <Syntax.P bytes=invalid.bytes() toks=invalidLexer.toks pos=0U64 base=0U64 />

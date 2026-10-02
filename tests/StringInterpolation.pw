@@ -68,7 +68,7 @@ fn literal(source: String) {
 }
 
 fn main() {
-    val source = "\"A{calculate(scale: 2): <precision=2U8 />}B{\"nested {value}\"}C\""
+    val source = "\"A{{calculate(scale: 2): <precision=2U8 />}}B{{\"nested {{value}}\"}}C\""
     mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
     Syntax.lex(lx: inout lexer)
     mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=100U64 />
@@ -105,17 +105,17 @@ fn main() {
     val statement = Syntax.syntaxStmt(file: frozen, id: <Syntax.StmtId raw=Syntax.syntaxTopItemPayload(file: frozen, item: root) />)
     inspect(file: frozen, id: statement.child0)
 
-    literal(source: "\"{{braces}}\"")
-    literal(source: "\"\\u{7b}\"")
+    literal(source: "\"{{{{braces}}}}\"")
+    literal(source: "\"\\u{{7b}}\"")
     literal(source: "\"first\nsecond\"")
-    for val invalid in ["\"{value:}\"", "\"{}\"", "\"{value\"", "\"}\"", "\"\\{value}\"", "\"{match x { _ => 1I64 }}\""] {
+    for val invalid in ["\"{{value:}}\"", "\"{{}}\"", "\"{{value\"", "\"}}\"", "\"\\{{value}}\"", "\"{{match x {{ _ => 1I64 }}}}\""] {
         reject(source: invalid)
     }
-    literal(source: "\"{{\"")
-    accept(source: "\"{call(/* } \\\" { */ value: '}', text: \"{{}}\")}\"")
-    accept(source: "\"{value: </>}\"")
-    accept(source: "\"{{{value}}}\"")
-    accept(source: "\"{value // } and quote \" inside comment\n}\"")
-    accept(source: "\"{if true { give 1I64 } else { give 2I64 }}\"")
+    literal(source: "\"{{{{\"")
+    accept(source: "\"{{call(/* }} \\\" {{ */ value: '}}', text: \"{{{{}}}}\")}}\"")
+    accept(source: "\"{{value: </>}}\"")
+    accept(source: "\"{{{{{{value}}}}}}\"")
+    accept(source: "\"{{value // }} and quote \" inside comment\n}}\"")
+    accept(source: "\"{{if true {{ give 1I64 }} else {{ give 2I64 }}}}\"")
     print("ok")
 }

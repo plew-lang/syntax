@@ -15,7 +15,7 @@ fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
 }
 
 fn main() {
-    val source = "impl Value { factory() { return <Value raw=0 /> } factory(value: I64) { return <Value raw=value /> } factory named(value: I64) { return <Value raw=value /> } assoc fn value(value: I64) -> I64 { return value } }"
+    val source = "impl Value {{ factory() {{ return <Value raw=0 /> }} factory(value: I64) {{ return <Value raw=value /> }} factory named(value: I64) {{ return <Value raw=value /> }} assoc fn value(value: I64) -> I64 {{ return value }} }}"
     mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
     Syntax.lex(lx: inout lexer)
     mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />

@@ -60,10 +60,10 @@ pub impl Hash as Derive {
         match input {
             TopItemAst.Decl(val d) => {
                 mut val s: Src = newSrc()
-                s.put("use @Std/Hash only { Hash, Hasher }\n\n")
+                s.put("use @Std/Hash only {{ Hash, Hasher }}\n\n")
                 s.put("pub impl ")
                 s.put(d.name)
-                s.put(" as Hash {\n    fn hash[H](hasher: inout H) where H: Hasher {\n")
+                s.put(" as Hash {{\n    fn hash[H](hasher: inout H) where H: Hasher {{\n")
                 mut val i: U64 = 0
                 while i < d.fields.count() {
                     s.put("        self.")
@@ -71,7 +71,7 @@ pub impl Hash as Derive {
                     s.put(".hash(hasher: inout hasher)\n")
                     i += 1
                 }
-                s.put("    }\n}\n")
+                s.put("    }}\n}}\n")
                 return s.finish()
             }
             _ => { return "" }
@@ -131,7 +131,7 @@ fn putDeriveHeader(s: inout Src, d: DeclAst, traitName: String, bound: String) {
             i += 1
         }
     }
-    s.put(" {\n")
+    s.put(" {{\n")
 }
 
 fn putCommaList(s: inout Src, xs: Array[String]) {
@@ -159,12 +159,12 @@ fn putEqSignature(s: inout Src, d: DeclAst) {
     putSelfType(s: inout s, d: d)
     s.put(", rhs~: ")
     putSelfType(s: inout s, d: d)
-    s.put(") -> Bool {\n")
+    s.put(") -> Bool {{\n")
 }
 
 fn deriveEqStruct(d: DeclAst) -> String {
     mut val s: Src = newSrc()
-    s.put("use @Std/Core only { Eq }\n\n")
+    s.put("use @Std/Core only {{ Eq }}\n\n")
     putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
     putEqSignature(s: inout s, d: d)
     s.put("        return ")
@@ -181,16 +181,16 @@ fn deriveEqStruct(d: DeclAst) -> String {
             i += 1
         }
     }
-    s.put("\n    }\n}\n")
+    s.put("\n    }}\n}}\n")
     return s.finish()
 }
 
 fn deriveEqEnum(d: DeclAst) -> String {
     mut val s: Src = newSrc()
-    s.put("use @Std/Core only { Eq }\n\n")
+    s.put("use @Std/Core only {{ Eq }}\n\n")
     putDeriveHeader(s: inout s, d: d, traitName: "Eq", bound: "Eq")
     putEqSignature(s: inout s, d: d)
-    s.put("        match lhs {\n")
+    s.put("        match lhs {{\n")
     mut val vi: U64 = 0
     while vi < d.variants.count() {
         val v: VariantAst = d.variants[vi]
@@ -199,12 +199,12 @@ fn deriveEqEnum(d: DeclAst) -> String {
         s.put(".")
         s.put(v.name)
         putVariantBinds(s: inout s, v: v, prefix: "l_")
-        s.put(" => {\n                match rhs {\n                    ")
+        s.put(" => {{\n                match rhs {{\n                    ")
         s.put(d.name)
         s.put(".")
         s.put(v.name)
         putVariantBinds(s: inout s, v: v, prefix: "r_")
-        s.put(" => {\n                        return ")
+        s.put(" => {{\n                        return ")
         if v.fields.count() == 0 {
             s.put("true")
         } else {
@@ -218,16 +218,16 @@ fn deriveEqEnum(d: DeclAst) -> String {
                 fi += 1
             }
         }
-        s.put("\n                    }\n")
+        s.put("\n                    }}\n")
         // the catch-all is only reachable (and thus only legal) when there is more
         // than one variant; a single-variant enum's inner match is already exhaustive.
         if d.variants.count() > 1 {
-            s.put("                    _ => { return false }\n")
+            s.put("                    _ => {{ return false }}\n")
         }
-        s.put("                }\n            }\n")
+        s.put("                }}\n            }}\n")
         vi += 1
     }
-    s.put("        }\n    }\n}\n")
+    s.put("        }}\n    }}\n}}\n")
     return s.finish()
 }
 
@@ -274,11 +274,11 @@ pub impl IntTryFrom as ParameterizedDerive {
                     s.put(d.name)
                     s.put(" as TryFrom[")
                     s.put(src)
-                    s.put("] {\n    type Error = RangeError\n    result[RangeError] factory checked(source: ")
+                    s.put("] {{\n    type Error = RangeError\n    result[RangeError] factory checked(source: ")
                     s.put(src)
-                    s.put(") {\n        return <")
+                    s.put(") {{\n        return <")
                     s.put(d.name)
-                    s.put(".checked source=(source as I64) />\n    }\n}\n")
+                    s.put(".checked source=(source as I64) />\n    }}\n}}\n")
                     i += 1
                 }
                 return s.finish()
@@ -4154,7 +4154,7 @@ inout fn parseSyntaxStructDestructure(p: inout P) -> StmtId {
     }
     match p.curKind() {
         Kind.Eq => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct { val x } = expr`") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct {{ val x }} = expr`") }
     }
     val initial: ExprId = self.parseSyntaxExpr(p: inout p)
     return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Destructure /> span: <Span start=start end=p.prevEnd() /> typeName: typeName child0: initial binds: self.pushBindIdSlice(items: binds))
@@ -4486,8 +4486,8 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -
     if sawOnly {
         match p.curKind() {
             Kind.LBrace => {}
-            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `only *` is not supported (spec/15): use a namespace import `use <path>` (then refer to `Ns.name`) for broad access, or `only { … }` to select names") }
-            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `only` in a use") }
+            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `only *` is not supported (spec/15): use a namespace import `use <path>` (then refer to `Ns.name`) for broad access, or `only {{ … }}` to select names") }
+            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{ … }}` after `only` in a use") }
         }
     }
     mut val names: Array[Span] = []
@@ -4623,7 +4623,7 @@ inout fn parseSyntaxStmt(p: inout P) -> StmtId {
 inout fn parseSyntaxBlock(p: inout P) -> BlockId {
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` to open a block") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` to open a block") }
     }
     mut val stmts: Array[StmtId] = []
     while true {
@@ -4631,7 +4631,7 @@ inout fn parseSyntaxBlock(p: inout P) -> BlockId {
         match p.curKind() {
             Kind.RBrace => { p.advance() break }
             Kind.Eof => {
-                p.fail(off: p.base + p.curTok().start, msg: "expected `}` to close this block before the end of input")
+                p.fail(off: p.base + p.curTok().start, msg: "expected `}}` to close this block before the end of input")
                 break
             }
             _ => {
@@ -5179,7 +5179,7 @@ inout fn parseSyntaxExternDecl(p: inout P) -> ExternId {
     }
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after extern ABI selector") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after extern ABI selector") }
     }
 
     mut val fns: Array[SigId] = []
@@ -5703,7 +5703,7 @@ inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
     p.advance()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after `extension Name`") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after `extension Name`") }
     }
     while true {
         p.skipNewlines()
@@ -6880,7 +6880,7 @@ pub fn parseExternDecl(p: inout P) -> ExternAst {
     }
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after extern ABI selector") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after extern ABI selector") }
     }
     mut val fns: Array[SigAst] = []
     mut val structNames: Array[String] = []
@@ -7042,8 +7042,8 @@ fn parseImportTail(p: inout P, isImport: Bool, startOff: U64, isPublic: Bool = f
     if sawOnly {
         match p.curKind() {
             Kind.LBrace => {}
-            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `only *` is not supported (spec/15): use a namespace import `use <path>` (then refer to `Ns.name`) for broad access, or `only { … }` to select names") }
-            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{ … }` after `only` in a use") }
+            Kind.Star => { p.fail(off: p.base + p.curTok().start, msg: "wildcard import `only *` is not supported (spec/15): use a namespace import `use <path>` (then refer to `Ns.name`) for broad access, or `only {{ … }}` to select names") }
+            _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{ … }}` after `only` in a use") }
         }
     }
     match p.curKind() {
@@ -7205,7 +7205,7 @@ fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
     p.advance()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{` after `extension Name`") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after `extension Name`") }
     }
     mut val cont: Bool = true
     while cont {
@@ -9845,7 +9845,7 @@ fn parseStructDestructureAst(p: inout P) -> StmtAst {
     }
     match p.curKind() {
         Kind.Eq => { p.advance() }
-        _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct { val x } = expr`") }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "struct destructuring must be initialized: `SomeStruct {{ val x }} = expr`") }
     }
     val init: ExprAst = parseExprAst(p: inout p)
     return <StmtAst.Destructure binds=binds typeName=typeName typeNameSpan=p.spanOf(t: typeNameTok) init=init span=<Span start=sStart end=p.prevEnd() /> />
