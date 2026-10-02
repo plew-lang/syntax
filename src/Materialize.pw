@@ -357,7 +357,7 @@ impl SyntaxFile {
             whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p)
             isAsync=node.isAsync selfInout=node.selfInout selfMove=node.selfMove isVia=node.isVia viaName=self.materializeText(p: p, span: node.viaName) viaNameSpan=node.viaName
             body=self.materializeBlock(id: node.body, p: p) assocTy=assocTy
-            isFactory=node.isFactory factoryKind=node.factoryKind factoryErr=factoryErr
+            isFactory=node.isFactory isAnonymousFactory=node.isAnonymousFactory factoryKind=node.factoryKind factoryErr=factoryErr
         />
     }
 

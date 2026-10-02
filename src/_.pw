@@ -1302,6 +1302,7 @@ pub struct SyntaxMember {
     pub val body: BlockId
     pub val assocTy: TypeId
     pub val isFactory: Bool
+    pub val isAnonymousFactory: Bool = false
     pub val factoryKind: U64
     pub val factoryErr: TypeId
 }
@@ -1764,6 +1765,7 @@ pub struct MemberAst {
     // a custom `factory [name](params) { … }` (spec/05): lowered as an AssocFn whose
     // return type is the impl's type (the implicit `Self`). Invoked via `<Type.name …/>`.
     pub val isFactory: Bool = false
+    pub val isAnonymousFactory: Bool = false
     // a fallible factory's wrapper (spec/05): 0 = plain (`-> Self`), 1 = `optional`
     // (`-> Optional[Self]`), 2 = `result[E]` (`-> Result[Self, E]`). factoryErr is the
     // error type `E` for kind 2.
@@ -5432,7 +5434,7 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
                                 whereParams=self.pushDirectSyntaxTexts(items: []) whereTraits=self.pushDirectSyntaxTexts(items: [])
                                 whereTypes=self.pushDirectSyntaxTypeIds(items: []) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: [])
                                 isAsync=false selfInout=false selfMove=false isVia=false viaName=<Span start=0U64 end=0U64 />
-                                body=body assocTy=<TypeId raw=0U64 /> isFactory=true factoryKind=factoryKind factoryErr=factoryErr
+                                body=body assocTy=<TypeId raw=0U64 /> isFactory=true isAnonymousFactory=true factoryKind=factoryKind factoryErr=factoryErr
                             />))
                         }
                         _ => {
@@ -6560,7 +6562,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
                             }
                             // The semantic selector and its source span must denote
                             // the same label; the `factory` keyword is not its name.
-                            members.append(<MemberAst kind=<MemberKind.AssocFn /> name=anonName nameSpan=anonSpan typeParams=[] params=fparams hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=fbody assocTy=emptyTypeAst() isFactory=true factoryKind=facKind factoryErr=facErr />)
+                            members.append(<MemberAst kind=<MemberKind.AssocFn /> name=anonName nameSpan=anonSpan typeParams=[] params=fparams hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=fbody assocTy=emptyTypeAst() isFactory=true isAnonymousFactory=true factoryKind=facKind factoryErr=facErr />)
                         }
                         _ => {
                             members.append(<MemberAst kind=<MemberKind.Factory /> name="factory" nameSpan=fSpan typeParams=[] params=[] hasRet=false ret=emptyTypeAst() whereParams=[] whereTraits=[] isAsync=false selfInout=false selfMove=false isVia=false viaName="" body=emptyBlock() assocTy=emptyTypeAst() />)

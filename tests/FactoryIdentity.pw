@@ -1,0 +1,41 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
+    val declaration = Syntax.syntaxImpl(file: file, id: <Syntax.ImplId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    assert(Syntax.syntaxImplMemberCount(file: file, impl: declaration) == 4U64)
+    mut val index = 0U64
+    while index < 4U64 {
+        val member = Syntax.syntaxMember(file: file, id: Syntax.syntaxImplMember(file: file, impl: declaration, index: index))
+        assert(member.isFactory == (index < 3U64))
+        assert(member.isAnonymousFactory == (index < 2U64))
+        index += 1U64
+    }
+}
+
+fn main() {
+    val source = "impl Value { factory() { return <Value raw=0 /> } factory(value: I64) { return <Value raw=value /> } factory named(value: I64) { return <Value raw=value /> } assoc fn value(value: I64) -> I64 { return value } }"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    check(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64))
+    val materialized = Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count())
+    match materialized {
+        Syntax.TopItemAst.Impl(im: val declaration) => {
+            mut val index = 0U64
+            while index < declaration.members.count() {
+                assert(declaration.members[index].isFactory == (index < 3U64))
+                assert(declaration.members[index].isAnonymousFactory == (index < 2U64))
+                index += 1U64
+            }
+        }
+        _ => { panic "expected impl" }
+    }
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val item = frozen.freezeTopItem(ast: materialized)
+    check(file: frozen, item: item)
+    print("ok")
+}
