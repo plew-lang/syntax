@@ -1,0 +1,30 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn main() {
+    for val source in ["</>", "<value=1 />", "<.named value=1 />", "<.Empty />"] {
+        mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout lexer)
+        mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+        mut val file = <Syntax.SyntaxFile.empty />
+        val id = file.parseExpressionSyntaxDirect(p: inout parser)
+        assert(!parser.hasErr)
+        val node = Syntax.syntaxExpr(file: file, id: id)
+        assert(node.name.start == node.name.end)
+        assert(node.typePath.count == 0U64)
+        mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+        val value = Syntax.parseExprAst(p: inout valueParser)
+        assert(!valueParser.hasErr)
+        match value {
+            Syntax.ExprAst.Make(typeName: val name, typeNameSpan: _, typePath: _, typeArgs: _, variant: _, variantSpan: _, isEnum: val named, fields: val fields, span: _) => {
+                assert(name == "")
+                assert(named == node.flag0)
+                assert(fields.count() == node.fields.count)
+            }
+            _ => { panic "expected construction" }
+        }
+
+    }
+    print("ok")
+}

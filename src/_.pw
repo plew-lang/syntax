@@ -2770,16 +2770,30 @@ inout fn parseSyntaxCallArgs(p: inout P) -> SyntaxSlice {
 inout fn parseSyntaxMake(p: inout P) -> ExprId {
     val start: U64 = p.base + p.curTok().start
     p.advance()
-    val typeName: Span = p.spanOf(t: p.curTok())
-    p.advance()
-    val head = self.parseSyntaxNameSegment(p: inout p, name: typeName)
+    val emptySpan = <Span start=p.base + p.curTok().start end=p.base + p.curTok().start />
+    mut val typeName = emptySpan
+    mut val variant = emptySpan
+    mut val isNamed = false
+    mut val head = <SyntaxNameSegment name=emptySpan args=<SyntaxSlice start=0U64 count=0U64 /> argLabels=<SyntaxSlice start=0U64 count=0U64 /> />
     mut val segments: Array[SyntaxNameSegment] = []
-    while p.curKind() == <Kind.Dot /> {
-        if segments.count() == 0U64 { segments.append(head) }
+    if p.curKind() == <Kind.Dot /> {
         p.advance()
-        val member = p.spanOf(t: p.curTok())
+        if p.curKind() != <Kind.Ident /> { p.fail(off: p.base + p.curTok().start, msg: "expected a factory or variant name after '.'") }
+        variant = p.spanOf(t: p.curTok())
+        isNamed = true
         p.advance()
-        segments.append(self.parseSyntaxNameSegment(p: inout p, name: member))
+    } else if p.curKind() != <Kind.SlashGt /> && !(p.curKind() == <Kind.Ident /> && p.peekKind(off: 1U64) == <Kind.Eq />) {
+        if p.curKind() != <Kind.Ident /> { p.fail(off: p.base + p.curTok().start, msg: "expected a construction type or field") }
+        typeName = p.spanOf(t: p.curTok())
+        p.advance()
+        head = self.parseSyntaxNameSegment(p: inout p, name: typeName)
+        while p.curKind() == <Kind.Dot /> {
+            if segments.count() == 0U64 { segments.append(head) }
+            p.advance()
+            val member = p.spanOf(t: p.curTok())
+            p.advance()
+            segments.append(self.parseSyntaxNameSegment(p: inout p, name: member))
+        }
     }
     mut val checked: Array[SyntaxNameSegment] = segments
     if checked.count() == 0U64 { checked.append(head) }
@@ -2822,7 +2836,7 @@ inout fn parseSyntaxMake(p: inout P) -> ExprId {
     }
     return self.pushExprNode(
         kind: <SyntaxExprKind.Make /> span: <Span start=start end=p.prevEnd() />
-        name: typeName
+        name: typeName nameSpan: variant flag0: isNamed
         fields: self.pushMakeFieldIdSlice(items: fieldIds)
         typePath: self.pushNameSegments(items: segments)
         typeArgs: head.args
@@ -8048,18 +8062,35 @@ fn parseCallArgsAst(p: inout P) -> Array[ArgAst] {
 fn parseMakeAst(p: inout P) -> ExprAst {
     val sStart: U64 = p.base + p.curTok().start
     p.advance()
-    val typeNameTok: Tok = p.curTok()
-    val typeName: String = p.text(t: typeNameTok)
-    val typeNameSpan: Span = p.spanOf(t: typeNameTok)
-    p.advance()
-    val head = parseNameSegmentAst(p: inout p, name: typeName, nameSpan: typeNameSpan)
+    val emptySpan = <Span start=p.base + p.curTok().start end=p.base + p.curTok().start />
+    mut val typeName = ""
+    mut val typeNameSpan = emptySpan
+    mut val variant = ""
+    mut val variantSpan = emptySpan
+    mut val isNamed = false
+    mut val head = <NameSegmentAst name="" nameSpan=emptySpan />
     mut val segments: Array[NameSegmentAst] = []
-    while p.curKind() == <Kind.Dot /> {
-        if segments.count() == 0U64 { segments.append(head) }
+    if p.curKind() == <Kind.Dot /> {
         p.advance()
-        val member = p.curTok()
+        if p.curKind() != <Kind.Ident /> { p.fail(off: p.base + p.curTok().start, msg: "expected a factory or variant name after '.'") }
+        variant = p.text(t: p.curTok())
+        variantSpan = p.spanOf(t: p.curTok())
+        isNamed = true
         p.advance()
-        segments.append(parseNameSegmentAst(p: inout p, name: p.text(t: member), nameSpan: p.spanOf(t: member)))
+    } else if p.curKind() != <Kind.SlashGt /> && !(p.curKind() == <Kind.Ident /> && p.peekKind(off: 1U64) == <Kind.Eq />) {
+        if p.curKind() != <Kind.Ident /> { p.fail(off: p.base + p.curTok().start, msg: "expected a construction type or field") }
+        val token = p.curTok()
+        typeName = p.text(t: token)
+        typeNameSpan = p.spanOf(t: token)
+        p.advance()
+        head = parseNameSegmentAst(p: inout p, name: typeName, nameSpan: typeNameSpan)
+        while p.curKind() == <Kind.Dot /> {
+            if segments.count() == 0U64 { segments.append(head) }
+            p.advance()
+            val member = p.curTok()
+            p.advance()
+            segments.append(parseNameSegmentAst(p: inout p, name: p.text(t: member), nameSpan: p.spanOf(t: member)))
+        }
     }
     mut val checked: Array[NameSegmentAst] = segments
     if checked.count() == 0U64 { checked.append(head) }
@@ -8101,7 +8132,7 @@ fn parseMakeAst(p: inout P) -> ExprAst {
             _ => { p.advance() }
         }
     }
-    return <ExprAst.Make typePath=segments typeName=typeName typeNameSpan=typeNameSpan typeArgs=head.args variant="" variantSpan=<Span start=0U64 end=0U64 /> isEnum=false fields=fields span=<Span start=sStart end=p.prevEnd() /> />
+    return <ExprAst.Make typePath=segments typeName=typeName typeNameSpan=typeNameSpan typeArgs=head.args variant=variant variantSpan=variantSpan isEnum=isNamed fields=fields span=<Span start=sStart end=p.prevEnd() /> />
 }
 
 fn parsePrimaryAst(p: inout P) -> ExprAst {
