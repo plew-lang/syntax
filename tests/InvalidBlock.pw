@@ -1,0 +1,14 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+fn main() {
+    for val source in ["{{ value(); return }}", "{{ guard true else {{ return }} value(); return }}", "{{ val text = \"{{value:}}\" }}", "{{ if true {{ ; }} }}"] {
+        mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout lexer)
+        mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+        mut val file = <Syntax.SyntaxFile.empty />
+        file.parseBlockSyntaxDirect(p: inout parser)
+        assert(parser.hasErr)
+    }
+    print("ok")
+}

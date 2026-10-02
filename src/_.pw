@@ -4555,7 +4555,7 @@ inout fn syntaxBlockDiverges(id: BlockId) -> Bool {
 
 inout fn parseSyntaxStmtsUntilBrace(p: inout P) -> Array[StmtId] {
     mut val stmts: Array[StmtId] = []
-    while true {
+    while !p.hasErr {
         p.skipNewlines()
         match p.curKind() {
             Kind.RBrace | Kind.Eof => { return stmts }
@@ -4568,6 +4568,7 @@ inout fn parseSyntaxStmtsUntilBrace(p: inout P) -> Array[StmtId] {
             }
         }
     }
+    return stmts
 }
 
 inout fn parseSyntaxGuard(p: inout P) -> StmtId {
@@ -4626,7 +4627,7 @@ inout fn parseSyntaxBlock(p: inout P) -> BlockId {
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` to open a block") }
     }
     mut val stmts: Array[StmtId] = []
-    while true {
+    while !p.hasErr {
         p.skipNewlines()
         match p.curKind() {
             Kind.RBrace => { p.advance() break }
