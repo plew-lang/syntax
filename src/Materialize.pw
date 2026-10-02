@@ -249,6 +249,25 @@ impl SyntaxFile {
             SyntaxExprKind.IntLit => { return <ExprAst.IntLit value=node.intValue isBool=node.flag0 tySuffix=self.materializeText(p: p, span: node.name) literalSpan=node.text tySuffixSpan=node.name span=node.span /> }
             SyntaxExprKind.FloatLit => { return <ExprAst.FloatLit text=stripUnderscoresAst(s: self.materializeText(p: p, span: node.text)) tySuffix=self.materializeText(p: p, span: node.name) literalSpan=node.text tySuffixSpan=node.name span=node.span /> }
             SyntaxExprKind.StrLit => { return <ExprAst.StrLit raw=self.materializeText(p: p, span: node.text) span=node.span /> }
+            SyntaxExprKind.StringInterpolation => {
+                mut val parts: Array[StringPartAst] = []
+                mut val index = 0U64
+                while index < node.elems.count {
+                    val part = self.exprs[self.exprIds[node.elems.start + index].raw]
+                    match part.kind {
+                        SyntaxExprKind.StringFragment => { parts.append(<StringPartAst.Text raw=self.materializeText(p: p, span: part.text) span=part.span />) }
+                        SyntaxExprKind.StringValue => {
+                            mut val options: Optional[ExprAst] = <Optional.None />
+                            if part.child1.raw != 0U64 { options = <Optional.Some v=self.materializeExpr(id: part.child1, p: p) /> }
+                            parts.append(<StringPartAst.Value value=self.materializeExpr(id: part.child0, p: p) options=options span=part.span />)
+                        }
+                        _ => { panic "invalid string interpolation part" }
+                    }
+                    index += 1U64
+                }
+                return <ExprAst.StringInterpolation parts=parts span=node.span />
+            }
+            SyntaxExprKind.StringFragment | SyntaxExprKind.StringValue => { panic "a string fragment is not a standalone expression" }
             SyntaxExprKind.Ident => { return <ExprAst.Ident name=self.materializeText(p: p, span: node.name) span=node.span /> }
             SyntaxExprKind.Unary => { return <ExprAst.Unary op=node.op operand=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
             SyntaxExprKind.Binary => { return <ExprAst.Binary op=node.op lhs=self.materializeExpr(id: node.child0, p: p) rhs=self.materializeExpr(id: node.child1, p: p) span=node.span /> }

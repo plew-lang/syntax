@@ -747,6 +747,24 @@ impl SyntaxFile {
             }
             ExprAst.FloatLit(text: _, tySuffix: _, literalSpan: val literalSpan, tySuffixSpan: val tySuffixSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.FloatLit /> span: span text: literalSpan name: tySuffixSpan) }
             ExprAst.StrLit(raw: _, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.StrLit /> span: span text: span) }
+            ExprAst.StringInterpolation(val parts, val span) => {
+                mut val ids: Array[ExprId] = []
+                for val part in parts {
+                    match part {
+                        StringPartAst.Text(raw: _, val span) => { ids.append(self.pushExprNode(kind: <SyntaxExprKind.StringFragment /> span: span text: span)) }
+                        StringPartAst.Value(val value, val options, val span) => {
+                            val expression = self.freezeExprAst(ast: value)
+                            mut val option = <ExprId raw=0U64 />
+                            match options {
+                                Optional.Some(v: val supplied) => { option = self.freezeExprAst(ast: supplied) }
+                                Optional.None => {}
+                            }
+                            ids.append(self.pushExprNode(kind: <SyntaxExprKind.StringValue /> span: span child0: expression child1: option))
+                        }
+                    }
+                }
+                return self.pushExprNode(kind: <SyntaxExprKind.StringInterpolation /> span: span elems: self.pushExprIdSlice(items: ids))
+            }
             ExprAst.Ident(name: _, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Ident /> span: span name: span) }
             ExprAst.Unary(op: val op, operand: val operand, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Unary /> span: span op: op child0: self.freezeExprAst(ast: operand)) }
             ExprAst.Binary(op: val op, lhs: val lhs, rhs: val rhs, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Binary /> span: span op: op child0: self.freezeExprAst(ast: lhs) child1: self.freezeExprAst(ast: rhs)) }

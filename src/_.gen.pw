@@ -43,6 +43,30 @@ pub impl Kind as Eq {
                     _ => { return false }
                 }
             }
+            Kind.StrHead => {
+                match rhs {
+                    Kind.StrHead => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.StrMiddle => {
+                match rhs {
+                    Kind.StrMiddle => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
+            Kind.StrTail => {
+                match rhs {
+                    Kind.StrTail => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
             Kind.Char => {
                 match rhs {
                     Kind.Char => {

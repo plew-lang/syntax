@@ -298,6 +298,9 @@ pub enum Kind {
     Int
     Float
     Str
+    StrHead
+    StrMiddle
+    StrTail
     Char
     Ident
     KwFn
@@ -557,6 +560,7 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
 }
 
 pub fn lex(lx: inout Lexer) {
+    mut val interpolations: Array[U64] = []
     while lx.pos < lx.bytes.count() {
         val b: U8 = lx.at(off: 0)
         if b == ' ' {
@@ -724,21 +728,10 @@ pub fn lex(lx: inout Lexer) {
             continue
         }
         if b == '"' {
-            val start: U64 = lx.pos
-            mut val j: U64 = lx.pos + 1
-            while j < lx.bytes.count() {
-                // a backslash escapes the next byte (so `\"` does not close)
-                if lx.bytes[j] == '\\' {
-                    j += 2
-                    continue
-                }
-                if lx.bytes[j] == '"' {
-                    j += 1
-                    break
-                }
-                j += 1
+            if lx.lexStringSegment(continued: false) {
+                interpolations.append(0U64)
+                lx.depth += 1I64
             }
-            lx.emit(k: <Kind.Str />, start: start, len: j - start)
             continue
         }
         if b == '\'' {
@@ -946,10 +939,25 @@ pub fn lex(lx: inout Lexer) {
             continue
         }
         if b == '{' {
+            if interpolations.count() != 0U64 {
+                val top = interpolations.count() - 1U64
+                interpolations[top] += 1U64
+            }
             lx.emit(k: <Kind.LBrace />, start: lx.pos, len: 1)
             continue
         }
         if b == '}' {
+            if interpolations.count() != 0U64 {
+                val top = interpolations.count() - 1U64
+                if interpolations[top] == 0U64 {
+                    if !lx.lexStringSegment(continued: true) {
+                        interpolations.removeLast()
+                        lx.depth -= 1I64
+                    }
+                    continue
+                }
+                interpolations[top] -= 1U64
+            }
             lx.emit(k: <Kind.RBrace />, start: lx.pos, len: 1)
             continue
         }
@@ -973,6 +981,9 @@ pub fn kindCode(k: Kind) -> I64 {
         Kind.Int => 2
         Kind.Float => 87
         Kind.Str => 3
+        Kind.StrHead => 89
+        Kind.StrMiddle => 90
+        Kind.StrTail => 91
         Kind.Char => 5
         Kind.Ident => 4
         Kind.KwExpose => 88
@@ -1407,6 +1418,9 @@ pub enum SyntaxExprKind {
     IntLit
     FloatLit
     StrLit
+    StringInterpolation
+    StringFragment
+    StringValue
     Ident
     Unary
     Binary
@@ -2025,11 +2039,18 @@ pub struct BlockAst {
     pub val stmts: Array[StmtAst]
 }
 
+// Fragments preserve source spelling; escape decoding belongs to lowering.
+pub enum StringPartAst {
+    Text(raw: String, span: Span)
+    Value(value: ExprAst, options: Optional[ExprAst], span: Span)
+}
+
 // An expression. `op` fields carry the operator's lexer kind code (kindCode).
 pub enum ExprAst {
     IntLit(value: U64, isBool: Bool, tySuffix: String, literalSpan: Span, tySuffixSpan: Span, span: Span)
     FloatLit(text: String, tySuffix: String, literalSpan: Span, tySuffixSpan: Span, span: Span)
     StrLit(raw: String, span: Span)
+    StringInterpolation(parts: Array[StringPartAst], span: Span)
     Ident(name: String, span: Span)
     Unary(op: I64, operand: ExprAst, span: Span)
     Binary(op: I64, lhs: ExprAst, rhs: ExprAst, span: Span)
@@ -2086,6 +2107,7 @@ pub fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.IntLit(value: _, isBool: _, tySuffix: _, literalSpan: _, tySuffixSpan: _, val span) => { return span }
         ExprAst.FloatLit(text: _, tySuffix: _, literalSpan: _, tySuffixSpan: _, val span) => { return span }
         ExprAst.StrLit(raw: _, val span) => { return span }
+        ExprAst.StringInterpolation(parts: _, val span) => { return span }
         ExprAst.Ident(name: _, val span) => { return span }
         ExprAst.Unary(op: _, operand: _, val span) => { return span }
         ExprAst.Binary(op: _, lhs: _, rhs: _, val span) => { return span }
@@ -2152,6 +2174,7 @@ pub struct P {
     // records the first syntax error (original-coordinate offset + message). The
     // compiler frontend checks `hasErr` after a parse and reports it loudly; a macro
     // can inspect it or ignore it.
+    pub mut val interpolationDepth: U64 = 0U64
     pub mut val hasErr: Bool = false
     pub mut val errOff: U64 = 0
     pub mut val errMsg: String = ""
@@ -2911,6 +2934,7 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
             p.advance()
             return self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: <Span start=start end=p.prevEnd() /> text: p.spanOf(t: token) intValue: 0U64 flag0: true)
         }
+        Kind.StrHead => { return self.parseSyntaxStringInterpolation(p: inout p) }
         Kind.Str => {
             val token: Tok = p.curTok()
             p.advance()
@@ -3035,7 +3059,10 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
             return self.emptySyntaxExpr()
         }
         Kind.Lt => { return self.parseSyntaxMake(p: inout p) }
-        Kind.KwMatch => { return self.parseSyntaxMatchExpr(p: inout p) }
+        Kind.KwMatch => {
+            if p.interpolationDepth != 0U64 { p.fail(off: start, msg: "match expressions are not allowed inside string interpolation") }
+            return self.parseSyntaxMatchExpr(p: inout p)
+        }
         Kind.KwIf => { return self.parseSyntaxIfExpr(p: inout p) }
         Kind.LBracket => {
             p.advance()
@@ -3313,6 +3340,34 @@ inout fn parseSyntaxBin(p: inout P, minPrec: I64) -> ExprId {
         }
     }
     return left
+}
+
+inout fn parseSyntaxStringInterpolation(p: inout P) -> ExprId {
+    val start = p.base + p.curTok().start
+    mut val parts: Array[ExprId] = []
+    mut val token = p.curTok()
+    while !p.hasErr {
+        val text = <Span start=p.base + token.start + 1U64 end=p.base + token.start + token.len - 1U64 />
+        parts.append(self.pushExprNode(kind: <SyntaxExprKind.StringFragment /> span: text text: text))
+        p.advance()
+        if token.kind == <Kind.StrTail /> { break }
+        val valueStart = text.end
+        p.interpolationDepth += 1U64
+        val value = self.parseSyntaxExpr(p: inout p)
+        mut val options = <ExprId raw=0U64 />
+        if p.curKind() == <Kind.Colon /> {
+            p.advance()
+            options = self.parseSyntaxExpr(p: inout p)
+        }
+        p.interpolationDepth -= 1U64
+        token = p.curTok()
+        if token.kind != <Kind.StrMiddle /> && token.kind != <Kind.StrTail /> {
+            p.fail(off: p.base + token.start, msg: "expected the end of a string interpolation")
+            break
+        }
+        parts.append(self.pushExprNode(kind: <SyntaxExprKind.StringValue /> span: <Span start=valueStart end=p.base + token.start + 1U64 /> child0: value child1: options))
+    }
+    return self.pushExprNode(kind: <SyntaxExprKind.StringInterpolation /> span: <Span start=start end=p.prevEnd() /> elems: self.pushExprIdSlice(items: parts))
 }
 
 inout fn parseSyntaxExpr(p: inout P) -> ExprId {

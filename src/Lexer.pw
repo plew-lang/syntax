@@ -43,8 +43,57 @@ pub impl Lexer {
         }
         val t: Tok = self.toks[n - 1]
         return match t.kind {
-            Kind.Ident | Kind.Int | Kind.Str | Kind.Char | Kind.RParen | Kind.RBracket | Kind.RBrace | Kind.SlashGt | Kind.KwTrue | Kind.KwFalse | Kind.KwReturn | Kind.KwBreak | Kind.KwContinue => true
+            Kind.Ident | Kind.Int | Kind.Str | Kind.StrTail | Kind.Char | Kind.RParen | Kind.RBracket | Kind.RBrace | Kind.SlashGt | Kind.KwTrue | Kind.KwFalse | Kind.KwReturn | Kind.KwBreak | Kind.KwContinue => true
             _ => false
         }
     }
+    // Scan only literal text. Code between braces returns to the normal lexer,
+    // including nested strings, comments, character literals and balanced blocks.
+    // A segment includes its two delimiters; its payload excludes both bytes.
+    inout fn lexStringSegment(continued: Bool) -> Bool {
+        val start = self.pos
+        mut val cursor = start + 1U64
+        while cursor < self.bytes.count() {
+            val byte = self.bytes[cursor]
+            if byte == '\\' {
+                if cursor + 1U64 < self.bytes.count() {
+                    val escaped = self.bytes[cursor + 1U64]
+                    if escaped == '{' || escaped == '}' {
+                        self.emit(k: <Kind.Unknown />, start: cursor, len: 2U64)
+                        return false
+                    }
+                    if escaped == 'u' && cursor + 2U64 < self.bytes.count() && self.bytes[cursor + 2U64] == '{' {
+                        cursor += 3U64
+                        while cursor < self.bytes.count() && self.bytes[cursor] != '}' { cursor += 1U64 }
+                        if cursor < self.bytes.count() { cursor += 1U64 }
+                        continue
+                    }
+                }
+                cursor += 2U64
+                continue
+            }
+            if byte == '{' || byte == '}' {
+                if cursor + 1U64 < self.bytes.count() && self.bytes[cursor + 1U64] == byte {
+                    cursor += 2U64
+                    continue
+                }
+                if byte == '}' {
+                    self.emit(k: <Kind.Unknown />, start: cursor, len: 1U64)
+                    return false
+                }
+                val kind = if continued { give <Kind.StrMiddle /> } else { give <Kind.StrHead /> }
+                self.emit(k: kind, start: start, len: cursor + 1U64 - start)
+                return true
+            }
+            if byte == '"' {
+                val kind = if continued { give <Kind.StrTail /> } else { give <Kind.Str /> }
+                self.emit(k: kind, start: start, len: cursor + 1U64 - start)
+                return false
+            }
+            cursor += 1U64
+        }
+        self.emit(k: <Kind.Unknown />, start: start, len: self.bytes.count() - start)
+        return false
+    }
+
 }

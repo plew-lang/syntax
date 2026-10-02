@@ -1,0 +1,121 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn inspect(file: Syntax.SyntaxFile, id: Syntax.ExprId) {
+    val node = Syntax.syntaxExpr(file: file, id: id)
+    match node.kind {
+        Syntax.SyntaxExprKind.StringInterpolation => {}
+        _ => { panic "expected interpolation" }
+    }
+    assert(Syntax.syntaxExprElemCount(file: file, expr: node) == 5U64)
+    val text = Syntax.syntaxExpr(file: file, id: Syntax.syntaxExprElem(file: file, expr: node, index: 0U64))
+    match text.kind {
+        Syntax.SyntaxExprKind.StringFragment => {}
+        _ => { panic "expected fragment" }
+    }
+    assert(text.text.start == node.span.start + 1U64)
+    assert(text.text.end == text.text.start + 1U64)
+    val first = Syntax.syntaxExpr(file: file, id: Syntax.syntaxExprElem(file: file, expr: node, index: 1U64))
+    assert(first.span.start == text.text.end)
+    assert(first.child1.raw != 0U64)
+    val call = Syntax.syntaxExpr(file: file, id: first.child0)
+    match call.kind {
+        Syntax.SyntaxExprKind.Call => {}
+        _ => { panic "expected call" }
+    }
+    val options = Syntax.syntaxExpr(file: file, id: first.child1)
+    match options.kind {
+        Syntax.SyntaxExprKind.Make => {}
+        _ => { panic "expected options construction" }
+    }
+    val second = Syntax.syntaxExpr(file: file, id: Syntax.syntaxExprElem(file: file, expr: node, index: 3U64))
+    assert(second.child1.raw == 0U64)
+    val nested = Syntax.syntaxExpr(file: file, id: second.child0)
+    match nested.kind {
+        Syntax.SyntaxExprKind.StringInterpolation => {}
+        _ => { panic "expected nested interpolation" }
+    }
+    assert(Syntax.syntaxExprElemCount(file: file, expr: nested) == 3U64)
+}
+
+fn reject(source: String) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=50U64 />
+    mut val file = <Syntax.SyntaxFile.empty />
+    file.parseExpressionSyntaxDirect(p: inout parser)
+    assert(parser.hasErr)
+    assert(parser.errOff >= 50U64)
+}
+
+fn accept(source: String) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    mut val file = <Syntax.SyntaxFile.empty />
+    file.parseExpressionSyntaxDirect(p: inout parser)
+    assert(!parser.hasErr)
+    assert(Syntax.kindCode(k: parser.toks[parser.pos].kind) == 0I64)
+}
+
+fn literal(source: String) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    assert(lexer.toks.count() == 2U64)
+    assert(Syntax.kindCode(k: lexer.toks[0U64].kind) == 3I64)
+    assert(lexer.toks[0U64].len == source.bytes().count())
+}
+
+fn main() {
+    val source = "\"A{calculate(scale: 2): <precision=2U8 />}B{\"nested {value}\"}C\""
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=100U64 />
+    mut val file = <Syntax.SyntaxFile.empty />
+    val id = file.parseExpressionSyntaxDirect(p: inout parser)
+    assert(!parser.hasErr)
+    assert(Syntax.kindCode(k: parser.toks[parser.pos].kind) == 0I64)
+    assert(Syntax.syntaxExpr(file: file, id: id).span.start == 100U64)
+    inspect(file: file, id: id)
+
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=100U64 />
+    val value = Syntax.parseExprAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    match value {
+        Syntax.ExprAst.StringInterpolation(val parts, val span) => {
+            assert(span.start == 100U64)
+            assert(parts.count() == 5U64)
+            match parts[0U64] {
+                Syntax.StringPartAst.Text(val raw, span: _) => { assert(raw == "A") }
+                _ => { panic "expected value fragment" }
+            }
+            match parts[1U64] {
+                Syntax.StringPartAst.Value(value: _, val options, span: _) => { assert(options.isSome()) }
+                _ => { panic "expected value" }
+            }
+        }
+        _ => { panic "expected value AST interpolation" }
+    }
+
+    val program = "val text = " + source
+    val item = Syntax.parseItem(source: program, start: 0U64, end: program.bytes().count())
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val root = frozen.freezeTopItem(ast: item)
+    val statement = Syntax.syntaxStmt(file: frozen, id: <Syntax.StmtId raw=Syntax.syntaxTopItemPayload(file: frozen, item: root) />)
+    inspect(file: frozen, id: statement.child0)
+
+    literal(source: "\"{{braces}}\"")
+    literal(source: "\"\\u{7b}\"")
+    literal(source: "\"first\nsecond\"")
+    for val invalid in ["\"{value:}\"", "\"{}\"", "\"{value\"", "\"}\"", "\"\\{value}\"", "\"{match x { _ => 1I64 }}\""] {
+        reject(source: invalid)
+    }
+    literal(source: "\"{{\"")
+    accept(source: "\"{call(/* } \\\" { */ value: '}', text: \"{{}}\")}\"")
+    accept(source: "\"{value: </>}\"")
+    accept(source: "\"{{{value}}}\"")
+    accept(source: "\"{value // } and quote \" inside comment\n}\"")
+    accept(source: "\"{if true { give 1I64 } else { give 2I64 }}\"")
+    print("ok")
+}
