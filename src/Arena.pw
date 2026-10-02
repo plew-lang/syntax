@@ -171,6 +171,18 @@ pub impl SyntaxFile {
     fn sigParam(sig: SyntaxSig, index: U64) -> ParamId {
         return self.paramIds[sig.params.start + index]
     }
+    fn sigWhereParamSpan(sig: SyntaxSig, index: U64) -> Span {
+        return self.texts[sig.whereParams.start + index]
+    }
+    fn sigWhereTraitSpan(sig: SyntaxSig, index: U64) -> Span {
+        return self.texts[sig.whereTraits.start + index]
+    }
+    fn sigWhereType(sig: SyntaxSig, index: U64) -> TypeId {
+        return self.typeIds[sig.whereTypes.start + index]
+    }
+    fn sigWhereTraitType(sig: SyntaxSig, index: U64) -> TypeId {
+        return self.typeIds[sig.whereTraitTypes.start + index]
+    }
     fn implParamCount(impl: SyntaxImpl) -> U64 { return impl.implParams.count }
     fn implParamSpan(impl: SyntaxImpl, index: U64) -> Span {
         return self.texts[impl.implParams.start + index]
@@ -841,7 +853,7 @@ impl SyntaxFile {
 
     inout fn freezeSigAst(ast: SigAst) -> SigId {
         val id: SigId = <SigId raw=self.sigs.count() />
-        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout isFactory=ast.isFactory isAnonymousFactory=ast.isAnonymousFactory />)
+        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout isFactory=ast.isFactory isAnonymousFactory=ast.isAnonymousFactory whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) />)
         return id
     }
 

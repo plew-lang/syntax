@@ -1,0 +1,40 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
+    val trait = Syntax.syntaxTrait(file: file, id: <Syntax.TraitId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    assert(Syntax.syntaxTraitReqCount(file: file, trait: trait) == 2U64)
+    val requirement = Syntax.syntaxSig(file: file, id: Syntax.syntaxTraitReq(file: file, trait: trait, index: 0U64))
+    assert(Syntax.syntaxSigWhereCount(file: file, sig: requirement) == 2U64)
+    val left = Syntax.syntaxType(file: file, id: Syntax.syntaxSigWhereType(file: file, sig: requirement, index: 0U64))
+    val right = Syntax.syntaxType(file: file, id: Syntax.syntaxSigWhereTraitType(file: file, sig: requirement, index: 0U64))
+    assert(left.name.end - left.name.start == 6U64)
+    assert(right.name.end - right.name.start == 10U64)
+    val next = Syntax.syntaxSig(file: file, id: Syntax.syntaxTraitReq(file: file, trait: trait, index: 1U64))
+    assert(Syntax.syntaxSigWhereCount(file: file, sig: next) == 0U64)
+}
+fn main() {
+    val source = "trait Render { fn render[Output](output: Output) -> Output.Error\n where Output: TextOutput + Sendable\n fn reset() }"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    check(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64))
+    val value = Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count())
+    match value {
+        Syntax.TopItemAst.Trait(val t) => {
+            assert(t.reqs.count() == 2U64)
+            assert(t.reqs[0U64].whereParams[0U64] == "Output")
+            assert(t.reqs[0U64].whereTraits[0U64] == "TextOutput")
+            assert(t.reqs[0U64].whereTraits[1U64] == "Sendable")
+            assert(t.reqs[1U64].whereTypes.count() == 0U64)
+        }
+        _ => { panic "expected trait" }
+    }
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val item = frozen.freezeTopItem(ast: value)
+    check(file: frozen, item: item)
+    print("ok")
+}

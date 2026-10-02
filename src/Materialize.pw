@@ -325,7 +325,7 @@ impl SyntaxFile {
         val node: SyntaxSig = self.sigs[id.raw]
         mut val ret: TypeAst = emptyTypeAst()
         if node.hasRet { ret = self.materializeType(id: node.ret, p: p) }
-        return <SigAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAssoc=node.isAssoc selfInout=node.selfInout isFactory=node.isFactory isAnonymousFactory=node.isAnonymousFactory />
+        return <SigAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAssoc=node.isAssoc selfInout=node.selfInout isFactory=node.isFactory isAnonymousFactory=node.isAnonymousFactory whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p) whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p) />
     }
 
     fn materializeSigs(slice: SyntaxSlice, p: P) -> Array[SigAst] {
