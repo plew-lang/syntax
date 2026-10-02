@@ -1316,6 +1316,8 @@ pub struct SyntaxSig {
     pub val ret: TypeId
     pub val isAssoc: Bool
     pub val selfInout: Bool
+    pub val isFactory: Bool = false
+    pub val isAnonymousFactory: Bool = false
 }
 
 pub struct SyntaxAssociatedType {
@@ -1790,6 +1792,8 @@ pub struct SigAst {
     // matches by selector, not self-mode, but the existential dispatch needs it to
     // pass the boxed self by pointer (a mutating method on `any P` — `inout next()`).
     pub val selfInout: Bool = false
+    pub val isFactory: Bool = false
+    pub val isAnonymousFactory: Bool = false
 }
 
 // A `trait Name [: Super + ...] { requirements }` declaration (spec/08). The body
@@ -4941,7 +4945,7 @@ inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFa
         _ => {}
     }
     val id: SigId = <SigId raw=self.sigs.count() />
-    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />)
+    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous />)
     return id
 }
 
@@ -6642,7 +6646,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bo
         }
         _ => {}
     }
-    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout />
+    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous />
 }
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).

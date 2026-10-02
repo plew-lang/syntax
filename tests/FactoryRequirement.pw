@@ -1,0 +1,39 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
+    val declaration = Syntax.syntaxTrait(file: file, id: <Syntax.TraitId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    assert(Syntax.syntaxTraitReqCount(file: file, trait: declaration) == 3U64)
+    mut val index = 0U64
+    while index < 3U64 {
+        val requirement = Syntax.syntaxSig(file: file, id: Syntax.syntaxTraitReq(file: file, trait: declaration, index: index))
+        assert(requirement.isFactory == (index < 2U64))
+        assert(requirement.isAnonymousFactory == (index == 0U64))
+        index += 1U64
+    }
+}
+fn main() {
+    val source = "trait Default { factory() \n factory named(value: I64) \n assoc fn value() -> I64 }"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    check(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64))
+    val value = Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count())
+    match value {
+        Syntax.TopItemAst.Trait(t: val declaration) => {
+            assert(declaration.reqs[0U64].isFactory)
+            assert(declaration.reqs[0U64].isAnonymousFactory)
+            assert(declaration.reqs[1U64].isFactory)
+            assert(!declaration.reqs[1U64].isAnonymousFactory)
+            assert(!declaration.reqs[2U64].isFactory)
+        }
+        _ => { panic "expected trait" }
+    }
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val item = frozen.freezeTopItem(ast: value)
+    check(file: frozen, item: item)
+    print("ok")
+}

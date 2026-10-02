@@ -841,7 +841,7 @@ impl SyntaxFile {
 
     inout fn freezeSigAst(ast: SigAst) -> SigId {
         val id: SigId = <SigId raw=self.sigs.count() />
-        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout />)
+        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout isFactory=ast.isFactory isAnonymousFactory=ast.isAnonymousFactory />)
         return id
     }
 
