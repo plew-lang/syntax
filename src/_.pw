@@ -1327,6 +1327,8 @@ pub struct SyntaxSig {
     pub val ret: TypeId
     pub val isAssoc: Bool
     pub val selfInout: Bool
+    pub val selfMove: Bool = false
+    pub val isAsync: Bool = false
     pub val isFactory: Bool = false
     pub val isAnonymousFactory: Bool = false
     pub val factoryKind: U64 = 0U64
@@ -1808,10 +1810,10 @@ pub struct SigAst {
     pub val hasRet: Bool
     pub val ret: TypeAst
     pub val isAssoc: Bool
-    // `inout fn` requirement (spec/08): the method mutates `self`. Conformance still
-    // matches by selector, not self-mode, but the existential dispatch needs it to
-    // pass the boxed self by pointer (a mutating method on `any P` — `inout next()`).
+    // Preserve the receiver contract for conformance and dispatch.
     pub val selfInout: Bool = false
+    pub val selfMove: Bool = false
+    pub val isAsync: Bool = false
     pub val isFactory: Bool = false
     pub val isAnonymousFactory: Bool = false
     pub val factoryKind: U64 = 0U64
@@ -4989,7 +4991,7 @@ inout fn parseSyntaxNewtype(p: inout P, isPub: Bool) -> NewtypeId {
     return id
 }
 
-inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeId = <TypeId raw=0U64 />) -> SigId {
+inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Bool = false, isAsync: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeId = <TypeId raw=0U64 />) -> SigId {
     mut val name: Span = p.spanOf(t: p.curTok())
     mut val anonymous: Bool = false
     if isFactory {
@@ -5019,7 +5021,7 @@ inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFa
     mut val whereTraitTypes: Array[TypeId] = []
     self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     val id: SigId = <SigId raw=self.sigs.count() />
-    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=self.pushDirectSyntaxTexts(items: whereParams) whereTraits=self.pushDirectSyntaxTexts(items: whereTraits) whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes) />)
+    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout selfMove=selfMove isAsync=isAsync isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=self.pushDirectSyntaxTexts(items: whereParams) whereTraits=self.pushDirectSyntaxTexts(items: whereTraits) whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes) />)
     return id
 }
 
@@ -5051,6 +5053,23 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
             Kind.RBrace => { p.advance() break }
             Kind.Eof => { break }
             Kind.KwFn => { p.advance() reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false)) }
+            Kind.KwMove => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: true))
+            }
+            Kind.KwBorrow => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false))
+            }
+            Kind.KwAsync => {
+                p.advance()
+                mut val asyncMove: Bool = false
+                match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true))
+            }
             Kind.KwInout => {
                 p.advance()
                 match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
@@ -6694,7 +6713,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
 // or extern declaration). The leading `fn`/`assoc fn`/`inout fn` is already consumed
 // (the cursor is at the name); `isAssoc` records the form. Mirrors parseReqSig.
-fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeAst = emptyTypeAst()) -> SigAst {
+fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Bool = false, isAsync: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeAst = emptyTypeAst()) -> SigAst {
     val nameTok: Tok = p.curTok()
     mut val name: String = p.text(t: nameTok)
     mut val nameSpan: Span = p.spanOf(t: nameTok)
@@ -6729,7 +6748,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bo
     mut val whereTypes: Array[TypeAst] = []
     mut val whereTraitTypes: Array[TypeAst] = []
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
-    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes />
+    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout selfMove=selfMove isAsync=isAsync isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes />
 }
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).
@@ -6772,9 +6791,24 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
                 p.advance()
                 reqs.append(parseSigAst(p: inout p, isAssoc: false))
             }
+            Kind.KwMove => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: true))
+            }
+            Kind.KwBorrow => {
+                p.advance()
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(parseSigAst(p: inout p, isAssoc: false))
+            }
+            Kind.KwAsync => {
+                p.advance()
+                mut val asyncMove: Bool = false
+                match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
+                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true))
+            }
             Kind.KwInout => {
-                // `inout fn next()` requirement: conformance matches by selector, not
-                // self-mode, so the `inout` is consumed and a plain req recorded.
                 p.advance()
                 match p.curKind() {
                     Kind.KwFn => { p.advance() }
