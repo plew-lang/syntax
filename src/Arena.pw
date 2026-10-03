@@ -780,6 +780,7 @@ impl SyntaxFile {
             ExprAst.RecordLit(fields: val fields, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.RecordLit /> span: span fields: self.freezeMakeFieldAstSlice(items: fields)) }
             ExprAst.Cast(operand: val operand, ty: val ty, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Cast /> span: span child0: self.freezeExprAst(ast: operand) type0: self.freezeTypeAst(ast: ty)) }
             ExprAst.MatchExpr(scrut: val scrut, arms: val arms, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.MatchExpr /> span: span child0: self.freezeExprAst(ast: scrut) arms: self.freezeMatchArmAstSlice(items: arms)) }
+            ExprAst.BlockExpr(val body, val span) => { return self.pushExprNode(kind: <SyntaxExprKind.BlockExpr /> span: span block0: self.freezeBlockAst(ast: body)) }
             ExprAst.IfExpr(cond: val cond, thenBlk: val thenBlk, elseBlk: val elseBlk, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: self.freezeExprAst(ast: cond) block0: self.freezeBlockAst(ast: thenBlk) block1: self.freezeBlockAst(ast: elseBlk)) }
             ExprAst.OptChain(base: val base, cont: val cont, memberSpan: val memberSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.OptChain /> span: span name: memberSpan child0: self.freezeExprAst(ast: base) child1: self.freezeExprAst(ast: cont)) }
             ExprAst.ChainHole(span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ChainHole /> span: span) }

@@ -1439,6 +1439,7 @@ pub enum SyntaxExprKind {
     DictLit
     RecordLit
     Cast
+    BlockExpr
     MatchExpr
     IfExpr
     OptChain
@@ -2086,6 +2087,7 @@ pub enum ExprAst {
     RecordLit(fields: Array[MakeFieldAst], span: Span)
     Cast(operand: ExprAst, ty: TypeAst, span: Span)
     MatchExpr(scrut: ExprAst, arms: Array[MatchArmAst], span: Span)
+    BlockExpr(body: BlockAst, span: Span)
     IfExpr(cond: ExprAst, thenBlk: BlockAst, elseBlk: BlockAst, span: Span)
     // `base?.<cont>` optional chaining (spec/12): `cont` is the trailing member-access
     // chain applied to the UNWRAPPED base value, rooted at a `ChainHole` placeholder
@@ -2129,6 +2131,7 @@ pub fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.RecordLit(fields: _, val span) => { return span }
         ExprAst.Cast(operand: _, ty: _, val span) => { return span }
         ExprAst.MatchExpr(scrut: _, arms: _, val span) => { return span }
+        ExprAst.BlockExpr(body: _, val span) => { return span }
         ExprAst.IfExpr(cond: _, thenBlk: _, elseBlk: _, val span) => { return span }
         ExprAst.OptChain(base: _, cont: _, memberSpan: _, val span) => { return span }
         ExprAst.ChainHole(val span) => { return span }
@@ -3063,6 +3066,11 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
                 _ => {}
             }
             return self.emptySyntaxExpr()
+        }
+        Kind.LBrace => {
+            if p.interpolationDepth != 0U64 { p.fail(off: start, msg: "block expressions are not allowed inside string interpolation") }
+            val body = self.parseSyntaxBlock(p: inout p)
+            return self.pushExprNode(kind: <SyntaxExprKind.BlockExpr /> span: <Span start=start end=p.prevEnd() /> block0: body)
         }
         Kind.Lt => { return self.parseSyntaxMake(p: inout p) }
         Kind.KwMatch => {
@@ -8475,6 +8483,11 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                 _ => {}
             }
             return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
+        }
+        Kind.LBrace => {
+            if p.interpolationDepth != 0U64 { p.fail(off: sStart, msg: "block expressions are not allowed inside string interpolation") }
+            val body = parseBlockAst(p: inout p)
+            return <ExprAst.BlockExpr body=body span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.Lt => {
             return parseMakeAst(p: inout p)
