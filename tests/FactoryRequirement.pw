@@ -4,17 +4,23 @@ use @Std/Io only { print }
 
 fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
     val declaration = Syntax.syntaxTrait(file: file, id: <Syntax.TraitId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
-    assert(Syntax.syntaxTraitReqCount(file: file, trait: declaration) == 3U64)
+    assert(Syntax.syntaxTraitReqCount(file: file, trait: declaration) == 5U64)
     mut val index = 0U64
-    while index < 3U64 {
+    while index < 5U64 {
         val requirement = Syntax.syntaxSig(file: file, id: Syntax.syntaxTraitReq(file: file, trait: declaration, index: index))
-        assert(requirement.isFactory == (index < 2U64))
+        assert(requirement.isFactory == (index != 2U64))
         assert(requirement.isAnonymousFactory == (index == 0U64))
+        if index == 3U64 { assert(requirement.factoryKind == 1U64) }
+        if index == 4U64 {
+            assert(requirement.factoryKind == 2U64)
+            val error = Syntax.syntaxType(file: file, id: requirement.factoryErr)
+            assert(error.name.end - error.name.start == 6U64)
+        }
         index += 1U64
     }
 }
 fn main() {
-    val source = "trait Default {{ factory() \n factory named(value: I64) \n assoc fn value() -> I64 }}"
+    val source = "trait Default {{ factory() \n factory named(value: I64) \n assoc fn value() -> I64 \n optional factory maybe(value: I64) \n result[String] factory checked(value: I64) }}"
     mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
     Syntax.lex(lx: inout lexer)
     mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
@@ -29,11 +35,19 @@ fn main() {
             assert(declaration.reqs[1U64].isFactory)
             assert(!declaration.reqs[1U64].isAnonymousFactory)
             assert(!declaration.reqs[2U64].isFactory)
+            assert(declaration.reqs[3U64].factoryKind == 1U64)
+            assert(declaration.reqs[4U64].factoryKind == 2U64)
+            assert(declaration.reqs[4U64].factoryErr.name == "String")
         }
         _ => { panic "expected trait" }
     }
     mut val frozen = <Syntax.SyntaxFile.empty />
     val item = frozen.freezeTopItem(ast: value)
     check(file: frozen, item: item)
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val values = Syntax.parseProgramAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    val valueItem = frozen.freezeTopItem(ast: values[0U64])
+    check(file: frozen, item: valueItem)
     print("ok")
 }

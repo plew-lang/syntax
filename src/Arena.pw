@@ -871,7 +871,7 @@ impl SyntaxFile {
 
     inout fn freezeSigAst(ast: SigAst) -> SigId {
         val id: SigId = <SigId raw=self.sigs.count() />
-        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout isFactory=ast.isFactory isAnonymousFactory=ast.isAnonymousFactory whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) />)
+        self.sigs.append(<SyntaxSig name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAssoc=ast.isAssoc selfInout=ast.selfInout isFactory=ast.isFactory isAnonymousFactory=ast.isAnonymousFactory factoryKind=ast.factoryKind factoryErr=self.freezeTypeAst(ast: ast.factoryErr) whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) />)
         return id
     }
 

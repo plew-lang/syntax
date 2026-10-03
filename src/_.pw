@@ -1329,6 +1329,8 @@ pub struct SyntaxSig {
     pub val selfInout: Bool
     pub val isFactory: Bool = false
     pub val isAnonymousFactory: Bool = false
+    pub val factoryKind: U64 = 0U64
+    pub val factoryErr: TypeId = <TypeId raw=0U64 />
     pub val whereParams: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
@@ -1812,6 +1814,8 @@ pub struct SigAst {
     pub val selfInout: Bool = false
     pub val isFactory: Bool = false
     pub val isAnonymousFactory: Bool = false
+    pub val factoryKind: U64 = 0U64
+    pub val factoryErr: TypeAst = emptyTypeAst()
     pub val whereParams: Array[String] = []
     pub val whereTraits: Array[String] = []
     pub val whereTypes: Array[TypeAst] = []
@@ -4985,7 +4989,7 @@ inout fn parseSyntaxNewtype(p: inout P, isPub: Bool) -> NewtypeId {
     return id
 }
 
-inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false) -> SigId {
+inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeId = <TypeId raw=0U64 />) -> SigId {
     mut val name: Span = p.spanOf(t: p.curTok())
     mut val anonymous: Bool = false
     if isFactory {
@@ -5015,7 +5019,7 @@ inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFa
     mut val whereTraitTypes: Array[TypeId] = []
     self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     val id: SigId = <SigId raw=self.sigs.count() />
-    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous whereParams=self.pushDirectSyntaxTexts(items: whereParams) whereTraits=self.pushDirectSyntaxTexts(items: whereTraits) whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes) />)
+    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=self.pushDirectSyntaxTexts(items: whereParams) whereTraits=self.pushDirectSyntaxTexts(items: whereTraits) whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes) />)
     return id
 }
 
@@ -5054,13 +5058,16 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
             }
             _ => {
                 if curIs(p: inout p, kw: "factory") || curIs(p: inout p, kw: "optional") || curIs(p: inout p, kw: "result") {
-                    if curIs(p: inout p, kw: "optional") { p.advance() }
+                    mut val factoryKind = 0U64
+                    mut val factoryErr = <TypeId raw=0U64 />
+                    if curIs(p: inout p, kw: "optional") { factoryKind = 1U64 p.advance() }
                     if curIs(p: inout p, kw: "result") {
+                        factoryKind = 2U64
                         p.advance()
-                        match p.curKind() { Kind.LBracket => { p.advance() self.parseSyntaxType(p: inout p) match p.curKind() { Kind.RBracket => { p.advance() } _ => {} } } _ => {} }
+                        match p.curKind() { Kind.LBracket => { p.advance() factoryErr = self.parseSyntaxType(p: inout p) match p.curKind() { Kind.RBracket => { p.advance() } _ => {} } } _ => {} }
                     }
                     if curIs(p: inout p, kw: "factory") { p.advance() }
-                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isFactory: true))
+                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isFactory: true, factoryKind: factoryKind, factoryErr: factoryErr))
                 } else if curIs(p: inout p, kw: "assoc") {
                     p.advance()
                     match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
@@ -6687,7 +6694,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
 // or extern declaration). The leading `fn`/`assoc fn`/`inout fn` is already consumed
 // (the cursor is at the name); `isAssoc` records the form. Mirrors parseReqSig.
-fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false) -> SigAst {
+fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeAst = emptyTypeAst()) -> SigAst {
     val nameTok: Tok = p.curTok()
     mut val name: String = p.text(t: nameTok)
     mut val nameSpan: Span = p.spanOf(t: nameTok)
@@ -6722,7 +6729,7 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, isFactory: Bo
     mut val whereTypes: Array[TypeAst] = []
     mut val whereTraitTypes: Array[TypeAst] = []
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
-    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes />
+    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes />
 }
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).
@@ -6777,24 +6784,20 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
             }
             _ => {
                 if curIs(p: inout p, kw: "factory") || curIs(p: inout p, kw: "optional") || curIs(p: inout p, kw: "result") {
-                    // a factory requirement `[optional | result[E]] factory name(params)`
-                    // (spec/05,12 — e.g. `TryFrom`'s `result[Error] factory checked(source:)`,
-                    // `Chain`'s `factory fromValue/empty`). Recorded as an assoc-fn
-                    // requirement by its SELECTOR (name + labels); the fallible wrapper
-                    // (optional/result[E]) and the implicit `Self` return are the impl's
-                    // concern. Witnessing matches by selector and the requirement return is
-                    // left implicit (reqReturnMismatch is lenient for the Result/Optional/
-                    // Self shape), so a conforming `impl I8 as TryFrom[I64]` factory satisfies
-                    // it and the built-in-impl gate exempts the witnessing factory.
+                    // Preserve the fallible return contract in both AST representations.
+                    mut val factoryKind = 0U64
+                    mut val factoryErr = emptyTypeAst()
                     if curIs(p: inout p, kw: "optional") {
+                        factoryKind = 1U64
                         p.advance()
                     } else {
                         if curIs(p: inout p, kw: "result") {
+                            factoryKind = 2U64
                             p.advance()
                             match p.curKind() {
                                 Kind.LBracket => {
                                     p.advance()
-                                    val ignErr: TypeAst = parseType(p: inout p)
+                                    factoryErr = parseType(p: inout p)
                                     match p.curKind() {
                                         Kind.RBracket => { p.advance() }
                                         _ => {}
@@ -6807,7 +6810,7 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
                     if curIs(p: inout p, kw: "factory") {
                         p.advance()
                     }
-                    reqs.append(parseSigAst(p: inout p, isAssoc: true, isFactory: true))
+                    reqs.append(parseSigAst(p: inout p, isAssoc: true, isFactory: true, factoryKind: factoryKind, factoryErr: factoryErr))
                 } else {
                 if curIs(p: inout p, kw: "assoc") {
                     p.advance()
