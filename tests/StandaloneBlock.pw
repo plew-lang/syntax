@@ -1,0 +1,33 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn main() {
+    val source = "{{ val n = 1I64\n give {{ give n }} }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    mut val file = <Syntax.SyntaxFile.empty />
+    val id = file.parseExpressionSyntaxDirect(p: inout parser)
+    assert(!parser.hasErr)
+    match Syntax.syntaxExpr(file: file, id: id).kind {
+        Syntax.SyntaxExprKind.BlockExpr => {}
+        _ => { panic "expected direct block" }
+    }
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val value = Syntax.parseExprAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    match value {
+        Syntax.ExprAst.BlockExpr(body: _, val span) => { assert(span.start == 0U64) }
+        _ => { panic "expected value block" }
+    }
+    val program = "val value = " + source
+    val item = Syntax.parseItem(source: program, start: 0U64, end: program.bytes().count())
+    val root = file.freezeTopItem(ast: item)
+    val statement = Syntax.syntaxStmt(file: file, id: <Syntax.StmtId raw=Syntax.syntaxTopItemPayload(file: file, item: root) />)
+    match Syntax.syntaxExpr(file: file, id: statement.child0).kind {
+        Syntax.SyntaxExprKind.BlockExpr => {}
+        _ => { panic "expected frozen block" }
+    }
+    print("ok")
+}
