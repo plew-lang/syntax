@@ -79,6 +79,10 @@ fn newlineCount(source: String, expected: U64) {
 }
 
 fn main() {
+    reject(source: "if false {{ give 1I64 }} {{ give 2I64 }}")
+    reject(source: "match true true => 1I64 false => 2I64 }}")
+    reject(source: "match true {{ true 1I64 false 2I64 }}")
+
     newlineCount(source: "({{val x = 10I64\n-3I64\ngive x}})", expected: 2U64)
     newlineCount(source: "\"{{ {{val x = 10I64\n-3I64\ngive x}} }}\"", expected: 2U64)
     newlineCount(source: "(1I64\n+2I64)", expected: 0U64)

@@ -3622,7 +3622,7 @@ inout fn parseSyntaxArmPatterns(p: inout P) -> Array[PatternId] {
     }
     match p.curKind() {
         Kind.FatArrow => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `=>` after a match pattern") }
     }
     return patterns
 }
@@ -3694,7 +3694,7 @@ inout fn parseSyntaxMatchExpr(p: inout P) -> ExprId {
     p.skipNewlines()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after a match scrutinee") }
     }
     mut val armIds: Array[MatchArmId] = []
     while true {
@@ -3728,7 +3728,7 @@ inout fn parseSyntaxMatchStmt(p: inout P) -> StmtId {
     p.skipNewlines()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after a match scrutinee") }
     }
     mut val armIds: Array[MatchArmId] = []
     while true {
@@ -3995,7 +3995,7 @@ inout fn parseSyntaxIfExpr(p: inout P) -> ExprId {
     p.skipNewlines()
     match p.curKind() {
         Kind.KwElse => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `else` in a value-position if") }
     }
     mut val elseBlk: BlockId = self.directBlock(stmts: [])
     match p.curKind() {
@@ -9107,7 +9107,7 @@ fn parseArmPatternsAst(p: inout P) -> Array[PatternAst] {
     }
     match p.curKind() {
         Kind.FatArrow => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `=>` after a match pattern") }
     }
     return pats
 }
@@ -9132,7 +9132,7 @@ fn parseMatchStmtAst(p: inout P) -> StmtAst {
     p.skipNewlines()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after a match scrutinee") }
     }
     mut val arms: Array[MatchArmAst] = []
     while true {
@@ -9198,7 +9198,7 @@ fn parseMatchExprAst(p: inout P) -> ExprAst {
     p.skipNewlines()
     match p.curKind() {
         Kind.LBrace => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after a match scrutinee") }
     }
     mut val arms: Array[MatchArmAst] = []
     while true {
@@ -9461,7 +9461,7 @@ fn parseIfLetExpr(p: inout P, sStart: U64) -> ExprAst {
     p.skipNewlines()
     match p.curKind() {
         Kind.KwElse => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `else` in a value-position if") }
     }
     val elseBlk: BlockAst = parseBlockAst(p: inout p)
     return buildCondChainExpr(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: <Span start=sStart end=p.prevEnd() />)
@@ -9478,7 +9478,7 @@ fn parseIfExprAst(p: inout P) -> ExprAst {
     p.skipNewlines()
     match p.curKind() {
         Kind.KwElse => { p.advance() }
-        _ => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `else` in a value-position if") }
     }
     match p.curKind() {
         Kind.KwIf => {
