@@ -78,7 +78,38 @@ fn newlineCount(source: String, expected: U64) {
     assert(lexer.depth == 0I64)
 }
 
+fn orGroups() {
+    val source = "match value {{ Choice.First(value: val item) | Choice.Second(value: val item) => item }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    mut val direct = <Syntax.SyntaxFile.empty />
+    val expression = direct.parseExpressionSyntaxDirect(p: inout parser)
+    assert(!parser.hasErr)
+    val arms = Syntax.syntaxExpr(file: direct, id: expression).arms
+    val first = Syntax.syntaxMatchArm(file: direct, id: Syntax.syntaxMatchArmAt(file: direct, arms: arms, index: 0U64))
+    val second = Syntax.syntaxMatchArm(file: direct, id: Syntax.syntaxMatchArmAt(file: direct, arms: arms, index: 1U64))
+    assert(first.orGroup != 0U64 && first.orGroup == second.orGroup)
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val value = Syntax.parseExprAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val program = "val output = " + source
+    val item = Syntax.parseItem(source: program, start: 0U64, end: program.bytes().count())
+    val root = frozen.freezeTopItem(ast: item)
+    val statement = Syntax.syntaxStmt(file: frozen, id: <Syntax.StmtId raw=Syntax.syntaxTopItemPayload(file: frozen, item: root) />)
+    val frozenExpr = statement.child0
+    val frozenArms = Syntax.syntaxExpr(file: frozen, id: frozenExpr).arms
+    val frozenFirst = Syntax.syntaxMatchArm(file: frozen, id: Syntax.syntaxMatchArmAt(file: frozen, arms: frozenArms, index: 0U64))
+    val frozenSecond = Syntax.syntaxMatchArm(file: frozen, id: Syntax.syntaxMatchArmAt(file: frozen, arms: frozenArms, index: 1U64))
+    assert(frozenFirst.orGroup != 0U64 && frozenFirst.orGroup == frozenSecond.orGroup)
+}
+
 fn main() {
+    orGroups()
+    reject(source: "match true {{ true => 1I64 false => 2I64")
+    reject(source: "match value {{ A(val first) | B(val second) => 1I64 }}")
+    reject(source: "match value {{ val item | _ => 1I64 }}")
     reject(source: "if false {{ give 1I64 }} {{ give 2I64 }}")
     reject(source: "match true true => 1I64 false => 2I64 }}")
     reject(source: "match true {{ true 1I64 false 2I64 }}")

@@ -1528,6 +1528,8 @@ pub struct SyntaxPattern {
 }
 
 pub struct SyntaxMatchArm {
+    // Nonzero source identity shared only by alternatives of one or pattern.
+    pub val orGroup: U64 = 0U64
     pub val pat: PatternId
     pub val body: BlockId
     pub val span: Span
@@ -2043,6 +2045,8 @@ pub struct PatternAst {
 // then a nested `match`, or a preceding `if`/`guard` condition chain — this keeps
 // exhaustiveness purely structural.
 pub struct MatchArmAst {
+    // Nonzero source identity shared only by alternatives of one or pattern.
+    pub val orGroup: U64 = 0U64
     pub val pattern: PatternAst
     pub val body: BlockAst
     pub val span: Span
@@ -3607,6 +3611,18 @@ inout fn parseSyntaxPattern(p: inout P) -> PatternId {
     return id
 }
 
+fn directPatternNames(pattern: SyntaxPattern, p: P) -> Array[String] {
+    mut val names: Array[String] = []
+    if pattern.captureName.end > pattern.captureName.start { names.append(self.materializeText(p: p, span: pattern.captureName)) }
+    mut val index = 0U64
+    while index < syntaxPatternBindCount(file: self, pattern: pattern) {
+        val bind = syntaxBind(file: self, id: syntaxPatternBind(file: self, pattern: pattern, index: index))
+        if bind.name.end > bind.name.start { names.append(self.materializeText(p: p, span: bind.name)) }
+        index += 1U64
+    }
+    return names
+}
+
 inout fn parseSyntaxArmPatterns(p: inout P) -> Array[PatternId] {
     mut val patterns: Array[PatternId] = []
     patterns.append(self.parseSyntaxPattern(p: inout p))
@@ -3623,6 +3639,15 @@ inout fn parseSyntaxArmPatterns(p: inout P) -> Array[PatternId] {
     match p.curKind() {
         Kind.FatArrow => { p.advance() }
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `=>` after a match pattern") }
+    }
+    if patterns.count() > 1U64 {
+        val first = self.directPatternNames(pattern: self.patterns[patterns[0U64].raw], p: p)
+        mut val index = 1U64
+        while index < patterns.count() {
+            val pattern = self.patterns[patterns[index].raw]
+            checkOrPatternNames(p: inout p, first: first, next: self.directPatternNames(pattern: pattern, p: p), offset: pattern.span.start)
+            index += 1U64
+        }
     }
     return patterns
 }
@@ -3652,9 +3677,9 @@ inout fn pushDirectSyntaxStmt(
     return id
 }
 
-inout fn appendSyntaxMatchArm(pattern: PatternId, body: BlockId, span: Span) -> MatchArmId {
+inout fn appendSyntaxMatchArm(pattern: PatternId, body: BlockId, span: Span, orGroup: U64 = 0U64) -> MatchArmId {
     val id: MatchArmId = <MatchArmId raw=self.matchArms.count() />
-    self.matchArms.append(<SyntaxMatchArm pat=pattern body=body span=span />)
+    self.matchArms.append(<SyntaxMatchArm pat=pattern body=body span=span orGroup=orGroup />)
     return id
 }
 
@@ -3701,14 +3726,14 @@ inout fn parseSyntaxMatchExpr(p: inout P) -> ExprId {
         p.skipNewlines()
         match p.curKind() {
             Kind.RBrace => { p.advance() break }
-            Kind.Eof => { break }
+            Kind.Eof => { p.fail(off: p.base + p.curTok().start, msg: "expected `}}` after match arms") break }
             _ => {
                 val armStart: U64 = p.base + p.curTok().start
                 val patterns: Array[PatternId] = self.parseSyntaxArmPatterns(p: inout p)
                 val body: BlockId = self.parseSyntaxExprArmBody(p: inout p, start: armStart)
                 mut val i: U64 = 0U64
                 while i < patterns.count() {
-                    armIds.append(self.appendSyntaxMatchArm(pattern: patterns[i], body: body, span: <Span start=armStart end=p.prevEnd() />))
+                    armIds.append(self.appendSyntaxMatchArm(pattern: patterns[i], body: body, span: <Span start=armStart end=p.prevEnd() />, orGroup: if patterns.count() > 1U64 { give armStart + 1U64 } else { give 0U64 }))
                     i += 1U64
                 }
                 match p.curKind() {
@@ -3735,7 +3760,7 @@ inout fn parseSyntaxMatchStmt(p: inout P) -> StmtId {
         p.skipNewlines()
         match p.curKind() {
             Kind.RBrace => { p.advance() break }
-            Kind.Eof => { break }
+            Kind.Eof => { p.fail(off: p.base + p.curTok().start, msg: "expected `}}` after match arms") break }
             _ => {
                 val armStart: U64 = p.base + p.curTok().start
                 val patterns: Array[PatternId] = self.parseSyntaxArmPatterns(p: inout p)
@@ -3743,7 +3768,7 @@ inout fn parseSyntaxMatchStmt(p: inout P) -> StmtId {
                 val body: BlockId = self.parseSyntaxMatchArmBody(p: inout p)
                 mut val i: U64 = 0U64
                 while i < patterns.count() {
-                    armIds.append(self.appendSyntaxMatchArm(pattern: patterns[i], body: body, span: <Span start=armStart end=p.prevEnd() />))
+                    armIds.append(self.appendSyntaxMatchArm(pattern: patterns[i], body: body, span: <Span start=armStart end=p.prevEnd() />, orGroup: if patterns.count() > 1U64 { give armStart + 1U64 } else { give 0U64 }))
                     i += 1U64
                 }
             }
@@ -9086,6 +9111,24 @@ fn parsePatternAst(p: inout P) -> PatternAst {
 // Parse an arm's `Pat ( | Pat )*` and consume the `=>`. Returns one PatternAst per
 // alternative (the caller shares the body across them). `match` arms have no guards
 // (spec/11), so an `if` here is a clean error pointing at the alternatives.
+fn patternAstNames(pattern: PatternAst) -> Array[String] {
+    mut val names: Array[String] = []
+    if pattern.captureName.bytes().count() != 0U64 { names.append(pattern.captureName) }
+    for val bind in pattern.binds {
+        if bind.name.bytes().count() != 0U64 { names.append(bind.name) }
+    }
+    return names
+}
+
+fn checkOrPatternNames(p: inout P, first: Array[String], next: Array[String], offset: U64) {
+    if first.count() != next.count() { p.fail(off: offset, msg: "or-pattern alternatives must bind the same names (spec/11)") }
+    for val name in first {
+        mut val found = false
+        for val candidate in next { if name == candidate { found = true } }
+        if !found { p.fail(off: offset, msg: "or-pattern alternatives must bind the same names (spec/11)") }
+    }
+}
+
 fn parseArmPatternsAst(p: inout P) -> Array[PatternAst] {
     mut val pats: Array[PatternAst] = []
     pats.append(parsePatternAst(p: inout p))
@@ -9108,6 +9151,14 @@ fn parseArmPatternsAst(p: inout P) -> Array[PatternAst] {
     match p.curKind() {
         Kind.FatArrow => { p.advance() }
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `=>` after a match pattern") }
+    }
+    if pats.count() > 1U64 {
+        val first = patternAstNames(pattern: pats[0U64])
+        mut val index = 1U64
+        while index < pats.count() {
+            checkOrPatternNames(p: inout p, first: first, next: patternAstNames(pattern: pats[index]), offset: pats[index].span.start)
+            index += 1U64
+        }
     }
     return pats
 }
@@ -9142,7 +9193,7 @@ fn parseMatchStmtAst(p: inout P) -> StmtAst {
                 p.advance()
                 break
             }
-            Kind.Eof => { break }
+            Kind.Eof => { p.fail(off: p.base + p.curTok().start, msg: "expected `}}` after match arms") break }
             _ => {
                 val armStart: U64 = p.base + p.curTok().start
                 val pats: Array[PatternAst] = parseArmPatternsAst(p: inout p)
@@ -9150,7 +9201,7 @@ fn parseMatchStmtAst(p: inout P) -> StmtAst {
                 val body: BlockAst = parseArmBodyAst(p: inout p)
                 mut val pi: U64 = 0
                 while pi < pats.count() {
-                    arms.append(<MatchArmAst pattern=pats[pi] body=body span=<Span start=armStart end=p.prevEnd() /> />)
+                    arms.append(<MatchArmAst pattern=pats[pi] body=body span=<Span start=armStart end=p.prevEnd() /> orGroup=if pats.count() > 1U64 { give armStart + 1U64 } else { give 0U64 } />)
                     pi += 1
                 }
             }
@@ -9208,14 +9259,14 @@ fn parseMatchExprAst(p: inout P) -> ExprAst {
                 p.advance()
                 break
             }
-            Kind.Eof => { break }
+            Kind.Eof => { p.fail(off: p.base + p.curTok().start, msg: "expected `}}` after match arms") break }
             _ => {
                 val armStart: U64 = p.base + p.curTok().start
                 val pats: Array[PatternAst] = parseArmPatternsAst(p: inout p)
                 val body: BlockAst = parseExprArmBodyAst(p: inout p, armStart: armStart)
                 mut val pi: U64 = 0
                 while pi < pats.count() {
-                    arms.append(<MatchArmAst pattern=pats[pi] body=body span=<Span start=armStart end=p.prevEnd() /> />)
+                    arms.append(<MatchArmAst pattern=pats[pi] body=body span=<Span start=armStart end=p.prevEnd() /> orGroup=if pats.count() > 1U64 { give armStart + 1U64 } else { give 0U64 } />)
                     pi += 1
                 }
                 match p.curKind() {

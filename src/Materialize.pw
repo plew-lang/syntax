@@ -178,7 +178,7 @@ impl SyntaxFile {
 
     fn materializeMatchArm(id: MatchArmId, p: P) -> MatchArmAst {
         val node: SyntaxMatchArm = self.matchArms[id.raw]
-        return <MatchArmAst pattern=self.materializePattern(id: node.pat, p: p) body=self.materializeBlock(id: node.body, p: p) span=node.span />
+        return <MatchArmAst pattern=self.materializePattern(id: node.pat, p: p) body=self.materializeBlock(id: node.body, p: p) span=node.span orGroup=node.orGroup />
     }
 
     fn materializeMatchArms(slice: SyntaxSlice, p: P) -> Array[MatchArmAst] {

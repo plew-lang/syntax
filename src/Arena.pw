@@ -646,7 +646,7 @@ impl SyntaxFile {
     }
 
     inout fn freezeMatchArmAst(ast: MatchArmAst) -> MatchArmId {
-        self.matchArms.append(<SyntaxMatchArm pat=self.freezePatternAst(ast: ast.pattern) body=self.freezeBlockAst(ast: ast.body) span=ast.span />)
+        self.matchArms.append(<SyntaxMatchArm pat=self.freezePatternAst(ast: ast.pattern) body=self.freezeBlockAst(ast: ast.body) span=ast.span orGroup=ast.orGroup />)
         val id: MatchArmId = <MatchArmId raw=self.matchArms.count() - 1U64 />
         return id
     }
