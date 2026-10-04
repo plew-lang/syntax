@@ -1507,6 +1507,7 @@ pub struct SyntaxMakeField {
 }
 
 pub struct SyntaxBind {
+    pub val isMutable: Bool = false
     pub val field: Span
     pub val name: Span
     pub val fieldStart: U64
@@ -1515,13 +1516,15 @@ pub struct SyntaxBind {
 }
 
 pub struct SyntaxPattern {
+    pub val isRecord: Bool = false
+    pub val captureMutable: Bool = false
     pub val typePath: SyntaxSlice = <SyntaxSlice start=0 count=0 />
     pub val isWildcard: Bool
     pub val isStruct: Bool
     pub val typeName: Span
     pub val variant: Span
     pub val binds: SyntaxSlice
-    pub val isLiteral: Bool
+    pub val isValuePattern: Bool
     pub val lit: ExprId
     pub val captureName: Span
     pub val span: Span
@@ -2005,6 +2008,7 @@ pub struct MakeFieldAst {
 // the field name, so consumers can reference the field by source span directly
 // (precise diagnostics, no interning).
 pub struct BindAst {
+    pub val isMutable: Bool = false
     pub val field: String
     pub val name: String
     pub val fieldStart: U64
@@ -2019,10 +2023,17 @@ pub struct BindAst {
 
 // A match pattern (everything before `=>`): wildcard `_`, an enum variant
 // `E.V(binds)`, a struct destructure `S { binds }`, or a bare literal `0`/`"x"`/
-// `true`/`-1` (isLiteral; `lit` is the literal expression — spec/11). A literal
+// `true`/`-1` (isValuePattern; `lit` is the literal expression — spec/11). A literal
 // match desugars in lowering to a temp-bound `==` if/else chain, so the arena
 // never sees a literal pattern.
+struct PatternBindingName {
+    val name: String
+    val isMutable: Bool
+}
+
 pub struct PatternAst {
+    pub val isRecord: Bool = false
+    pub val captureMutable: Bool = false
     pub val typePath: Array[NameSegmentAst] = []
     pub val isWildcard: Bool
     pub val isStruct: Bool
@@ -2031,7 +2042,7 @@ pub struct PatternAst {
     pub val variant: String
     pub val variantSpan: Span = <Span start=0 end=0 />
     pub val binds: Array[BindAst]
-    pub val isLiteral: Bool = false
+    pub val isValuePattern: Bool = false
     pub val lit: ExprAst = emptyExpr()
     // a capture binding `val x` — a named wildcard that binds the whole scrutinee to
     // `captureName` (spec/11). isWildcard is also true; captureName is "" for a plain `_`.
@@ -3493,131 +3504,159 @@ inout fn parseSyntaxPatternLiteral(p: inout P) -> ExprId {
     }
 }
 
-inout fn appendSyntaxPatternBind(field: Span, name: Span, fieldStart: U64, span: Span) -> BindId {
+inout fn appendSyntaxPatternBind(field: Span, name: Span, fieldStart: U64, span: Span, isMutable: Bool = false) -> BindId {
     val id: BindId = <BindId raw=self.binds.count() />
-    self.binds.append(<SyntaxBind field=field name=name fieldStart=fieldStart span=span isAssign=false />)
+    self.binds.append(<SyntaxBind field=field name=name fieldStart=fieldStart span=span isAssign=false isMutable=isMutable />)
     return id
 }
 
+fn consumePatternBinding(p: inout P) -> Bool {
+    mut val isMutable = false
+    match p.curKind() {
+        Kind.KwMut => { isMutable = true p.advance() }
+        _ => {}
+    }
+    match p.curKind() {
+        Kind.KwVal => { p.advance() }
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `val` in a pattern binding") }
+    }
+    match p.curKind() {
+        Kind.Ident => {}
+        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected a binding name after `val`") }
+    }
+    return isMutable
+}
+
 inout fn parseSyntaxPattern(p: inout P) -> PatternId {
-    val start: U64 = p.base + p.curTok().start
-    val first: Tok = p.curTok()
-    mut val isWildcard: Bool = false
-    mut val isStruct: Bool = false
+    val start = p.base + p.curTok().start
+    mut val isWildcard = false
+    mut val isStruct = false
+    mut val isRecord = false
     mut val typeName: Span = <Span start=0U64 end=0U64 />
     mut val variant: Span = <Span start=0U64 end=0U64 />
     mut val typePath: Array[SyntaxNameSegment] = []
     mut val bindIds: Array[BindId] = []
-    mut val isLiteral: Bool = false
+    mut val isValuePattern = false
     mut val literal: ExprId = <ExprId raw=0U64 />
     mut val capture: Span = <Span start=0U64 end=0U64 />
+    mut val captureMutable = false
+    mut val opened = false
+    mut val closesWithBrace = false
     if patternStartsLiteral(p: inout p) {
-        isLiteral = true
+        isValuePattern = true
         literal = self.parseSyntaxPatternLiteral(p: inout p)
     } else {
         match p.curKind() {
-            Kind.KwVal => {
-                p.advance()
+            Kind.KwVal | Kind.KwMut => {
+                captureMutable = self.consumePatternBinding(p: inout p)
                 capture = p.spanOf(t: p.curTok())
                 p.advance()
                 isWildcard = true
             }
-            _ => {
+            Kind.LParen => { isRecord = true opened = true p.advance() }
+            Kind.Ident => {
+                val first = p.curTok()
                 if rangeEquals(bytes: p.bytes, start: first.start, len: first.len, kw: "_") {
                     isWildcard = true
                     p.advance()
                 } else {
                     typeName = p.spanOf(t: first)
                     p.advance()
-                    mut val opened: Bool = false
                     match p.curKind() {
                         Kind.Dot => {
                             typePath.append(<SyntaxNameSegment name=typeName args=self.emptySlice() argLabels=self.emptySlice() />)
                             while true {
                                 match p.curKind() { Kind.Dot => { p.advance() } _ => { break } }
+                                match p.curKind() { Kind.Ident => {} _ => { p.fail(off: p.base + p.curTok().start, msg: "expected a pattern name after `.`") } }
                                 variant = p.spanOf(t: p.curTok())
                                 typePath.append(<SyntaxNameSegment name=variant args=self.emptySlice() argLabels=self.emptySlice() />)
                                 p.advance()
                             }
-                            match p.curKind() {
-                                Kind.LParen => { p.advance() opened = true }
-                                Kind.LBrace => { isStruct = true p.advance() opened = true }
-                                _ => {}
-                            }
                         }
-                        Kind.LBrace => { isStruct = true p.advance() opened = true }
                         _ => {}
                     }
-                    if opened {
-                        while true {
-                            p.skipNewlines()
-                            match p.curKind() {
-                                Kind.RParen | Kind.RBrace => { p.advance() break }
-                                Kind.Eof => { break }
-                                Kind.KwVal => {
-                                    p.advance()
-                                    val token: Tok = p.curTok()
-                                    val name: Span = p.spanOf(t: token)
-                                    val bindStart: U64 = p.base + token.start
-                                    p.advance()
-                                    bindIds.append(self.appendSyntaxPatternBind(field: name, name: name, fieldStart: bindStart, span: <Span start=bindStart end=p.prevEnd() />))
-                                    match p.curKind() {
-                                        Kind.Comma => { p.advance() }
-                                        _ => {}
-                                    }
-                                }
-                                Kind.Ident => {
-                                    val fieldToken: Tok = p.curTok()
-                                    val field: Span = p.spanOf(t: fieldToken)
-                                    val bindStart: U64 = p.base + fieldToken.start
-                                    p.advance()
-                                    match p.curKind() {
-                                        Kind.Colon => { p.advance() }
-                                        _ => {}
-                                    }
-                                    match p.curKind() {
-                                        Kind.KwVal => {
-                                            p.advance()
-                                            val name: Span = p.spanOf(t: p.curTok())
-                                            p.advance()
-                                            bindIds.append(self.appendSyntaxPatternBind(field: field, name: name, fieldStart: bindStart, span: <Span start=bindStart end=p.prevEnd() />))
-                                        }
-                                        _ => {
-                                            val discard: Tok = p.curTok()
-                                            if rangeEquals(bytes: p.bytes, start: discard.start, len: discard.len, kw: "_") {
-                                                bindIds.append(self.appendSyntaxPatternBind(field: field, name: <Span start=0U64 end=0U64 />, fieldStart: bindStart, span: <Span start=bindStart end=p.prevEnd() />))
-                                                p.advance()
-                                            } else {
-                                                p.fail(off: p.base + discard.start, msg: "a pattern field binds with `val name` or discards with `_`; patterns are single-level — to match a nested structure, bind the field then `match` on the binding (spec/11)")
-                                                p.advance()
-                                            }
-                                        }
-                                    }
-                                    match p.curKind() {
-                                        Kind.Comma => { p.advance() }
-                                        _ => {}
-                                    }
-                                }
-                                _ => { p.advance() }
+                    match p.curKind() {
+                        Kind.LParen => {
+                            if variant.end == variant.start { p.fail(off: p.base + p.curTok().start, msg: "a positional payload pattern requires an enum variant") }
+                            opened = true
+                            p.advance()
+                        }
+                        Kind.LBrace => { isStruct = true opened = true closesWithBrace = true p.advance() }
+                        _ => {}
+                    }
+                    if !opened && variant.end == variant.start {
+                        isValuePattern = true
+                        literal = self.pushExprNode(kind: <SyntaxExprKind.Ident /> span: typeName name: typeName)
+                    }
+                }
+            }
+            _ => { p.fail(off: start, msg: "expected a pattern") p.advance() }
+        }
+    }
+    if opened {
+        while true {
+            p.skipNewlines()
+            match p.curKind() {
+                Kind.RParen => {
+                    if closesWithBrace { p.fail(off: p.base + p.curTok().start, msg: "expected `}}` to close the pattern") }
+                    p.advance()
+                    break
+                }
+                Kind.RBrace => {
+                    if !closesWithBrace { p.fail(off: p.base + p.curTok().start, msg: "expected `)` to close the pattern") }
+                    p.advance()
+                    break
+                }
+                Kind.Eof => { p.fail(off: p.base + p.curTok().start, msg: "unterminated pattern") break }
+                Kind.KwVal | Kind.KwMut => {
+                    val bindingMutable = self.consumePatternBinding(p: inout p)
+                    val name = p.spanOf(t: p.curTok())
+                    p.advance()
+                    bindIds.append(self.appendSyntaxPatternBind(field: name, name: name, fieldStart: name.start, span: <Span start=name.start end=p.prevEnd() />, isMutable: bindingMutable))
+                }
+                Kind.Ident => {
+                    val field = p.spanOf(t: p.curTok())
+                    p.advance()
+                    match p.curKind() {
+                        Kind.Colon => { p.advance() }
+                        _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `:` after the pattern field name") }
+                    }
+                    match p.curKind() {
+                        Kind.KwVal | Kind.KwMut => {
+                            val bindingMutable = self.consumePatternBinding(p: inout p)
+                            val name = p.spanOf(t: p.curTok())
+                            p.advance()
+                            bindIds.append(self.appendSyntaxPatternBind(field: field, name: name, fieldStart: field.start, span: <Span start=field.start end=p.prevEnd() />, isMutable: bindingMutable))
+                        }
+                        _ => {
+                            val discard = p.curTok()
+                            if rangeEquals(bytes: p.bytes, start: discard.start, len: discard.len, kw: "_") {
+                                p.advance()
+                                bindIds.append(self.appendSyntaxPatternBind(field: field, name: <Span start=0U64 end=0U64 />, fieldStart: field.start, span: <Span start=field.start end=p.prevEnd() />))
+                            } else {
+                                p.fail(off: p.base + discard.start, msg: "a pattern field binds with `val name` or `mut val name`, or discards with `_`; patterns are single-level (spec/11)")
+                                p.advance()
                             }
                         }
                     }
                 }
+                _ => { p.fail(off: p.base + p.curTok().start, msg: "expected a field binding or discard in the pattern") p.advance() }
             }
+            match p.curKind() { Kind.Comma => { p.advance() } _ => {} }
         }
     }
     val id: PatternId = <PatternId raw=self.patterns.count() />
-    self.patterns.append(<SyntaxPattern typePath=self.pushNameSegments(items: typePath) isWildcard=isWildcard isStruct=isStruct typeName=typeName variant=variant binds=self.pushBindIdSlice(items: bindIds) isLiteral=isLiteral lit=literal captureName=capture span=<Span start=start end=p.prevEnd() /> />)
+    self.patterns.append(<SyntaxPattern typePath=self.pushNameSegments(items: typePath) isWildcard=isWildcard isStruct=isStruct isRecord=isRecord typeName=typeName variant=variant binds=self.pushBindIdSlice(items: bindIds) isValuePattern=isValuePattern lit=literal captureName=capture captureMutable=captureMutable span=<Span start=start end=p.prevEnd() /> />)
     return id
 }
 
-fn directPatternNames(pattern: SyntaxPattern, p: P) -> Array[String] {
-    mut val names: Array[String] = []
-    if pattern.captureName.end > pattern.captureName.start { names.append(self.materializeText(p: p, span: pattern.captureName)) }
+fn directPatternNames(pattern: SyntaxPattern, p: P) -> Array[PatternBindingName] {
+    mut val names: Array[PatternBindingName] = []
+    if pattern.captureName.end > pattern.captureName.start { names.append(<PatternBindingName name=self.materializeText(p: p, span: pattern.captureName) isMutable=pattern.captureMutable />) }
     mut val index = 0U64
     while index < syntaxPatternBindCount(file: self, pattern: pattern) {
         val bind = syntaxBind(file: self, id: syntaxPatternBind(file: self, pattern: pattern, index: index))
-        if bind.name.end > bind.name.start { names.append(self.materializeText(p: p, span: bind.name)) }
+        if bind.name.end > bind.name.start { names.append(<PatternBindingName name=self.materializeText(p: p, span: bind.name) isMutable=bind.isMutable />) }
         index += 1U64
     }
     return names
@@ -3810,6 +3849,21 @@ fn syntaxPatternBindingAhead(p: inout P) -> Bool {
         }
         return scan.curKind() == <Kind.Eq />
     }
+    if scan.curKind() == <Kind.KwMut /> { scan.advance() }
+    if scan.curKind() == <Kind.LParen /> {
+        scan.advance()
+        mut val depth = 1U64
+        while depth > 0U64 {
+            match scan.curKind() {
+                Kind.Eof => { return false }
+                Kind.LParen => { depth += 1U64 }
+                Kind.RParen => { depth -= 1U64 }
+                _ => {}
+            }
+            scan.advance()
+        }
+        return scan.curKind() == <Kind.Eq />
+    }
     match scan.curKind() {
         Kind.KwVal => {
             scan.advance()
@@ -3938,7 +3992,7 @@ inout fn parseSyntaxPlainBoolCondition(p: inout P, clauses: Array[SyntaxCondClau
 
 inout fn directWildcardPattern(span: Span) -> PatternId {
     val id: PatternId = <PatternId raw=self.patterns.count() />
-    self.patterns.append(<SyntaxPattern isWildcard=true isStruct=false typeName=<Span start=0U64 end=0U64 /> variant=<Span start=0U64 end=0U64 /> binds=self.pushBindIdSlice(items: []) isLiteral=false lit=<ExprId raw=0U64 /> captureName=<Span start=0U64 end=0U64 /> span=span />)
+    self.patterns.append(<SyntaxPattern isWildcard=true isStruct=false typeName=<Span start=0U64 end=0U64 /> variant=<Span start=0U64 end=0U64 /> binds=self.pushBindIdSlice(items: []) isValuePattern=false lit=<ExprId raw=0U64 /> captureName=<Span start=0U64 end=0U64 /> span=span />)
     return id
 }
 
@@ -8961,170 +9015,36 @@ fn patternStartsLiteral(p: inout P) -> Bool {
 }
 
 // Parse a literal pattern's value: an optional leading `-` then an int, or a
-// string / bool / char literal. Restricted (not a full expression) so a pattern
-// can only be a literal, never an arbitrary computation.
-fn parsePatternLiteralAst(p: inout P) -> ExprAst {
-    val sStart: U64 = p.base + p.curTok().start
-    match p.curKind() {
-        Kind.Minus => {
-            p.advance()
-            val o: ExprAst = parsePrimaryAst(p: inout p)
-            return <ExprAst.Unary op=57 operand=o span=<Span start=sStart end=p.prevEnd() /> />
-        }
-        _ => { return parsePrimaryAst(p: inout p) }
-    }
-}
-
+// Keep value-AST callers on the same pattern grammar and diagnostics as
+// SyntaxFile callers; materialization only changes the representation.
 fn parsePatternAst(p: inout P) -> PatternAst {
-    val sStart: U64 = p.base + p.curTok().start
-    val firstTok: Tok = p.curTok()
-    mut val isWildcard: Bool = false
-    mut val isStruct: Bool = false
-    mut val typeName: String = ""
-    mut val typeNameSpan: Span = <Span start=0 end=0 />
-    mut val variant: String = ""
-    mut val variantSpan: Span = <Span start=0 end=0 />
-    mut val typePath: Array[NameSegmentAst] = []
-    mut val binds: Array[BindAst] = []
-    if patternStartsLiteral(p: inout p) {
-        val lit: ExprAst = parsePatternLiteralAst(p: inout p)
-        return <PatternAst isWildcard=false isStruct=false typeName="" variant="" binds=binds isLiteral=true lit=lit span=<Span start=sStart end=p.prevEnd() /> />
-    }
-    // a capture binding `val x`: a named wildcard binding the scrutinee to `x` (spec/11).
-    match p.curKind() {
-        Kind.KwVal => {
-            p.advance()
-            val nameTok: Tok = p.curTok()
-            val cn: String = p.text(t: nameTok)
-            p.advance()
-            return <PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=binds captureName=cn captureNameSpan=p.spanOf(t: nameTok) span=<Span start=sStart end=p.prevEnd() /> />
-        }
-        _ => {}
-    }
-    if rangeEquals(bytes: p.bytes, start: firstTok.start, len: firstTok.len, kw: "_") {
-        isWildcard = true
-        p.advance()
-    } else {
-        typeName = p.text(t: firstTok)
-        typeNameSpan = p.spanOf(t: firstTok)
-        p.advance()
-        mut val popen: Bool = false
-        match p.curKind() {
-            Kind.Dot => {
-                typePath.append(<NameSegmentAst name=typeName nameSpan=typeNameSpan />)
-                while true {
-                    match p.curKind() { Kind.Dot => { p.advance() } _ => { break } }
-                    val token = p.curTok()
-                    variant = p.text(t: token)
-                    variantSpan = p.spanOf(t: token)
-                    typePath.append(<NameSegmentAst name=variant nameSpan=variantSpan />)
-                    p.advance()
-                }
-                match p.curKind() {
-                    Kind.LParen => { p.advance() popen = true }
-                    Kind.LBrace => { isStruct = true p.advance() popen = true }
-                    _ => {}
-                }
-            }
-            Kind.LBrace => {
-                isStruct = true
-                p.advance()
-                popen = true
-            }
-            _ => {}
-        }
-        if popen {
-            while true {
-                p.skipNewlines()
-                match p.curKind() {
-                    Kind.RParen => {
-                        p.advance()
-                        break
-                    }
-                    Kind.RBrace => {
-                        p.advance()
-                        break
-                    }
-                    Kind.Eof => { break }
-                    Kind.KwVal => {
-                        p.advance()
-                        val bTok: Tok = p.curTok()
-                        val bn: String = p.text(t: bTok)
-                        val bStart: U64 = p.base + bTok.start
-                        p.advance()
-                        val bindSpan: Span = p.spanOf(t: bTok)
-                        binds.append(<BindAst field=bn name=bn fieldStart=bStart fieldSpan=bindSpan nameSpan=bindSpan span=<Span start=bStart end=p.prevEnd() /> />)
-                        match p.curKind() {
-                            Kind.Comma => { p.advance() }
-                            _ => {}
-                        }
-                    }
-                    Kind.Ident => {
-                        val fTok: Tok = p.curTok()
-                        val fname: String = p.text(t: fTok)
-                        val bStart: U64 = p.base + fTok.start
-                        p.advance()
-                        match p.curKind() {
-                            Kind.Colon => { p.advance() }
-                            _ => {}
-                        }
-                        match p.curKind() {
-                            Kind.KwVal => {
-                                p.advance()
-                                val nameTok: Tok = p.curTok()
-                                val nm: String = p.text(t: nameTok)
-                                val nameSpan: Span = p.spanOf(t: nameTok)
-                                p.advance()
-                                binds.append(<BindAst field=fname name=nm fieldStart=bStart fieldSpan=p.spanOf(t: fTok) nameSpan=nameSpan span=<Span start=bStart end=p.prevEnd() /> />)
-                            }
-                            _ => {
-                                // `field: _` discard — record it (empty bind name) so the
-                                // completeness check sees the field as covered without
-                                // creating a local for it (struct/variant destructure must
-                                // bind OR discard every field — spec/05,11). Anything other
-                                // than `_` here (a nested pattern `field: Point(...)`) is a
-                                // clean error: Plew patterns are single-level — bind the
-                                // field then `match` on the binding (spec/11).
-                                val dTok: Tok = p.curTok()
-                                if rangeEquals(bytes: p.bytes, start: dTok.start, len: dTok.len, kw: "_") {
-                                    binds.append(<BindAst field=fname name="" fieldStart=bStart fieldSpan=p.spanOf(t: fTok) span=<Span start=bStart end=p.prevEnd() /> />)
-                                    p.advance()
-                                } else {
-                                    p.fail(off: p.base + dTok.start, msg: "a pattern field binds with `val name` or discards with `_`; patterns are single-level — to match a nested structure, bind the field then `match` on the binding (spec/11)")
-                                    p.advance()
-                                }
-                            }
-                        }
-                        match p.curKind() {
-                            Kind.Comma => { p.advance() }
-                            _ => {}
-                        }
-                    }
-                    _ => { p.advance() }
-                }
-            }
-        }
-    }
-    return <PatternAst typePath=typePath isWildcard=isWildcard isStruct=isStruct typeName=typeName typeNameSpan=typeNameSpan variant=variant variantSpan=variantSpan binds=binds span=<Span start=sStart end=p.prevEnd() /> />
+    mut val file: SyntaxFile = <SyntaxFile.empty />
+    val pattern = file.parseSyntaxPattern(p: inout p)
+    return file.materializePattern(id: pattern, p: p)
 }
 
 // Parse an arm's `Pat ( | Pat )*` and consume the `=>`. Returns one PatternAst per
 // alternative (the caller shares the body across them). `match` arms have no guards
 // (spec/11), so an `if` here is a clean error pointing at the alternatives.
-fn patternAstNames(pattern: PatternAst) -> Array[String] {
-    mut val names: Array[String] = []
-    if pattern.captureName.bytes().count() != 0U64 { names.append(pattern.captureName) }
+fn patternAstNames(pattern: PatternAst) -> Array[PatternBindingName] {
+    mut val names: Array[PatternBindingName] = []
+    if pattern.captureName.bytes().count() != 0U64 { names.append(<PatternBindingName name=pattern.captureName isMutable=pattern.captureMutable />) }
     for val bind in pattern.binds {
-        if bind.name.bytes().count() != 0U64 { names.append(bind.name) }
+        if bind.name.bytes().count() != 0U64 { names.append(<PatternBindingName name=bind.name isMutable=bind.isMutable />) }
     }
     return names
 }
 
-fn checkOrPatternNames(p: inout P, first: Array[String], next: Array[String], offset: U64) {
+fn checkOrPatternNames(p: inout P, first: Array[PatternBindingName], next: Array[PatternBindingName], offset: U64) {
     if first.count() != next.count() { p.fail(off: offset, msg: "or-pattern alternatives must bind the same names (spec/11)") }
     for val name in first {
         mut val found = false
-        for val candidate in next { if name == candidate { found = true } }
+        for val candidate in next {
+            if name.name == candidate.name {
+                found = true
+                if name.isMutable != candidate.isMutable { p.fail(off: offset, msg: "or-pattern alternatives must use the same binding mutability (spec/11)") }
+            }
+        }
         if !found { p.fail(off: offset, msg: "or-pattern alternatives must bind the same names (spec/11)") }
     }
 }

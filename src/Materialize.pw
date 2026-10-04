@@ -156,7 +156,7 @@ impl SyntaxFile {
 
     fn materializeBind(id: BindId, p: P) -> BindAst {
         val node: SyntaxBind = self.binds[id.raw]
-        return <BindAst field=self.materializeText(p: p, span: node.field) fieldSpan=node.field name=self.materializeText(p: p, span: node.name) nameSpan=node.name fieldStart=node.fieldStart span=node.span isAssign=node.isAssign />
+        return <BindAst field=self.materializeText(p: p, span: node.field) fieldSpan=node.field name=self.materializeText(p: p, span: node.name) nameSpan=node.name fieldStart=node.fieldStart span=node.span isAssign=node.isAssign isMutable=node.isMutable />
     }
 
     fn materializeBinds(slice: SyntaxSlice, p: P) -> Array[BindAst] {
@@ -172,8 +172,8 @@ impl SyntaxFile {
     fn materializePattern(id: PatternId, p: P) -> PatternAst {
         val node: SyntaxPattern = self.patterns[id.raw]
         mut val lit: ExprAst = emptyExpr()
-        if node.isLiteral { lit = self.materializeExpr(id: node.lit, p: p) }
-        return <PatternAst typePath=self.materializeNamePath(path: node.typePath, p: p) isWildcard=node.isWildcard isStruct=node.isStruct typeName=self.materializeText(p: p, span: node.typeName) typeNameSpan=node.typeName variant=self.materializeText(p: p, span: node.variant) variantSpan=node.variant binds=self.materializeBinds(slice: node.binds, p: p) isLiteral=node.isLiteral lit=lit captureName=self.materializeText(p: p, span: node.captureName) captureNameSpan=node.captureName span=node.span />
+        if node.isValuePattern { lit = self.materializeExpr(id: node.lit, p: p) }
+        return <PatternAst typePath=self.materializeNamePath(path: node.typePath, p: p) isWildcard=node.isWildcard isStruct=node.isStruct isRecord=node.isRecord typeName=self.materializeText(p: p, span: node.typeName) typeNameSpan=node.typeName variant=self.materializeText(p: p, span: node.variant) variantSpan=node.variant binds=self.materializeBinds(slice: node.binds, p: p) captureMutable=node.captureMutable isValuePattern=node.isValuePattern lit=lit captureName=self.materializeText(p: p, span: node.captureName) captureNameSpan=node.captureName span=node.span />
     }
 
     fn materializeMatchArm(id: MatchArmId, p: P) -> MatchArmAst {
