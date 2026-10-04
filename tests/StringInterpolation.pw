@@ -108,7 +108,7 @@ fn main() {
     literal(source: "\"{{{{braces}}}}\"")
     literal(source: "\"\\u{{7b}}\"")
     literal(source: "\"first\nsecond\"")
-    for val invalid in ["\"{{value:}}\"", "\"{{}}\"", "\"{{value\"", "\"}}\"", "\"\\{{value}}\"", "\"{{match x {{ _ => 1I64 }}}}\""] {
+    for val invalid in ["\"{{value:}}\"", "\"{{}}\"", "\"{{value\"", "\"}}\"", "\"\\{{value}}\""] {
         reject(source: invalid)
     }
     literal(source: "\"{{{{\"")
@@ -117,5 +117,8 @@ fn main() {
     accept(source: "\"{{{{{{value}}}}}}\"")
     accept(source: "\"{{value // }} and quote \" inside comment\n}}\"")
     accept(source: "\"{{if true {{ give 1I64 }} else {{ give 2I64 }}}}\"")
+    accept(source: "\"{{match x {{ _ => 1I64 }}}}\"")
+    accept(source: "\"{{ {{ give 42 }} }}\"")
+    accept(source: "\"{{value: {{ give </> }} }}\"")
     print("ok")
 }

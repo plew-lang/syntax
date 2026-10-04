@@ -2183,7 +2183,6 @@ pub struct P {
     // records the first syntax error (original-coordinate offset + message). The
     // compiler frontend checks `hasErr` after a parse and reports it loudly; a macro
     // can inspect it or ignore it.
-    pub mut val interpolationDepth: U64 = 0U64
     pub mut val hasErr: Bool = false
     pub mut val errOff: U64 = 0
     pub mut val errMsg: String = ""
@@ -3068,13 +3067,11 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
             return self.emptySyntaxExpr()
         }
         Kind.LBrace => {
-            if p.interpolationDepth != 0U64 { p.fail(off: start, msg: "block expressions are not allowed inside string interpolation") }
             val body = self.parseSyntaxBlock(p: inout p)
             return self.pushExprNode(kind: <SyntaxExprKind.BlockExpr /> span: <Span start=start end=p.prevEnd() /> block0: body)
         }
         Kind.Lt => { return self.parseSyntaxMake(p: inout p) }
         Kind.KwMatch => {
-            if p.interpolationDepth != 0U64 { p.fail(off: start, msg: "match expressions are not allowed inside string interpolation") }
             return self.parseSyntaxMatchExpr(p: inout p)
         }
         Kind.KwIf => { return self.parseSyntaxIfExpr(p: inout p) }
@@ -3366,14 +3363,12 @@ inout fn parseSyntaxStringInterpolation(p: inout P) -> ExprId {
         p.advance()
         if token.kind == <Kind.StrTail /> { break }
         val valueStart = text.end
-        p.interpolationDepth += 1U64
         val value = self.parseSyntaxExpr(p: inout p)
         mut val options = <ExprId raw=0U64 />
         if p.curKind() == <Kind.Colon /> {
             p.advance()
             options = self.parseSyntaxExpr(p: inout p)
         }
-        p.interpolationDepth -= 1U64
         token = p.curTok()
         if token.kind != <Kind.StrMiddle /> && token.kind != <Kind.StrTail /> {
             p.fail(off: p.base + token.start, msg: "expected the end of a string interpolation")
@@ -8485,7 +8480,6 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             return <ExprAst.IntLit value=0 isBool=false tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.LBrace => {
-            if p.interpolationDepth != 0U64 { p.fail(off: sStart, msg: "block expressions are not allowed inside string interpolation") }
             val body = parseBlockAst(p: inout p)
             return <ExprAst.BlockExpr body=body span=<Span start=sStart end=p.prevEnd() /> />
         }
