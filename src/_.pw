@@ -561,6 +561,7 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
 
 pub fn lex(lx: inout Lexer) {
     mut val interpolations: Array[U64] = []
+    mut val blockDepths: Array[I64] = []
     while lx.pos < lx.bytes.count() {
         val b: U8 = lx.at(off: 0)
         if b == ' ' {
@@ -939,6 +940,8 @@ pub fn lex(lx: inout Lexer) {
             continue
         }
         if b == '{' {
+            blockDepths.append(lx.depth)
+            lx.depth = 0I64
             if interpolations.count() != 0U64 {
                 val top = interpolations.count() - 1U64
                 interpolations[top] += 1U64
@@ -957,6 +960,10 @@ pub fn lex(lx: inout Lexer) {
                     continue
                 }
                 interpolations[top] -= 1U64
+            }
+            if blockDepths.count() != 0U64 {
+                lx.depth = blockDepths[blockDepths.count() - 1U64]
+                blockDepths.removeLast()
             }
             lx.emit(k: <Kind.RBrace />, start: lx.pos, len: 1)
             continue

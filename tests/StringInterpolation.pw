@@ -67,7 +67,23 @@ fn literal(source: String) {
     assert(lexer.toks[0U64].len == source.bytes().count())
 }
 
+fn newlineCount(source: String, expected: U64) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val count = 0U64
+    for token in lexer.toks {
+        if Syntax.kindCode(k: token.kind) == 1I64 { count += 1U64 }
+    }
+    assert(count == expected)
+    assert(lexer.depth == 0I64)
+}
+
 fn main() {
+    newlineCount(source: "({{val x = 10I64\n-3I64\ngive x}})", expected: 2U64)
+    newlineCount(source: "\"{{ {{val x = 10I64\n-3I64\ngive x}} }}\"", expected: 2U64)
+    newlineCount(source: "(1I64\n+2I64)", expected: 0U64)
+    newlineCount(source: "({{val x = (10I64\n-3I64)\ngive x}}\n)", expected: 1U64)
+
     val source = "\"A{{calculate(scale: 2): <precision=2U8 />}}B{{\"nested {{value}}\"}}C\""
     mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
     Syntax.lex(lx: inout lexer)
