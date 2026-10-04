@@ -75,6 +75,19 @@ pub impl SyntaxFile {
     fn memberNode(id: MemberId) -> SyntaxMember { return self.members[id.raw] }
     fn sigNode(id: SigId) -> SyntaxSig { return self.sigs[id.raw] }
     fn blockNode(id: BlockId) -> SyntaxBlock { return self.blocks[id.raw] }
+    fn conditionClause(conditions: SyntaxSlice, index: U64) -> SyntaxCondClause { return self.conditionClauses[conditions.start + index] }
+    inout fn pushConditionClauses(items: Array[SyntaxCondClause]) -> SyntaxSlice {
+        val start = self.conditionClauses.count()
+        for val item in items { self.conditionClauses.append(item) }
+        return <SyntaxSlice start=start count=items.count() />
+    }
+    inout fn freezeConditionClauses(items: Array[CondClause]) -> SyntaxSlice {
+        mut val clauses: Array[SyntaxCondClause] = []
+        for val item in items {
+            clauses.append(<SyntaxCondClause isBinding=item.isBinding pattern=self.freezePatternAst(ast: item.pattern) expr=self.freezeExprAst(ast: item.expr) />)
+        }
+        return self.pushConditionClauses(items: clauses)
+    }
     fn exprNode(id: ExprId) -> SyntaxExpr { return self.exprs[id.raw] }
     fn argNode(id: ArgId) -> SyntaxArg { return self.args[id.raw] }
     fn makeFieldNode(id: MakeFieldId) -> SyntaxMakeField { return self.makeFields[id.raw] }
@@ -386,10 +399,11 @@ impl SyntaxFile {
         arms: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
         params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
         typePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
-        typeArgs: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
+        typeArgs: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+        conditions: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     ) -> ExprId {
         val id: ExprId = <ExprId raw=self.exprs.count() />
-        self.exprs.append(<SyntaxExpr kind=kind span=span text=text name=name nameSpan=nameSpan op=op intValue=intValue flag0=flag0 flag1=flag1 child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 args=args elems=elems keys=keys values=values fields=fields arms=arms params=params typePath=typePath typeArgs=typeArgs />)
+        self.exprs.append(<SyntaxExpr conditions=conditions kind=kind span=span text=text name=name nameSpan=nameSpan op=op intValue=intValue flag0=flag0 flag1=flag1 child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 args=args elems=elems keys=keys values=values fields=fields arms=arms params=params typePath=typePath typeArgs=typeArgs />)
         return id
     }
 
@@ -691,6 +705,9 @@ impl SyntaxFile {
             StmtAst.Return(value: val value, hasValue: val hasValue, span: val span) => {
                 self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.Return /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=hasValue flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: value) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=<BlockId raw=0U64 /> block1=<BlockId raw=0U64 /> arms=self.emptySlice() binds=self.emptySlice() />)
             }
+            StmtAst.IfChain(val conditions, val thenBlk, val elseBlk, val span) => {
+                self.stmts.append(<SyntaxStmt conditions=self.freezeConditionClauses(items: conditions) kind=<SyntaxStmtKind.IfChain /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=true flag1=false flag2=false flag3=false child0=<ExprId raw=0U64 /> child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=self.freezeBlockAst(ast: thenBlk) block1=self.freezeBlockAst(ast: elseBlk) arms=self.emptySlice() binds=self.emptySlice() />)
+            }
             StmtAst.If(cond: val cond, thenBlk: val thenBlk, elseBlk: val elseBlk, hasElse: val hasElse, span: val span) => {
                 self.stmts.append(<SyntaxStmt kind=<SyntaxStmtKind.If /> span=span name=<Span start=0 end=0 /> typeName=<Span start=0 end=0 /> op=0 flag0=hasElse flag1=false flag2=false flag3=false child0=self.freezeExprAst(ast: cond) child1=<ExprId raw=0U64 /> child2=<ExprId raw=0U64 /> type0=<TypeId raw=0U64 /> block0=self.freezeBlockAst(ast: thenBlk) block1=self.freezeBlockAst(ast: elseBlk) arms=self.emptySlice() binds=self.emptySlice() />)
             }
@@ -781,6 +798,7 @@ impl SyntaxFile {
             ExprAst.Cast(operand: val operand, ty: val ty, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.Cast /> span: span child0: self.freezeExprAst(ast: operand) type0: self.freezeTypeAst(ast: ty)) }
             ExprAst.MatchExpr(scrut: val scrut, arms: val arms, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.MatchExpr /> span: span child0: self.freezeExprAst(ast: scrut) arms: self.freezeMatchArmAstSlice(items: arms)) }
             ExprAst.BlockExpr(val body, val span) => { return self.pushExprNode(kind: <SyntaxExprKind.BlockExpr /> span: span block0: self.freezeBlockAst(ast: body)) }
+            ExprAst.IfChain(val conditions, val thenBlk, val elseBlk, val span) => { return self.pushExprNode(kind: <SyntaxExprKind.IfChain /> span: span block0: self.freezeBlockAst(ast: thenBlk) block1: self.freezeBlockAst(ast: elseBlk) conditions: self.freezeConditionClauses(items: conditions)) }
             ExprAst.IfExpr(cond: val cond, thenBlk: val thenBlk, elseBlk: val elseBlk, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: self.freezeExprAst(ast: cond) block0: self.freezeBlockAst(ast: thenBlk) block1: self.freezeBlockAst(ast: elseBlk)) }
             ExprAst.OptChain(base: val base, cont: val cont, memberSpan: val memberSpan, span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.OptChain /> span: span name: memberSpan child0: self.freezeExprAst(ast: base) child1: self.freezeExprAst(ast: cont)) }
             ExprAst.ChainHole(span: val span) => { return self.pushExprNode(kind: <SyntaxExprKind.ChainHole /> span: span) }

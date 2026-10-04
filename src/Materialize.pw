@@ -169,6 +169,18 @@ impl SyntaxFile {
         return result
     }
 
+    fn materializeConditions(conditions: SyntaxSlice, p: P) -> Array[CondClause] {
+        mut val result: Array[CondClause] = []
+        mut val index = 0U64
+        while index < conditions.count {
+            val clause = self.conditionClauses[conditions.start + index]
+            mut val pattern = <PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=[] span=<Span start=0U64 end=0U64 /> />
+            if clause.isBinding { pattern = self.materializePattern(id: clause.pattern, p: p) }
+            result.append(<CondClause isBinding=clause.isBinding pattern=pattern expr=self.materializeExpr(id: clause.expr, p: p) />)
+            index += 1U64
+        }
+        return result
+    }
     fn materializePattern(id: PatternId, p: P) -> PatternAst {
         val node: SyntaxPattern = self.patterns[id.raw]
         mut val lit: ExprAst = emptyExpr()
@@ -213,6 +225,7 @@ impl SyntaxFile {
             SyntaxStmtKind.Assign => { return <StmtAst.Assign op=node.op target=self.materializeExpr(id: node.child0, p: p) value=self.materializeExpr(id: node.child1, p: p) span=node.span /> }
             SyntaxStmtKind.ExprStmt => { return <StmtAst.ExprStmt expr=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
             SyntaxStmtKind.Return => { return <StmtAst.Return value=self.materializeExpr(id: node.child0, p: p) hasValue=node.flag0 span=node.span /> }
+            SyntaxStmtKind.IfChain => { return <StmtAst.IfChain conditions=self.materializeConditions(conditions: node.conditions, p: p) thenBlk=self.materializeBlock(id: node.block0, p: p) elseBlk=self.materializeBlock(id: node.block1, p: p) span=node.span /> }
             SyntaxStmtKind.If => { return <StmtAst.If cond=self.materializeExpr(id: node.child0, p: p) thenBlk=self.materializeBlock(id: node.block0, p: p) elseBlk=self.materializeBlock(id: node.block1, p: p) hasElse=node.flag0 span=node.span /> }
             SyntaxStmtKind.While => { return <StmtAst.While cond=self.materializeExpr(id: node.child0, p: p) body=self.materializeBlock(id: node.block0, p: p) span=node.span /> }
             SyntaxStmtKind.For => {
@@ -284,6 +297,7 @@ impl SyntaxFile {
             SyntaxExprKind.Cast => { return <ExprAst.Cast operand=self.materializeExpr(id: node.child0, p: p) ty=self.materializeType(id: node.type0, p: p) span=node.span /> }
             SyntaxExprKind.MatchExpr => { return <ExprAst.MatchExpr scrut=self.materializeExpr(id: node.child0, p: p) arms=self.materializeMatchArms(slice: node.arms, p: p) span=node.span /> }
             SyntaxExprKind.BlockExpr => { return <ExprAst.BlockExpr body=self.materializeBlock(id: node.block0, p: p) span=node.span /> }
+            SyntaxExprKind.IfChain => { return <ExprAst.IfChain conditions=self.materializeConditions(conditions: node.conditions, p: p) thenBlk=self.materializeBlock(id: node.block0, p: p) elseBlk=self.materializeBlock(id: node.block1, p: p) span=node.span /> }
             SyntaxExprKind.IfExpr => { return <ExprAst.IfExpr cond=self.materializeExpr(id: node.child0, p: p) thenBlk=self.materializeBlock(id: node.block0, p: p) elseBlk=self.materializeBlock(id: node.block1, p: p) span=node.span /> }
             SyntaxExprKind.OptChain => { return <ExprAst.OptChain base=self.materializeExpr(id: node.child0, p: p) cont=self.materializeExpr(id: node.child1, p: p) memberSpan=node.name span=node.span /> }
             SyntaxExprKind.ChainHole => { return <ExprAst.ChainHole span=node.span /> }

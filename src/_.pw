@@ -1172,6 +1172,7 @@ pub struct SyntaxFile {
     mut val blocks: Array[SyntaxBlock] = []
     mut val patterns: Array[SyntaxPattern] = []
     mut val matchArms: Array[SyntaxMatchArm] = []
+    mut val conditionClauses: Array[SyntaxCondClause] = []
     mut val args: Array[SyntaxArg] = []
     mut val makeFields: Array[SyntaxMakeField] = []
     mut val binds: Array[SyntaxBind] = []
@@ -1449,6 +1450,7 @@ pub enum SyntaxExprKind {
     BlockExpr
     MatchExpr
     IfExpr
+    IfChain
     OptChain
     ChainHole
     Try
@@ -1464,6 +1466,7 @@ pub enum SyntaxExprKind {
 }
 
 pub struct SyntaxExpr {
+    pub val conditions: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val typePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val kind: SyntaxExprKind
     pub val span: Span
@@ -1548,6 +1551,7 @@ pub enum SyntaxStmtKind {
     ExprStmt
     Return
     If
+    IfChain
     While
     For
     Match
@@ -1559,6 +1563,7 @@ pub enum SyntaxStmtKind {
 }
 
 pub struct SyntaxStmt {
+    pub val conditions: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val kind: SyntaxStmtKind
     pub val span: Span
     pub val name: Span
@@ -2111,6 +2116,7 @@ pub enum ExprAst {
     MatchExpr(scrut: ExprAst, arms: Array[MatchArmAst], span: Span)
     BlockExpr(body: BlockAst, span: Span)
     IfExpr(cond: ExprAst, thenBlk: BlockAst, elseBlk: BlockAst, span: Span)
+    IfChain(conditions: Array[CondClause], thenBlk: BlockAst, elseBlk: BlockAst, span: Span)
     // `base?.<cont>` optional chaining (spec/12): `cont` is the trailing member-access
     // chain applied to the UNWRAPPED base value, rooted at a `ChainHole` placeholder
     // (`a?.b.c` -> cont = Field(Field(ChainHole, b), c)). Swift-style propagation — the
@@ -2155,6 +2161,7 @@ pub fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.MatchExpr(scrut: _, arms: _, val span) => { return span }
         ExprAst.BlockExpr(body: _, val span) => { return span }
         ExprAst.IfExpr(cond: _, thenBlk: _, elseBlk: _, val span) => { return span }
+        ExprAst.IfChain(conditions: _, thenBlk: _, elseBlk: _, val span) => { return span }
         ExprAst.OptChain(base: _, cont: _, memberSpan: _, val span) => { return span }
         ExprAst.ChainHole(val span) => { return span }
         ExprAst.Try(operand: _, val span) => { return span }
@@ -2173,6 +2180,7 @@ pub enum StmtAst {
     ExprStmt(expr: ExprAst, span: Span)
     Return(value: ExprAst, hasValue: Bool, span: Span)
     If(cond: ExprAst, thenBlk: BlockAst, elseBlk: BlockAst, hasElse: Bool, span: Span)
+    IfChain(conditions: Array[CondClause], thenBlk: BlockAst, elseBlk: BlockAst, span: Span)
     While(cond: ExprAst, body: BlockAst, span: Span)
     For(varName: String, varNameSpan: Span, varTy: TypeAst, hasVarTy: Bool, isRange: Bool, inclusive: Bool, iter: ExprAst, rangeHi: ExprAst, body: BlockAst, isStruct: Bool, patType: String, patTypeSpan: Span, binds: Array[BindAst], span: Span)
     Match(scrut: ExprAst, arms: Array[MatchArmAst], span: Span)
@@ -2593,10 +2601,9 @@ fn parseType(p: inout P) -> TypeAst {
 }
 
 // A condition-chain clause is deliberately only a set of arena IDs.  Unlike the
-// legacy CondClause it never owns a recursive value AST: parsing a condition
-// chain writes its final children directly to SyntaxFile, and this short-lived
-// carrier only decides how those IDs are desugared into If/Match rows.
-struct SyntaxCondClause {
+// value CondClause it never owns a recursive value AST. Clauses are retained
+// in a flat SyntaxFile pool until semantic scope resolution.
+pub struct SyntaxCondClause {
     pub val isBinding: Bool
     pub val pattern: PatternId
     pub val expr: ExprId
@@ -3709,10 +3716,11 @@ inout fn pushDirectSyntaxStmt(
     block0: BlockId = <BlockId raw=0U64 />,
     block1: BlockId = <BlockId raw=0U64 />,
     arms: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
-    binds: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
+    binds: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />,
+    conditions: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
 ) -> StmtId {
     val id: StmtId = <StmtId raw=self.stmts.count() />
-    self.stmts.append(<SyntaxStmt kind=kind span=span name=name typeName=typeName op=op flag0=flag0 flag1=flag1 flag2=flag2 flag3=flag3 isRecordPattern=isRecordPattern child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 arms=arms binds=binds />)
+    self.stmts.append(<SyntaxStmt conditions=conditions kind=kind span=span name=name typeName=typeName op=op flag0=flag0 flag1=flag1 flag2=flag2 flag3=flag3 isRecordPattern=isRecordPattern child0=child0 child1=child1 child2=child2 type0=type0 block0=block0 block1=block1 arms=arms binds=binds />)
     return id
 }
 
@@ -3996,36 +4004,14 @@ inout fn directWildcardPattern(span: Span) -> PatternId {
     return id
 }
 
-inout fn buildSyntaxCondChainStmt(clauses: Array[SyntaxCondClause], idx: U64, thenBlk: BlockId, elseBlk: BlockId, span: Span) -> StmtId {
-    val clause: SyntaxCondClause = clauses[idx]
-    mut val inner: BlockId = thenBlk
-    if idx + 1U64 < clauses.count() {
-        inner = self.directBlock(stmts: [self.buildSyntaxCondChainStmt(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)])
-    }
-    if clause.isBinding {
-        val arms: SyntaxSlice = self.pushMatchArmIdSlice(items: [
-            self.appendSyntaxMatchArm(pattern: clause.pattern, body: inner, span: span),
-            self.appendSyntaxMatchArm(pattern: self.directWildcardPattern(span: span), body: elseBlk, span: span)
-        ])
-        return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Match /> span: span child0: clause.expr arms: arms)
-    }
-    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.If /> span: span flag0: true child0: clause.expr block0: inner block1: elseBlk)
+// A condition chain retains a single failure continuation outside every
+// binding scope. Desugaring it here into nested match/if would capture else.
+inout fn buildSyntaxCondChainStmt(clauses: Array[SyntaxCondClause], thenBlk: BlockId, elseBlk: BlockId, span: Span) -> StmtId {
+    return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.IfChain /> span: span block0: thenBlk block1: elseBlk conditions: self.pushConditionClauses(items: clauses))
 }
 
-inout fn buildSyntaxCondChainExpr(clauses: Array[SyntaxCondClause], idx: U64, thenBlk: BlockId, elseBlk: BlockId, span: Span) -> ExprId {
-    val clause: SyntaxCondClause = clauses[idx]
-    mut val inner: BlockId = thenBlk
-    if idx + 1U64 < clauses.count() {
-        val next: ExprId = self.buildSyntaxCondChainExpr(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
-        inner = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: span child0: next)])
-    }
-    if clause.isBinding {
-        return self.pushExprNode(kind: <SyntaxExprKind.MatchExpr /> span: span child0: clause.expr arms: self.pushMatchArmIdSlice(items: [
-            self.appendSyntaxMatchArm(pattern: clause.pattern, body: inner, span: span),
-            self.appendSyntaxMatchArm(pattern: self.directWildcardPattern(span: span), body: elseBlk, span: span)
-        ]))
-    }
-    return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: clause.expr block0: inner block1: elseBlk)
+inout fn buildSyntaxCondChainExpr(clauses: Array[SyntaxCondClause], thenBlk: BlockId, elseBlk: BlockId, span: Span) -> ExprId {
+    return self.pushExprNode(kind: <SyntaxExprKind.IfChain /> span: span block0: thenBlk block1: elseBlk conditions: self.pushConditionClauses(items: clauses))
 }
 
 inout fn parseSyntaxElseStmtBlock(p: inout P) -> BlockId {
@@ -4058,7 +4044,7 @@ inout fn parseSyntaxIfStmt(p: inout P) -> StmtId {
     val elseBlk: BlockId = self.parseSyntaxElseStmtBlock(p: inout p)
     val span: Span = <Span start=start end=p.prevEnd() />
     if hasBinding {
-        return self.buildSyntaxCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
+        return self.buildSyntaxCondChainStmt(clauses: clauses, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
     }
     return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.If /> span: span flag0: hasElse child0: cond block0: thenBlk block1: elseBlk)
 }
@@ -4086,7 +4072,7 @@ inout fn parseSyntaxIfExpr(p: inout P) -> ExprId {
     }
     val span: Span = <Span start=start end=p.prevEnd() />
     if hasBinding {
-        return self.buildSyntaxCondChainExpr(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
+        return self.buildSyntaxCondChainExpr(clauses: clauses, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
     }
     return self.pushExprNode(kind: <SyntaxExprKind.IfExpr /> span: span child0: cond block0: thenBlk block1: elseBlk)
 }
@@ -4104,7 +4090,7 @@ inout fn parseSyntaxWhile(p: inout P) -> StmtId {
         return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.While /> span: span child0: cond block0: body)
     }
     val breakBlk: BlockId = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Break /> span: span)])
-    val chain: StmtId = self.buildSyntaxCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: body, elseBlk: breakBlk, span: span)
+    val chain: StmtId = self.buildSyntaxCondChainStmt(clauses: clauses, thenBlk: body, elseBlk: breakBlk, span: span)
     val always: ExprId = self.pushExprNode(kind: <SyntaxExprKind.IntLit /> span: span intValue: 1U64 flag0: true)
     return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.While /> span: span child0: always block0: self.directBlock(stmts: [chain]))
 }
@@ -4625,6 +4611,7 @@ inout fn syntaxStmtDiverges(id: StmtId) -> Bool {
     val stmt: SyntaxStmt = self.stmts[id.raw]
     match stmt.kind {
         SyntaxStmtKind.Return | SyntaxStmtKind.Panic | SyntaxStmtKind.Break | SyntaxStmtKind.Continue => { return true }
+        SyntaxStmtKind.IfChain => { return self.syntaxBlockDiverges(id: stmt.block0) && self.syntaxBlockDiverges(id: stmt.block1) }
         SyntaxStmtKind.If => {
             if stmt.flag0 { return self.syntaxBlockDiverges(id: stmt.block0) && self.syntaxBlockDiverges(id: stmt.block1) }
             return false
@@ -4682,7 +4669,7 @@ inout fn parseSyntaxGuard(p: inout P) -> StmtId {
     val continuation: BlockId = self.directBlock(stmts: self.parseSyntaxStmtsUntilBrace(p: inout p))
     val span: Span = <Span start=start end=p.prevEnd() />
     if hasBinding {
-        return self.buildSyntaxCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: continuation, elseBlk: elseBody, span: span)
+        return self.buildSyntaxCondChainStmt(clauses: clauses, thenBlk: continuation, elseBlk: elseBody, span: span)
     }
     return self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.If /> span: span flag0: true child0: condition block0: continuation block1: elseBody)
 }
@@ -9304,7 +9291,7 @@ fn parseElseBlockAst(p: inout P) -> BlockAst {
 
 // One clause of a condition chain (spec/11): a refutable binding `PATTERN = expr`, or
 // a Bool expression.
-struct CondClause {
+pub struct CondClause {
     pub val isBinding: Bool
     pub val pattern: PatternAst
     pub val expr: ExprAst
@@ -9342,44 +9329,13 @@ fn parseCondChain(p: inout P) -> Array[CondClause] {
     return clauses
 }
 
-// Build the statement form of a condition chain: each binding clause becomes a `match`
-// (pattern arm runs the inner chain, wildcard arm runs `elseBlk`), each Bool clause an
-// `if … else elseBlk`. The innermost (after the last clause) runs `thenBlk`.
-fn buildCondChainStmt(clauses: Array[CondClause], idx: U64, thenBlk: BlockAst, elseBlk: BlockAst, span: Span) -> StmtAst {
-    val clause: CondClause = clauses[idx]
-    mut val inner: BlockAst = thenBlk
-    if idx + 1U64 < clauses.count() {
-        mut val one: Array[StmtAst] = []
-        one.append(buildCondChainStmt(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span))
-        inner = <BlockAst stmts=one />
-    }
-    if clause.isBinding {
-        mut val arms: Array[MatchArmAst] = []
-        arms.append(<MatchArmAst pattern=clause.pattern body=inner span=span />)
-        arms.append(<MatchArmAst pattern=<PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=[] span=span /> body=elseBlk span=span />)
-        return <StmtAst.Match scrut=clause.expr arms=arms span=span />
-    }
-    return <StmtAst.If cond=clause.expr thenBlk=inner elseBlk=elseBlk hasElse=true span=span />
+// Keep the same explicit chain in the public value AST and arena API.
+fn buildCondChainStmt(clauses: Array[CondClause], thenBlk: BlockAst, elseBlk: BlockAst, span: Span) -> StmtAst {
+    return <StmtAst.IfChain conditions=clauses thenBlk=thenBlk elseBlk=elseBlk span=span />
 }
 
-// Build the value (expression) form of a condition chain: binding clauses become a
-// value `match`, Bool clauses a value `if`. `thenBlk`/`elseBlk` end in `give`.
-fn buildCondChainExpr(clauses: Array[CondClause], idx: U64, thenBlk: BlockAst, elseBlk: BlockAst, span: Span) -> ExprAst {
-    val clause: CondClause = clauses[idx]
-    mut val inner: BlockAst = thenBlk
-    if idx + 1U64 < clauses.count() {
-        val innerExpr: ExprAst = buildCondChainExpr(clauses: clauses, idx: idx + 1U64, thenBlk: thenBlk, elseBlk: elseBlk, span: span)
-        mut val one: Array[StmtAst] = []
-        one.append(<StmtAst.Give value=innerExpr span=span />)
-        inner = <BlockAst stmts=one />
-    }
-    if clause.isBinding {
-        mut val arms: Array[MatchArmAst] = []
-        arms.append(<MatchArmAst pattern=clause.pattern body=inner span=span />)
-        arms.append(<MatchArmAst pattern=<PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=[] span=span /> body=elseBlk span=span />)
-        return <ExprAst.MatchExpr scrut=clause.expr arms=arms span=span />
-    }
-    return <ExprAst.IfExpr cond=clause.expr thenBlk=inner elseBlk=elseBlk span=span />
+fn buildCondChainExpr(clauses: Array[CondClause], thenBlk: BlockAst, elseBlk: BlockAst, span: Span) -> ExprAst {
+    return <ExprAst.IfChain conditions=clauses thenBlk=thenBlk elseBlk=elseBlk span=span />
 }
 
 // Parse an `if`-let statement `if <cond-chain> { then } [else { els }]` (spec/11). The
@@ -9389,7 +9345,7 @@ fn parseIfLetStmt(p: inout P, sStart: U64) -> StmtAst {
     val thenBlk: BlockAst = parseBlockAst(p: inout p)
     p.skipNewlines()
     val elseBlk: BlockAst = parseElseBlockAst(p: inout p)
-    return buildCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: <Span start=sStart end=p.prevEnd() />)
+    return buildCondChainStmt(clauses: clauses, thenBlk: thenBlk, elseBlk: elseBlk, span: <Span start=sStart end=p.prevEnd() />)
 }
 
 fn parseIfStmtAst(p: inout P) -> StmtAst {
@@ -9435,7 +9391,7 @@ fn parseIfLetExpr(p: inout P, sStart: U64) -> ExprAst {
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `else` in a value-position if") }
     }
     val elseBlk: BlockAst = parseBlockAst(p: inout p)
-    return buildCondChainExpr(clauses: clauses, idx: 0U64, thenBlk: thenBlk, elseBlk: elseBlk, span: <Span start=sStart end=p.prevEnd() />)
+    return buildCondChainExpr(clauses: clauses, thenBlk: thenBlk, elseBlk: elseBlk, span: <Span start=sStart end=p.prevEnd() />)
 }
 
 fn parseIfExprAst(p: inout P) -> ExprAst {
@@ -9487,7 +9443,7 @@ fn parseWhileLetStmt(p: inout P, sStart: U64) -> StmtAst {
     breakStmts.append(<StmtAst.Break span=span />)
     val breakBlk: BlockAst = <BlockAst stmts=breakStmts />
     mut val loopStmts: Array[StmtAst] = []
-    loopStmts.append(buildCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: body, elseBlk: breakBlk, span: span))
+    loopStmts.append(buildCondChainStmt(clauses: clauses, thenBlk: body, elseBlk: breakBlk, span: span))
     val trueLit: ExprAst = <ExprAst.IntLit value=1 isBool=true tySuffix="" literalSpan=<Span start=0 end=0 /> tySuffixSpan=<Span start=0 end=0 /> span=span />
     return <StmtAst.While cond=trueLit body=<BlockAst stmts=loopStmts /> span=span />
 }
@@ -9914,6 +9870,7 @@ fn stmtDivergesAst(s: StmtAst) -> Bool {
         StmtAst.Panic(msg: _, span: _) => { return true }
         StmtAst.Break(span: _) => { return true }
         StmtAst.Continue(span: _) => { return true }
+        StmtAst.IfChain(conditions: _, val thenBlk, val elseBlk, span: _) => { return blockDivergesAst(b: thenBlk) && blockDivergesAst(b: elseBlk) }
         StmtAst.If(cond: _, val thenBlk, val elseBlk, val hasElse, span: _) => {
             if hasElse {
                 if blockDivergesAst(b: thenBlk) {
@@ -9956,7 +9913,7 @@ fn parseGuardStmt(p: inout P) -> StmtAst {
         val cont: Array[StmtAst] = parseStmtsUntilBrace(p: inout p)
         val span: Span = <Span start=sStart end=p.prevEnd() />
         // the continuation is the success branch (bindings escape into it).
-        return buildCondChainStmt(clauses: clauses, idx: 0U64, thenBlk: <BlockAst stmts=cont />, elseBlk: elseBody, span: span)
+        return buildCondChainStmt(clauses: clauses, thenBlk: <BlockAst stmts=cont />, elseBlk: elseBody, span: span)
     }
     val cond: ExprAst = parseExprAst(p: inout p)
     val elseOff: U64 = p.base + p.curTok().start
@@ -10057,4 +10014,9 @@ fn srcDigitByte(d: U64) -> U8 {
     if d == 7 { return 55 }
     if d == 8 { return 56 }
     return 57
+}
+
+// Condition ranges address the flat clause pool, not expression or arm pools.
+pub fn syntaxConditionClause(file: SyntaxFile, conditions: SyntaxSlice, index: U64) -> SyntaxCondClause {
+    return file.conditionClause(conditions: conditions, index: index)
 }
