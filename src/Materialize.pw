@@ -176,7 +176,7 @@ impl SyntaxFile {
             val clause = self.conditionClauses[conditions.start + index]
             mut val pattern = <PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=[] span=<Span start=0U64 end=0U64 /> />
             if clause.isBinding { pattern = self.materializePattern(id: clause.pattern, p: p) }
-            result.append(<CondClause isBinding=clause.isBinding pattern=pattern expr=self.materializeExpr(id: clause.expr, p: p) />)
+            result.append(<CondClause isWhileCondition=clause.isWhileCondition isBinding=clause.isBinding pattern=pattern expr=self.materializeExpr(id: clause.expr, p: p) />)
             index += 1U64
         }
         return result

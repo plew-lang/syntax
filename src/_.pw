@@ -2607,6 +2607,7 @@ fn parseType(p: inout P) -> TypeAst {
 // value CondClause it never owns a recursive value AST. Clauses are retained
 // in a flat SyntaxFile pool until semantic scope resolution.
 pub struct SyntaxCondClause {
+    pub val isWhileCondition: Bool = false
     pub val isBinding: Bool
     pub val pattern: PatternId
     pub val expr: ExprId
@@ -3932,27 +3933,27 @@ fn syntaxPatternBindingAhead(p: inout P) -> Bool {
     return scan.curKind() == <Kind.Eq />
 }
 
-inout fn parseSyntaxCondClause(p: inout P) -> SyntaxCondClause {
+inout fn parseSyntaxCondClause(p: inout P, isWhileCondition: Bool = false) -> SyntaxCondClause {
     if self.syntaxPatternBindingAhead(p: inout p) {
         val pattern: PatternId = self.parseSyntaxPattern(p: inout p)
         match p.curKind() {
             Kind.Eq => { p.advance() }
             _ => {}
         }
-        return <SyntaxCondClause isBinding=true pattern=pattern expr=self.parseSyntaxBin(p: inout p, minPrec: 3I64) />
+        return <SyntaxCondClause isWhileCondition=isWhileCondition isBinding=true pattern=pattern expr=self.parseSyntaxBin(p: inout p, minPrec: 3I64) />
     }
-    return <SyntaxCondClause isBinding=false pattern=<PatternId raw=0U64 /> expr=self.parseSyntaxBin(p: inout p, minPrec: 3I64) />
+    return <SyntaxCondClause isWhileCondition=isWhileCondition isBinding=false pattern=<PatternId raw=0U64 /> expr=self.parseSyntaxBin(p: inout p, minPrec: 3I64) />
 }
 
 // Parse all `&&` clauses once.  The old parser needed a speculative AST pass to
 // decide whether to desugar; direct parsing instead retains only final IDs.  If
 // no clause is a binding, syntaxCondChainBool recreates the ordinary `&&` tree.
-inout fn parseSyntaxCondChain(p: inout P) -> Array[SyntaxCondClause] {
+inout fn parseSyntaxCondChain(p: inout P, isWhileCondition: Bool = false) -> Array[SyntaxCondClause] {
     mut val clauses: Array[SyntaxCondClause] = []
-    clauses.append(self.parseSyntaxCondClause(p: inout p))
+    clauses.append(self.parseSyntaxCondClause(p: inout p, isWhileCondition: isWhileCondition))
     while true {
         match p.curKind() {
-            Kind.AmpAmp => { p.advance() clauses.append(self.parseSyntaxCondClause(p: inout p)) }
+            Kind.AmpAmp => { p.advance() clauses.append(self.parseSyntaxCondClause(p: inout p, isWhileCondition: isWhileCondition)) }
             _ => { break }
         }
     }
@@ -4083,7 +4084,7 @@ inout fn parseSyntaxIfExpr(p: inout P) -> ExprId {
 inout fn parseSyntaxWhile(p: inout P) -> StmtId {
     val start: U64 = p.base + p.curTok().start
     p.advance()
-    val clauses: Array[SyntaxCondClause] = self.parseSyntaxCondChain(p: inout p)
+    val clauses: Array[SyntaxCondClause] = self.parseSyntaxCondChain(p: inout p, isWhileCondition: true)
     val hasBinding: Bool = self.syntaxCondChainHasBinding(clauses: clauses)
     mut val cond: ExprId = <ExprId raw=0U64 />
     if !hasBinding { cond = self.parseSyntaxPlainBoolCondition(p: inout p, clauses: clauses) }
@@ -9266,6 +9267,7 @@ fn parseElseBlockAst(p: inout P) -> BlockAst {
 // One clause of a condition chain (spec/11): a refutable binding `PATTERN = expr`, or
 // a Bool expression.
 pub struct CondClause {
+    pub val isWhileCondition: Bool = false
     pub val isBinding: Bool
     pub val pattern: PatternAst
     pub val expr: ExprAst
@@ -9273,7 +9275,7 @@ pub struct CondClause {
 
 // Parse one chain clause: a refutable binding `PATTERN = expr`, or a Bool expression
 // (parsed up to the next top-level `&&`; `||` must be parenthesized — spec/11).
-fn parseCondClause(p: inout P) -> CondClause {
+fn parseCondClause(p: inout P, isWhileCondition: Bool = false) -> CondClause {
     val dummy: Span = <Span start=0 end=0 />
     if detectRefutableBinding(p: inout p) {
         val pat: PatternAst = parsePatternAst(p: inout p)
@@ -9281,21 +9283,21 @@ fn parseCondClause(p: inout P) -> CondClause {
             Kind.Eq => { p.advance() }
             _ => {}
         }
-        return <CondClause isBinding=true pattern=pat expr=parseBinAst(p: inout p, minPrec: 3) />
+        return <CondClause isWhileCondition=isWhileCondition isBinding=true pattern=pat expr=parseBinAst(p: inout p, minPrec: 3) />
     }
-    return <CondClause isBinding=false pattern=<PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=[] span=dummy /> expr=parseBinAst(p: inout p, minPrec: 3) />
+    return <CondClause isWhileCondition=isWhileCondition isBinding=false pattern=<PatternAst isWildcard=true isStruct=false typeName="" variant="" binds=[] span=dummy /> expr=parseBinAst(p: inout p, minPrec: 3) />
 }
 
 // Parse a condition chain `clause (&& clause)*` (the first clause is a binding — the
 // caller dispatched plain-Bool conditions already).
-fn parseCondChain(p: inout P) -> Array[CondClause] {
+fn parseCondChain(p: inout P, isWhileCondition: Bool = false) -> Array[CondClause] {
     mut val clauses: Array[CondClause] = []
-    clauses.append(parseCondClause(p: inout p))
+    clauses.append(parseCondClause(p: inout p, isWhileCondition: isWhileCondition))
     while true {
         match p.curKind() {
             Kind.AmpAmp => {
                 p.advance()
-                clauses.append(parseCondClause(p: inout p))
+                clauses.append(parseCondClause(p: inout p, isWhileCondition: isWhileCondition))
             }
             _ => { break }
         }
@@ -9410,7 +9412,7 @@ fn parseWhileAst(p: inout P) -> StmtAst {
 // Desugars to `while true { <chain over body / break> }`: each iteration re-evaluates
 // the chain; a failed binding (or false Bool clause) breaks the loop.
 fn parseWhileLetStmt(p: inout P, sStart: U64) -> StmtAst {
-    val clauses: Array[CondClause] = parseCondChain(p: inout p)
+    val clauses: Array[CondClause] = parseCondChain(p: inout p, isWhileCondition: true)
     val body: BlockAst = parseBlockAst(p: inout p)
     val span: Span = <Span start=sStart end=p.prevEnd() />
     mut val breakStmts: Array[StmtAst] = []

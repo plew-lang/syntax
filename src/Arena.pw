@@ -84,7 +84,7 @@ pub impl SyntaxFile {
     inout fn freezeConditionClauses(items: Array[CondClause]) -> SyntaxSlice {
         mut val clauses: Array[SyntaxCondClause] = []
         for val item in items {
-            clauses.append(<SyntaxCondClause isBinding=item.isBinding pattern=self.freezePatternAst(ast: item.pattern) expr=self.freezeExprAst(ast: item.expr) />)
+            clauses.append(<SyntaxCondClause isWhileCondition=item.isWhileCondition isBinding=item.isBinding pattern=self.freezePatternAst(ast: item.pattern) expr=self.freezeExprAst(ast: item.expr) />)
         }
         return self.pushConditionClauses(items: clauses)
     }
