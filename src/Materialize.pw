@@ -211,7 +211,7 @@ impl SyntaxFile {
             stmts.append(self.materializeStmt(id: self.stmtIds[node.stmts.start + i], p: p))
             i += 1U64
         }
-        return <BlockAst stmts=stmts />
+        return <BlockAst stmts=stmts guardElseOffset=node.guardElseOffset />
     }
 
     fn materializeStmt(id: StmtId, p: P) -> StmtAst {

@@ -1542,6 +1542,8 @@ pub struct SyntaxMatchArm {
 }
 
 pub struct SyntaxBlock {
+    // Zero means ordinary block; otherwise the guard else source offset + 1.
+    pub val guardElseOffset: U64 = 0U64
     pub val stmts: SyntaxSlice
 }
 
@@ -2070,6 +2072,7 @@ pub struct MatchArmAst {
 
 // A `{ ... }` block: a sequence of statements.
 pub struct BlockAst {
+    pub val guardElseOffset: U64 = 0U64
     pub val stmts: Array[StmtAst]
 }
 
@@ -4607,34 +4610,6 @@ inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -
     return id
 }
 
-inout fn syntaxStmtDiverges(id: StmtId) -> Bool {
-    val stmt: SyntaxStmt = self.stmts[id.raw]
-    match stmt.kind {
-        SyntaxStmtKind.Return | SyntaxStmtKind.Panic | SyntaxStmtKind.Break | SyntaxStmtKind.Continue => { return true }
-        SyntaxStmtKind.IfChain => { return self.syntaxBlockDiverges(id: stmt.block0) && self.syntaxBlockDiverges(id: stmt.block1) }
-        SyntaxStmtKind.If => {
-            if stmt.flag0 { return self.syntaxBlockDiverges(id: stmt.block0) && self.syntaxBlockDiverges(id: stmt.block1) }
-            return false
-        }
-        SyntaxStmtKind.Match => {
-            mut val i: U64 = 0U64
-            while i < stmt.arms.count {
-                val arm: SyntaxMatchArm = self.matchArms[self.matchArmIds[stmt.arms.start + i].raw]
-                if !self.syntaxBlockDiverges(id: arm.body) { return false }
-                i += 1U64
-            }
-            return stmt.arms.count > 0U64
-        }
-        _ => { return false }
-    }
-}
-
-inout fn syntaxBlockDiverges(id: BlockId) -> Bool {
-    val block: SyntaxBlock = self.blocks[id.raw]
-    if block.stmts.count == 0U64 { return false }
-    return self.syntaxStmtDiverges(id: self.stmtIds[block.stmts.start + block.stmts.count - 1U64])
-}
-
 inout fn parseSyntaxStmtsUntilBrace(p: inout P) -> Array[StmtId] {
     mut val stmts: Array[StmtId] = []
     while !p.hasErr {
@@ -4662,9 +4637,8 @@ inout fn parseSyntaxGuard(p: inout P) -> StmtId {
     if !hasBinding { condition = self.parseSyntaxPlainBoolCondition(p: inout p, clauses: clauses) }
     val elseOffset: U64 = p.base + p.curTok().start
     val elseBody: BlockId = self.parseSyntaxBlock(p: inout p)
-    if !self.syntaxBlockDiverges(id: elseBody) {
-        p.fail(off: elseOffset, msg: "`guard` else block must diverge (end in return / break / continue / panic) — spec/11")
-    }
+    val parsedElse = self.blocks[elseBody.raw]
+    self.blocks.set(i: elseBody.raw, value: <SyntaxBlock stmts=parsedElse.stmts guardElseOffset=elseOffset + 1U64 />)
     p.skipNewlines()
     val continuation: BlockId = self.directBlock(stmts: self.parseSyntaxStmtsUntilBrace(p: inout p))
     val span: Span = <Span start=start end=p.prevEnd() />
@@ -9853,46 +9827,6 @@ fn parseStmtsUntilBrace(p: inout P) -> Array[StmtAst] {
     return stmts
 }
 
-// Whether a block unconditionally diverges (its last statement transfers control out:
-// return / panic / break / continue, or an if/match all of whose branches diverge).
-// Used to enforce that a `guard` else block diverges (spec/11). A structural, AST-level
-// check (the guard's "marker" is lost once it desugars to if/match).
-fn blockDivergesAst(b: BlockAst) -> Bool {
-    if b.stmts.count() == 0U64 {
-        return false
-    }
-    return stmtDivergesAst(s: b.stmts[b.stmts.count() - 1U64])
-}
-
-fn stmtDivergesAst(s: StmtAst) -> Bool {
-    match s {
-        StmtAst.Return(value: _, hasValue: _, span: _) => { return true }
-        StmtAst.Panic(msg: _, span: _) => { return true }
-        StmtAst.Break(span: _) => { return true }
-        StmtAst.Continue(span: _) => { return true }
-        StmtAst.IfChain(conditions: _, val thenBlk, val elseBlk, span: _) => { return blockDivergesAst(b: thenBlk) && blockDivergesAst(b: elseBlk) }
-        StmtAst.If(cond: _, val thenBlk, val elseBlk, val hasElse, span: _) => {
-            if hasElse {
-                if blockDivergesAst(b: thenBlk) {
-                    return blockDivergesAst(b: elseBlk)
-                }
-            }
-            return false
-        }
-        StmtAst.Match(scrut: _, val arms, span: _) => {
-            mut val i: U64 = 0
-            while i < arms.count() {
-                if !(blockDivergesAst(b: arms[i].body)) {
-                    return false
-                }
-                i += 1
-            }
-            return arms.count() > 0U64
-        }
-        _ => { return false }
-    }
-}
-
 // Parse a `guard` statement (spec/11): `guard <cond-chain> { elseBody } <rest>`. The
 // elseBody runs when the condition FAILS and MUST diverge (return / break / continue /
 // panic — spec/11); the `<rest>` of the enclosing block runs (with any bindings in
@@ -9907,8 +9841,8 @@ fn parseGuardStmt(p: inout P) -> StmtAst {
     if condChainHasBinding(p: inout p) {
         val clauses: Array[CondClause] = parseCondChain(p: inout p)
         val elseOff: U64 = p.base + p.curTok().start
-        val elseBody: BlockAst = parseBlockAst(p: inout p)
-        checkGuardElseDiverges(p: inout p, elseBody: elseBody, off: elseOff)
+        val parsedElse = parseBlockAst(p: inout p)
+        val elseBody = <BlockAst stmts=parsedElse.stmts guardElseOffset=elseOff + 1U64 />
         p.skipNewlines()
         val cont: Array[StmtAst] = parseStmtsUntilBrace(p: inout p)
         val span: Span = <Span start=sStart end=p.prevEnd() />
@@ -9917,19 +9851,12 @@ fn parseGuardStmt(p: inout P) -> StmtAst {
     }
     val cond: ExprAst = parseExprAst(p: inout p)
     val elseOff: U64 = p.base + p.curTok().start
-    val elseBody: BlockAst = parseBlockAst(p: inout p)
-    checkGuardElseDiverges(p: inout p, elseBody: elseBody, off: elseOff)
+    val parsedElse = parseBlockAst(p: inout p)
+    val elseBody = <BlockAst stmts=parsedElse.stmts guardElseOffset=elseOff + 1U64 />
     p.skipNewlines()
     val cont: Array[StmtAst] = parseStmtsUntilBrace(p: inout p)
     val span: Span = <Span start=sStart end=p.prevEnd() />
     return <StmtAst.If cond=cond thenBlk=<BlockAst stmts=cont /> elseBlk=elseBody hasElse=true span=span />
-}
-
-// Loud error if a `guard` else block can fall through (spec/11: it must diverge).
-fn checkGuardElseDiverges(p: inout P, elseBody: BlockAst, off: U64) {
-    if !(blockDivergesAst(b: elseBody)) {
-        p.fail(off: off, msg: "`guard` else block must diverge (end in return / break / continue / panic) — spec/11")
-    }
 }
 
 pub fn parseBlockAst(p: inout P) -> BlockAst {
