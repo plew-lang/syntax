@@ -59,7 +59,7 @@ fn rejected(source: String, trait: Bool) {
     assert(legacy.hasErr)
 }
 fn main() {
-    accepted(source: "trait Halt {{ diverge fn halt()\nassoc diverge fn stop()\nmove fn consume()\nasync fn wait() }}", trait: true)
+    accepted(source: "trait Halt {{ diverge fn halt()\nassoc diverge fn stop()\nmove consume()\nasync wait() }}", trait: true)
     accepted(source: "impl Value {{ diverge fn halt() {{}}\nassoc diverge fn stop() {{}}\nfn normal() {{}} }}", trait: false)
     for val mode in ["inout", "move", "async", "borrow"] {
         rejected(source: "trait Halt {{ {mode} diverge fn halt() }}", trait: true)

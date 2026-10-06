@@ -2305,7 +2305,7 @@ struct FunctionTypePrefix {
 }
 impl FunctionTypePrefix { factory }
 
-fn parseCallableHead(p: inout P, allowDiverging: Bool = true) -> Bool {
+fn parseCallableHead(p: inout P, allowDiverging: Bool = true, allowBare: Bool = false) -> Bool {
     mut val diverging = false
     if p.curKind() == <Kind.KwDiverge /> {
         diverging = true
@@ -2316,7 +2316,7 @@ fn parseCallableHead(p: inout P, allowDiverging: Bool = true) -> Bool {
     }
     if p.curKind() == <Kind.KwFn /> {
         p.advance()
-    } else {
+    } else if diverging || !allowBare {
         p.fail(off: p.base + p.curTok().start, msg: "expected `fn`")
     }
     return diverging
@@ -5168,24 +5168,24 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
             }
             Kind.KwMove => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: true, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, isDiverging: diverging))
             }
             Kind.KwAsync => {
                 p.advance()
                 mut val asyncMove: Bool = false
                 match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwInout => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfInout: true, isDiverging: diverging))
             }
             _ => {
@@ -5202,7 +5202,7 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
                     reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isFactory: true, factoryKind: factoryKind, factoryErr: factoryErr))
                 } else if curIs(p: inout p, kw: "assoc") {
                     p.advance()
-                    val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                    val diverging = parseCallableHead(p: inout p, allowDiverging: true, allowBare: true)
                 reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isDiverging: diverging))
                 } else if curIs(p: inout p, kw: "type") {
                     p.advance()
@@ -5549,7 +5549,7 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
             }
             Kind.KwInout => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwFn | Kind.KwDiverge => {
@@ -5560,17 +5560,17 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
                 p.advance()
                 mut val asyncMove: Bool = false
                 match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwMove => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwDeinit => {
@@ -5671,7 +5671,7 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
                     match p.curKind() {
                         Kind.KwVal => { members.append(self.parseSyntaxAssocValMember(p: inout p)) }
                         _ => {
-                            val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                            val diverging = parseCallableHead(p: inout p, allowDiverging: true, allowBare: true)
                 members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
                         }
                     }
@@ -6683,7 +6683,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
             }
             Kind.KwInout => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwFn | Kind.KwDiverge => {
@@ -6700,17 +6700,17 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
                     }
                     _ => {}
                 }
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwMove => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwDeinit => {
@@ -6795,7 +6795,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
                             members.append(parseAssocValMember(p: inout p))
                         }
                         _ => {
-                            val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                            val diverging = parseCallableHead(p: inout p, allowDiverging: true, allowBare: true)
                 members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
                         }
                     }
@@ -6909,24 +6909,24 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
             }
             Kind.KwMove => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: true, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(parseSigAst(p: inout p, isAssoc: false, isDiverging: diverging))
             }
             Kind.KwAsync => {
                 p.advance()
                 mut val asyncMove: Bool = false
                 match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwInout => {
                 p.advance()
-                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false, allowBare: true)
                 reqs.append(parseSigAst(p: inout p, isAssoc: false, selfInout: true, isDiverging: diverging))
             }
             _ => {
@@ -6961,7 +6961,7 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
                 } else {
                 if curIs(p: inout p, kw: "assoc") {
                     p.advance()
-                    val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                    val diverging = parseCallableHead(p: inout p, allowDiverging: true, allowBare: true)
                 reqs.append(parseSigAst(p: inout p, isAssoc: true, isDiverging: diverging))
                 } else {
                     if curIs(p: inout p, kw: "type") {
