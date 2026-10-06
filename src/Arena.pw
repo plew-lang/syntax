@@ -676,7 +676,7 @@ impl SyntaxFile {
     }
 
     inout fn freezeBlockAst(ast: BlockAst) -> BlockId {
-        self.blocks.append(<SyntaxBlock stmts=self.freezeStmtAstSlice(items: ast.stmts) guardElseOffset=ast.guardElseOffset />)
+        self.blocks.append(<SyntaxBlock stmts=self.freezeStmtAstSlice(items: ast.stmts) guardElseOffset=ast.guardElseOffset implicitResult=ast.implicitResult />)
         val id: BlockId = <BlockId raw=self.blocks.count() - 1U64 />
         return id
     }

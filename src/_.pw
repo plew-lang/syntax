@@ -1542,6 +1542,8 @@ pub struct SyntaxMatchArm {
 }
 
 pub struct SyntaxBlock {
+    // A bare branch expression aggregates a result; it is not an explicit give operand.
+    pub val implicitResult: Bool = false
     // Zero means ordinary block; otherwise the guard else source offset + 1.
     pub val guardElseOffset: U64 = 0U64
     pub val stmts: SyntaxSlice
@@ -2072,6 +2074,7 @@ pub struct MatchArmAst {
 
 // A `{ ... }` block: a sequence of statements.
 pub struct BlockAst {
+    pub val implicitResult: Bool = false
     pub val guardElseOffset: U64 = 0U64
     pub val stmts: Array[StmtAst]
 }
@@ -3734,9 +3737,9 @@ inout fn appendSyntaxMatchArm(pattern: PatternId, body: BlockId, span: Span, orG
     return id
 }
 
-inout fn directBlock(stmts: Array[StmtId]) -> BlockId {
+inout fn directBlock(stmts: Array[StmtId], implicitResult: Bool = false) -> BlockId {
     val id: BlockId = <BlockId raw=self.blocks.count() />
-    self.blocks.append(<SyntaxBlock stmts=self.pushStmtIdSlice(items: stmts) />)
+    self.blocks.append(<SyntaxBlock stmts=self.pushStmtIdSlice(items: stmts) implicitResult=implicitResult />)
     return id
 }
 
@@ -3754,11 +3757,11 @@ inout fn parseSyntaxExprArmBody(p: inout P, start: U64) -> BlockId {
         Kind.Ident => {
             if curIs(p: inout p, kw: "panic") { return self.directBlock(stmts: [self.parseSyntaxPanic(p: inout p)]) }
             val value: ExprId = self.parseSyntaxExpr(p: inout p)
-            return self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: value)])
+            return self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: value)], implicitResult: true)
         }
         _ => {
             val value: ExprId = self.parseSyntaxExpr(p: inout p)
-            return self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: value)])
+            return self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: value)], implicitResult: true)
         }
     }
 }
@@ -4070,7 +4073,7 @@ inout fn parseSyntaxIfExpr(p: inout P) -> ExprId {
     match p.curKind() {
         Kind.KwIf => {
             val nested: ExprId = self.parseSyntaxIfExpr(p: inout p)
-            elseBlk = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: nested)])
+            elseBlk = self.directBlock(stmts: [self.pushDirectSyntaxStmt(kind: <SyntaxStmtKind.Give /> span: <Span start=start end=p.prevEnd() /> child0: nested)], implicitResult: true)
         }
         _ => { elseBlk = self.parseSyntaxBlock(p: inout p) }
     }
@@ -9113,13 +9116,13 @@ fn parseExprArmBodyAst(p: inout P, armStart: U64) -> BlockAst {
             val e: ExprAst = parseExprAst(p: inout p)
             mut val g: Array[StmtAst] = []
             g.append(<StmtAst.Give value=e span=<Span start=armStart end=p.prevEnd() /> />)
-            return <BlockAst stmts=g />
+            return <BlockAst stmts=g implicitResult=true />
         }
         _ => {
             val e: ExprAst = parseExprAst(p: inout p)
             mut val g: Array[StmtAst] = []
             g.append(<StmtAst.Give value=e span=<Span start=armStart end=p.prevEnd() /> />)
-            return <BlockAst stmts=g />
+            return <BlockAst stmts=g implicitResult=true />
         }
     }
 }
@@ -9388,7 +9391,7 @@ fn parseIfExprAst(p: inout P) -> ExprAst {
             val nested: ExprAst = parseIfExprAst(p: inout p)
             mut val one: Array[StmtAst] = []
             one.append(<StmtAst.Give value=nested span=<Span start=sStart end=p.prevEnd() /> />)
-            return <ExprAst.IfExpr cond=cond thenBlk=thenBlk elseBlk=<BlockAst stmts=one /> span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.IfExpr cond=cond thenBlk=thenBlk elseBlk=<BlockAst stmts=one implicitResult=true /> span=<Span start=sStart end=p.prevEnd() /> />
         }
         _ => {
             val elseBlk: BlockAst = parseBlockAst(p: inout p)

@@ -1,0 +1,33 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn check(file: Syntax.SyntaxFile, item: Syntax.TopItemId) {
+    val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    val body = Syntax.syntaxBlock(file: file, id: declaration.body)
+    val statement = Syntax.syntaxStmt(file: file, id: Syntax.syntaxBlockStmt(file: file, block: body, index: 0U64))
+    val expression = Syntax.syntaxExpr(file: file, id: statement.child0)
+    val first = Syntax.syntaxMatchArm(file: file, id: Syntax.syntaxMatchArmAt(file: file, arms: expression.arms, index: 0U64))
+    val second = Syntax.syntaxMatchArm(file: file, id: Syntax.syntaxMatchArmAt(file: file, arms: expression.arms, index: 1U64))
+    assert(Syntax.syntaxBlock(file: file, id: first.body).implicitResult)
+    assert(!Syntax.syntaxBlock(file: file, id: second.body).implicitResult)
+}
+fn main() {
+    val source = "fn body() {{ val result = match flag {{ true => 1I64 false => {{ give 2I64 }} }} }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val direct = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout direct)
+    assert(!direct.hasErr)
+    check(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64))
+    val materialized = Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count())
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val materializedRoot = frozen.freezeTopItem(ast: materialized)
+    check(file: frozen, item: materializedRoot)
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val items = Syntax.parseProgramAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    val valueRoot = frozen.freezeTopItem(ast: items[0U64])
+    check(file: frozen, item: valueRoot)
+    print("ok")
+}
