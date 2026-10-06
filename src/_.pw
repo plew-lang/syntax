@@ -1329,6 +1329,7 @@ pub struct SyntaxMember {
     pub val isAnonymousFactory: Bool = false
     pub val factoryKind: U64
     pub val factoryErr: TypeId
+    pub val isDiverging: Bool = false
 }
 
 pub struct SyntaxSig {
@@ -1350,6 +1351,7 @@ pub struct SyntaxSig {
     pub val whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val whereTraitTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
+    pub val isDiverging: Bool = false
 }
 
 pub struct SyntaxAssociatedType {
@@ -1824,6 +1826,7 @@ pub struct MemberAst {
     // error type `E` for kind 2.
     pub val factoryKind: U64 = 0
     pub val factoryErr: TypeAst = emptyTypeAst()
+    pub val isDiverging: Bool = false
 }
 
 // A body-less function signature: a trait requirement (`fn req(...) -> T`) or an
@@ -1851,6 +1854,7 @@ pub struct SigAst {
     pub val whereTraits: Array[String] = []
     pub val whereTypes: Array[TypeAst] = []
     pub val whereTraitTypes: Array[TypeAst] = []
+    pub val isDiverging: Bool = false
 }
 
 // A `trait Name [: Super + ...] { requirements }` declaration (spec/08). The body
@@ -2145,7 +2149,7 @@ pub enum ExprAst {
     // counterpart of `Method`'s `.`). Distinct from `Arrow` (pointee FIELD access) so the
     // backend dispatches `name` on the pointee struct with the cell as the receiver place.
     ArrowMethod(recv: ExprAst, name: String, nameSpan: Span, args: Array[ArgAst], span: Span)
-    Closure(params: Array[ParamAst], hasRet: Bool, ret: TypeAst, body: BlockAst, span: Span)
+    Closure(params: Array[ParamAst], hasRet: Bool, ret: TypeAst, body: BlockAst, span: Span, isDiverging: Bool)
     Move(operand: ExprAst, isBorrow: Bool, span: Span)
     Await(operand: ExprAst, span: Span)
 }
@@ -2180,7 +2184,7 @@ pub fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.Try(operand: _, val span) => { return span }
         ExprAst.Arrow(base: _, name: _, nameSpan: _, val span) => { return span }
         ExprAst.ArrowMethod(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
-        ExprAst.Closure(params: _, hasRet: _, ret: _, body: _, val span) => { return span }
+        ExprAst.Closure(params: _, hasRet: _, ret: _, body: _, val span, isDiverging: _) => { return span }
         ExprAst.Move(operand: _, isBorrow: _, val span) => { return span }
         ExprAst.Await(operand: _, val span) => { return span }
     }
@@ -2300,6 +2304,23 @@ struct FunctionTypePrefix {
     val diverging: Bool
 }
 impl FunctionTypePrefix { factory }
+
+fn parseCallableHead(p: inout P, allowDiverging: Bool = true) -> Bool {
+    mut val diverging = false
+    if p.curKind() == <Kind.KwDiverge /> {
+        diverging = true
+        if !allowDiverging {
+            p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot combine with this function mode")
+        }
+        p.advance()
+    }
+    if p.curKind() == <Kind.KwFn /> {
+        p.advance()
+    } else {
+        p.fail(off: p.base + p.curTok().start, msg: "expected `fn`")
+    }
+    return diverging
+}
 
 fn parseFunctionTypePrefix(p: inout P) -> FunctionTypePrefix {
     val start = p.base + p.curTok().start
@@ -3080,8 +3101,8 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
             }
             return inner
         }
-        Kind.KwFn => {
-            p.advance()
+        Kind.KwFn | Kind.KwDiverge => {
+            val diverging = parseCallableHead(p: inout p)
             val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
             mut val hasRet: Bool = false
             mut val ret: TypeId = self.emptySyntaxType()
@@ -3093,8 +3114,12 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
                 }
                 _ => {}
             }
+            if diverging && hasRet {
+                p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type")
+            }
             p.skipNewlines()
-            return self.pushExprNode(kind: <SyntaxExprKind.Closure /> span: <Span start=start end=p.prevEnd() /> flag0: hasRet type0: ret block0: self.parseSyntaxBlock(p: inout p) params: params)
+            val body = self.parseSyntaxBlock(p: inout p)
+            return self.pushExprNode(kind: <SyntaxExprKind.Closure /> span: <Span start=start end=p.prevEnd() /> flag0: hasRet flag1: diverging type0: ret block0: body params: params)
         }
         Kind.KwSendable => {
             if p.peekKind(off: 1) == <Kind.KwFn /> {
@@ -5073,7 +5098,7 @@ inout fn parseSyntaxNewtype(p: inout P, isPub: Bool) -> NewtypeId {
     return id
 }
 
-inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Bool = false, isAsync: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeId = <TypeId raw=0U64 />) -> SigId {
+inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Bool = false, isAsync: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeId = <TypeId raw=0U64 />, isDiverging: Bool = false) -> SigId {
     mut val name: Span = p.spanOf(t: p.curTok())
     mut val anonymous: Bool = false
     if isFactory {
@@ -5097,13 +5122,16 @@ inout fn parseSyntaxSig(p: inout P, isAssoc: Bool, selfInout: Bool = false, self
         _ => {}
     }
     p.skipNewlines()
+    if isDiverging && hasRet {
+        p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type")
+    }
     mut val whereParams: Array[Span] = []
     mut val whereTraits: Array[Span] = []
     mut val whereTypes: Array[TypeId] = []
     mut val whereTraitTypes: Array[TypeId] = []
     self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     val id: SigId = <SigId raw=self.sigs.count() />
-    self.sigs.append(<SyntaxSig name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout selfMove=selfMove isAsync=isAsync isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=self.pushDirectSyntaxTexts(items: whereParams) whereTraits=self.pushDirectSyntaxTexts(items: whereTraits) whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes) />)
+    self.sigs.append(<SyntaxSig isDiverging=isDiverging name=name typeParams=self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable) params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout selfMove=selfMove isAsync=isAsync isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=self.pushDirectSyntaxTexts(items: whereParams) whereTraits=self.pushDirectSyntaxTexts(items: whereTraits) whereTypes=self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes=self.pushDirectSyntaxTypeIds(items: whereTraitTypes) />)
     return id
 }
 
@@ -5134,28 +5162,31 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
         match p.curKind() {
             Kind.RBrace => { p.advance() break }
             Kind.Eof => { break }
-            Kind.KwFn => { p.advance() reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false)) }
+            Kind.KwFn | Kind.KwDiverge => {
+                val diverging = parseCallableHead(p: inout p)
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, isDiverging: diverging))
+            }
             Kind.KwMove => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: true, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, isDiverging: diverging))
             }
             Kind.KwAsync => {
                 p.advance()
                 mut val asyncMove: Bool = false
                 match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwInout => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfInout: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: false, selfInout: true, isDiverging: diverging))
             }
             _ => {
                 if curIs(p: inout p, kw: "factory") || curIs(p: inout p, kw: "optional") || curIs(p: inout p, kw: "result") {
@@ -5171,8 +5202,8 @@ inout fn parseSyntaxTraitDecl(p: inout P) -> TraitId {
                     reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isFactory: true, factoryKind: factoryKind, factoryErr: factoryErr))
                 } else if curIs(p: inout p, kw: "assoc") {
                     p.advance()
-                    match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                    reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true))
+                    val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                reqs.append(self.parseSyntaxSig(p: inout p, isAssoc: true, isDiverging: diverging))
                 } else if curIs(p: inout p, kw: "type") {
                     p.advance()
                     match p.curKind() {
@@ -5389,7 +5420,8 @@ inout fn parseSyntaxMethodAfterFn(
     kind: MemberKind,
     selfInout: Bool,
     selfMove: Bool,
-    isAsync: Bool
+    isAsync: Bool,
+    isDiverging: Bool = false
 ) -> MemberId {
     val name: Span = p.spanOf(t: p.curTok())
     p.advance()
@@ -5402,6 +5434,9 @@ inout fn parseSyntaxMethodAfterFn(
     match p.curKind() {
         Kind.Arrow => { p.advance() ret = self.parseSyntaxType(p: inout p) hasRet = true }
         _ => {}
+    }
+    if isDiverging && hasRet {
+        p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type")
     }
     mut val whereParams: Array[Span] = []
     mut val whereTraits: Array[Span] = []
@@ -5421,7 +5456,7 @@ inout fn parseSyntaxMethodAfterFn(
         p.skipNewlines()
         body = self.parseSyntaxBlock(p: inout p)
     }
-    return self.appendDirectSyntaxMember(node: <SyntaxMember
+    return self.appendDirectSyntaxMember(node: <SyntaxMember isDiverging=isDiverging
         kind=kind name=name
         typeParams=self.pushDirectSyntaxTexts(items: typeParams)
         typeParamSendable=self.pushDirectSyntaxBools(items: typeParamSendable)
@@ -5514,29 +5549,29 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
             }
             Kind.KwInout => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false, isDiverging: diverging))
             }
-            Kind.KwFn => {
-                p.advance()
-                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false))
+            Kind.KwFn | Kind.KwDiverge => {
+                val diverging = parseCallableHead(p: inout p)
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwAsync => {
                 p.advance()
                 mut val asyncMove: Bool = false
                 match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwMove => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwDeinit => {
                 val deinitStart: U64 = p.base + p.curTok().start
@@ -5636,8 +5671,8 @@ inout fn parseSyntaxImplDecl(p: inout P, isPub: Bool, extName: Span = <Span star
                     match p.curKind() {
                         Kind.KwVal => { members.append(self.parseSyntaxAssocValMember(p: inout p)) }
                         _ => {
-                            match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                            members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false))
+                            val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                members.append(self.parseSyntaxMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
                         }
                     }
                 } else if curIs(p: inout p, kw: "type") {
@@ -6554,7 +6589,7 @@ fn parseAssocValMember(p: inout P) -> MemberAst {
 // (cursor at the method name): `name[T,...](params) [-> Ret] [where ...]
 // (via real | { body })`. `kind`/`selfInout`/`selfMove`/`isAsync` come from the
 // mode keyword the caller already consumed.
-fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: Bool, isAsync: Bool) -> MemberAst {
+fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: Bool, isAsync: Bool, isDiverging: Bool = false) -> MemberAst {
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
     val nameSpan: Span = p.spanOf(t: nameTok)
@@ -6570,6 +6605,9 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
             hasRet = true
         }
         _ => {}
+    }
+    if isDiverging && hasRet {
+        p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type")
     }
     mut val whereParams: Array[String] = []
     mut val whereTraits: Array[String] = []
@@ -6593,7 +6631,7 @@ fn parseMethodAfterFn(p: inout P, kind: MemberKind, selfInout: Bool, selfMove: B
         p.skipNewlines()
         body = parseBlockAst(p: inout p)
     }
-    return <MemberAst kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName viaNameSpan=viaNameSpan body=body assocTy=emptyTypeAst() />
+    return <MemberAst isDiverging=isDiverging kind=kind name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes isAsync=isAsync selfInout=selfInout selfMove=selfMove isVia=isVia viaName=viaName viaNameSpan=viaNameSpan body=body assocTy=emptyTypeAst() />
 }
 
 // An `[pub] impl[T] Recv [as Trait] [where ...] { members }` block (spec/07,08).
@@ -6645,15 +6683,12 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
             }
             Kind.KwInout => {
                 p.advance()
-                match p.curKind() {
-                    Kind.KwFn => { p.advance() }
-                    _ => {}
-                }
-                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: true, selfMove: false, isAsync: false, isDiverging: diverging))
             }
-            Kind.KwFn => {
-                p.advance()
-                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false))
+            Kind.KwFn | Kind.KwDiverge => {
+                val diverging = parseCallableHead(p: inout p)
+                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwAsync => {
                 p.advance()
@@ -6665,27 +6700,18 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
                     }
                     _ => {}
                 }
-                match p.curKind() {
-                    Kind.KwFn => { p.advance() }
-                    _ => {}
-                }
-                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwMove => {
                 p.advance()
-                match p.curKind() {
-                    Kind.KwFn => { p.advance() }
-                    _ => {}
-                }
-                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: true, isAsync: false, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                match p.curKind() {
-                    Kind.KwFn => { p.advance() }
-                    _ => {}
-                }
-                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.Method />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
             }
             Kind.KwDeinit => {
                 val dStart: U64 = p.base + p.curTok().start
@@ -6769,11 +6795,8 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
                             members.append(parseAssocValMember(p: inout p))
                         }
                         _ => {
-                            match p.curKind() {
-                                Kind.KwFn => { p.advance() }
-                                _ => {}
-                            }
-                            members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false))
+                            val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                members.append(parseMethodAfterFn(p: inout p, kind: <MemberKind.AssocFn />, selfInout: false, selfMove: false, isAsync: false, isDiverging: diverging))
                         }
                     }
                 } else {
@@ -6803,7 +6826,7 @@ pub fn parseImplDecl(p: inout P, isPub: Bool, extName: String = "", extNameSpan:
 // A body-less function signature `name[T,...](params) [-> ret]` (a trait requirement
 // or extern declaration). The leading `fn`/`assoc fn`/`inout fn` is already consumed
 // (the cursor is at the name); `isAssoc` records the form. Mirrors parseReqSig.
-fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Bool = false, isAsync: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeAst = emptyTypeAst()) -> SigAst {
+fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Bool = false, isAsync: Bool = false, isFactory: Bool = false, factoryKind: U64 = 0U64, factoryErr: TypeAst = emptyTypeAst(), isDiverging: Bool = false) -> SigAst {
     val nameTok: Tok = p.curTok()
     mut val name: String = p.text(t: nameTok)
     mut val nameSpan: Span = p.spanOf(t: nameTok)
@@ -6833,12 +6856,15 @@ fn parseSigAst(p: inout P, isAssoc: Bool, selfInout: Bool = false, selfMove: Boo
         _ => {}
     }
     p.skipNewlines()
+    if isDiverging && hasRet {
+        p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type")
+    }
     mut val whereParams: Array[String] = []
     mut val whereTraits: Array[String] = []
     mut val whereTypes: Array[TypeAst] = []
     mut val whereTraitTypes: Array[TypeAst] = []
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
-    return <SigAst name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout selfMove=selfMove isAsync=isAsync isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes />
+    return <SigAst isDiverging=isDiverging name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable params=params hasRet=hasRet ret=ret isAssoc=isAssoc selfInout=selfInout selfMove=selfMove isAsync=isAsync isFactory=isFactory isAnonymousFactory=anonymous factoryKind=factoryKind factoryErr=factoryErr whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes />
 }
 
 // A `trait Name [: Super + ...] { fn req ... ; type Item }` declaration (spec/08).
@@ -6877,34 +6903,31 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
                 break
             }
             Kind.Eof => { break }
-            Kind.KwFn => {
-                p.advance()
-                reqs.append(parseSigAst(p: inout p, isAssoc: false))
+            Kind.KwFn | Kind.KwDiverge => {
+                val diverging = parseCallableHead(p: inout p)
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, isDiverging: diverging))
             }
             Kind.KwMove => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: true, isDiverging: diverging))
             }
             Kind.KwBorrow => {
                 p.advance()
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(parseSigAst(p: inout p, isAssoc: false))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, isDiverging: diverging))
             }
             Kind.KwAsync => {
                 p.advance()
                 mut val asyncMove: Bool = false
                 match p.curKind() { Kind.KwMove => { p.advance() asyncMove = true } _ => {} }
-                match p.curKind() { Kind.KwFn => { p.advance() } _ => {} }
-                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfMove: asyncMove, isAsync: true, isDiverging: diverging))
             }
             Kind.KwInout => {
                 p.advance()
-                match p.curKind() {
-                    Kind.KwFn => { p.advance() }
-                    _ => {}
-                }
-                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfInout: true))
+                val diverging = parseCallableHead(p: inout p, allowDiverging: false)
+                reqs.append(parseSigAst(p: inout p, isAssoc: false, selfInout: true, isDiverging: diverging))
             }
             _ => {
                 if curIs(p: inout p, kw: "factory") || curIs(p: inout p, kw: "optional") || curIs(p: inout p, kw: "result") {
@@ -6938,11 +6961,8 @@ pub fn parseTraitDecl(p: inout P) -> TraitAst {
                 } else {
                 if curIs(p: inout p, kw: "assoc") {
                     p.advance()
-                    match p.curKind() {
-                        Kind.KwFn => { p.advance() }
-                        _ => {}
-                    }
-                    reqs.append(parseSigAst(p: inout p, isAssoc: true))
+                    val diverging = parseCallableHead(p: inout p, allowDiverging: true)
+                reqs.append(parseSigAst(p: inout p, isAssoc: true, isDiverging: diverging))
                 } else {
                     if curIs(p: inout p, kw: "type") {
                         p.advance()
@@ -8513,8 +8533,8 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
             }
             return inner
         }
-        Kind.KwFn => {
-            p.advance()
+        Kind.KwFn | Kind.KwDiverge => {
+            val diverging = parseCallableHead(p: inout p)
             val params: Array[ParamAst] = parseParamAsts(p: inout p)
             mut val hasRet: Bool = false
             mut val ret: TypeAst = emptyTypeAst()
@@ -8526,9 +8546,12 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                 }
                 _ => {}
             }
+            if diverging && hasRet {
+                p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type")
+            }
             p.skipNewlines()
             val body: BlockAst = parseBlockAst(p: inout p)
-            return <ExprAst.Closure params=params hasRet=hasRet ret=ret body=body span=<Span start=sStart end=p.prevEnd() /> />
+            return <ExprAst.Closure isDiverging=diverging params=params hasRet=hasRet ret=ret body=body span=<Span start=sStart end=p.prevEnd() /> />
         }
         Kind.KwSendable => {
             if p.peekKind(off: 1) == <Kind.KwFn /> {
@@ -8548,7 +8571,7 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                 }
                 p.skipNewlines()
                 val body: BlockAst = parseBlockAst(p: inout p)
-                return <ExprAst.Closure params=params hasRet=hasRet ret=ret body=body span=<Span start=sStart end=p.prevEnd() /> />
+                return <ExprAst.Closure isDiverging=false params=params hasRet=hasRet ret=ret body=body span=<Span start=sStart end=p.prevEnd() /> />
             }
             p.fail(off: sStart, msg: "`sendable` is only valid in type syntax before `fn` or in generic parameter lists")
             p.advance()

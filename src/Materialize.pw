@@ -307,7 +307,7 @@ impl SyntaxFile {
             SyntaxExprKind.Closure => {
                 mut val ret: TypeAst = emptyTypeAst()
                 if node.flag0 { ret = self.materializeType(id: node.type0, p: p) }
-                return <ExprAst.Closure params=self.materializeParams(slice: node.params, p: p) hasRet=node.flag0 ret=ret body=self.materializeBlock(id: node.block0, p: p) span=node.span />
+                return <ExprAst.Closure isDiverging=node.flag1 params=self.materializeParams(slice: node.params, p: p) hasRet=node.flag0 ret=ret body=self.materializeBlock(id: node.block0, p: p) span=node.span />
             }
             SyntaxExprKind.Move => { return <ExprAst.Move operand=self.materializeExpr(id: node.child0, p: p) isBorrow=node.flag0 span=node.span /> }
             SyntaxExprKind.Await => { return <ExprAst.Await operand=self.materializeExpr(id: node.child0, p: p) span=node.span /> }
@@ -361,7 +361,7 @@ impl SyntaxFile {
         if node.hasRet { ret = self.materializeType(id: node.ret, p: p) }
         mut val factoryErr = emptyTypeAst()
         if node.factoryKind == 2U64 { factoryErr = self.materializeType(id: node.factoryErr, p: p) }
-        return <SigAst name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAssoc=node.isAssoc selfInout=node.selfInout selfMove=node.selfMove isAsync=node.isAsync isFactory=node.isFactory isAnonymousFactory=node.isAnonymousFactory factoryKind=node.factoryKind factoryErr=factoryErr whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p) whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p) />
+        return <SigAst isDiverging=node.isDiverging name=self.materializeText(p: p, span: node.name) nameSpan=node.name typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable) params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAssoc=node.isAssoc selfInout=node.selfInout selfMove=node.selfMove isAsync=node.isAsync isFactory=node.isFactory isAnonymousFactory=node.isAnonymousFactory factoryKind=node.factoryKind factoryErr=factoryErr whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p) whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p) />
     }
 
     fn materializeSigs(slice: SyntaxSlice, p: P) -> Array[SigAst] {
@@ -385,7 +385,7 @@ impl SyntaxFile {
         }
         mut val factoryErr: TypeAst = emptyTypeAst()
         if node.factoryKind == 2U64 { factoryErr = self.materializeType(id: node.factoryErr, p: p) }
-        return <MemberAst
+        return <MemberAst isDiverging=node.isDiverging
             kind=node.kind name=self.materializeText(p: p, span: node.name) nameSpan=node.name
             typeParams=self.materializeTexts(p: p, slice: node.typeParams) typeParamSpans=self.spanSlice(slice: node.typeParams) typeParamSendable=self.materializeBools(slice: node.typeParamSendable)
             params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret

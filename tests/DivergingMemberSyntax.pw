@@ -1,0 +1,71 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn inspect(file: Syntax.SyntaxFile, item: Syntax.TopItemId, trait: Bool) {
+    val payload = Syntax.syntaxTopItemPayload(file: file, item: item)
+    if trait {
+        val declaration = Syntax.syntaxTrait(file: file, id: <Syntax.TraitId raw=payload />)
+        mut val index = 0U64
+        while index < 4U64 {
+            val signature = Syntax.syntaxSig(file: file, id: Syntax.syntaxTraitReq(file: file, trait: declaration, index: index))
+            assert(signature.isDiverging == (index < 2U64))
+            assert(signature.isAssoc == (index == 1U64))
+            assert(signature.selfMove == (index == 2U64))
+            assert(signature.isAsync == (index == 3U64))
+            index += 1U64
+        }
+    } else {
+        val declaration = Syntax.syntaxImpl(file: file, id: <Syntax.ImplId raw=payload />)
+        mut val index = 0U64
+        while index < 3U64 {
+            val member = Syntax.syntaxMember(file: file, id: Syntax.syntaxImplMember(file: file, impl: declaration, index: index))
+            assert(member.isDiverging == (index < 2U64))
+            index += 1U64
+        }
+    }
+}
+fn accepted(source: String, trait: Bool) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val direct = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    inspect(file: direct, item: Syntax.syntaxFileTopLevel(file: direct, index: 0U64), trait: trait)
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val root = frozen.freezeTopItem(ast: Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count()))
+    inspect(file: frozen, item: root, trait: trait)
+    mut val legacy = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    if trait {
+        val value = Syntax.parseTraitDecl(p: inout legacy)
+        val item = frozen.freezeTopItem(ast: <Syntax.TopItemAst.Trait t=value />)
+        inspect(file: frozen, item: item, trait: true)
+    } else {
+        val value = Syntax.parseImplDecl(p: inout legacy, isPub: false)
+        val item = frozen.freezeTopItem(ast: <Syntax.TopItemAst.Impl im=value />)
+        inspect(file: frozen, item: item, trait: false)
+    }
+    assert(!legacy.hasErr)
+}
+fn rejected(source: String, trait: Bool) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(parser.hasErr)
+    mut val legacy = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    if trait { Syntax.parseTraitDecl(p: inout legacy) }
+    else { Syntax.parseImplDecl(p: inout legacy, isPub: false) }
+    assert(legacy.hasErr)
+}
+fn main() {
+    accepted(source: "trait Halt {{ diverge fn halt()\nassoc diverge fn stop()\nmove fn consume()\nasync fn wait() }}", trait: true)
+    accepted(source: "impl Value {{ diverge fn halt() {{}}\nassoc diverge fn stop() {{}}\nfn normal() {{}} }}", trait: false)
+    for val mode in ["inout", "move", "async", "borrow"] {
+        rejected(source: "trait Halt {{ {mode} diverge fn halt() }}", trait: true)
+        rejected(source: "impl Value {{ {mode} diverge fn halt() {{}} }}", trait: false)
+    }
+    rejected(source: "trait Halt {{ diverge fn halt() -> I64 }}", trait: true)
+    rejected(source: "impl Value {{ assoc diverge fn halt() -> I64 {{}} }}", trait: false)
+    print("ok")
+}

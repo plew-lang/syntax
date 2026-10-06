@@ -1,0 +1,49 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn inspect(file: Syntax.SyntaxFile, item: Syntax.TopItemId, divergent: Bool) {
+    val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    assert(!declaration.isDiverging)
+    val block = Syntax.syntaxBlock(file: file, id: declaration.body)
+    val statement = Syntax.syntaxStmt(file: file, id: Syntax.syntaxBlockStmt(file: file, block: block, index: 0U64))
+    val closure = Syntax.syntaxExpr(file: file, id: statement.child0)
+    assert(closure.flag1 == divergent)
+    val body = Syntax.syntaxBlock(file: file, id: closure.block0)
+    val last = Syntax.syntaxStmt(file: file, id: Syntax.syntaxBlockStmt(file: file, block: body, index: 0U64))
+    assert(closure.span.end > last.span.end)
+}
+fn accepted(expression: String, divergent: Bool) {
+    val source = "fn main() {{ val callback = {expression} }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    inspect(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64), divergent: divergent)
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val item = frozen.freezeTopItem(ast: Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count()))
+    inspect(file: frozen, item: item, divergent: divergent)
+    mut val expressionLexer = <Syntax.Lexer bytes=expression.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout expressionLexer)
+    mut val valueParser = <Syntax.P bytes=expression.bytes() toks=expressionLexer.toks pos=0U64 base=0U64 />
+    match Syntax.parseExprAst(p: inout valueParser) {
+        Syntax.ExprAst.Closure(params: _, hasRet: _, ret: _, body: _, span: val span, isDiverging: val flag) => {
+            assert(flag == divergent)
+            assert(span.end == expression.bytes().count())
+        }
+        _ => { panic "expected closure" }
+    }
+    assert(!valueParser.hasErr)
+}
+fn main() {
+    accepted(expression: "diverge fn() {{ panic \"stop\" }}", divergent: true)
+    accepted(expression: "fn() {{ panic \"stop\" }}", divergent: false)
+    val source = "fn main() {{ val callback = diverge fn() -> I64 {{ return 1I64 }} }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(parser.hasErr)
+    print("ok")
+}
