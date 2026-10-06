@@ -91,6 +91,14 @@ pub impl Kind as Eq {
                     _ => { return false }
                 }
             }
+            Kind.KwDiverge => {
+                match rhs {
+                    Kind.KwDiverge => {
+                        return true
+                    }
+                    _ => { return false }
+                }
+            }
             Kind.KwExpose => {
                 match rhs {
                     Kind.KwExpose => {

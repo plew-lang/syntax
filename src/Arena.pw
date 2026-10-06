@@ -580,7 +580,7 @@ impl SyntaxFile {
             projectionAssoc=ast.projectionAssocSpan
             isAny=ast.isAny
             argLabels=self.pushTextSlice(items: ast.argLabelSpans)
-            isSendable=ast.isSendable
+            isSendable=ast.isSendable isDiverging=ast.isDiverging
             isRecord=ast.isRecord
         />)
         return id
@@ -852,7 +852,7 @@ impl SyntaxFile {
 
     inout fn freezeDeclAst(ast: DeclAst) -> DeclId {
         val id: DeclId = <DeclId raw=self.decls.count() />
-        self.decls.append(<SyntaxDecl kind=ast.kind name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) span=ast.span isUnique=ast.isUnique isNonsendable=ast.isNonsendable fields=self.freezeFieldAstSlice(items: ast.fields) hasDeinit=ast.hasDeinit deinitBody=self.freezeBlockAst(ast: ast.deinitBody) variants=self.freezeVariantAstSlice(items: ast.variants) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAsync=ast.isAsync isExposed=ast.isExposed whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) body=self.freezeBlockAst(ast: ast.body) />)
+        self.decls.append(<SyntaxDecl kind=ast.kind name=ast.nameSpan typeParams=self.pushTextSlice(items: ast.typeParamSpans) typeParamSendable=self.pushBoolSlice(items: ast.typeParamSendable) span=ast.span isUnique=ast.isUnique isNonsendable=ast.isNonsendable fields=self.freezeFieldAstSlice(items: ast.fields) hasDeinit=ast.hasDeinit deinitBody=self.freezeBlockAst(ast: ast.deinitBody) variants=self.freezeVariantAstSlice(items: ast.variants) params=self.freezeParamAstSlice(items: ast.params) hasRet=ast.hasRet ret=self.freezeTypeAst(ast: ast.ret) isAsync=ast.isAsync isExposed=ast.isExposed isDiverging=ast.isDiverging whereParams=self.pushTextSlice(items: self.whereParamSpans(names: ast.whereParams, types: ast.whereTypes)) whereTraits=self.pushTextSlice(items: self.whereTraitSpans(names: ast.whereTraits, types: ast.whereTraitTypes)) whereTypes=self.freezeTypeAstSlice(items: ast.whereTypes) whereTraitTypes=self.freezeTypeAstSlice(items: ast.whereTraitTypes) body=self.freezeBlockAst(ast: ast.body) />)
         return id
     }
 

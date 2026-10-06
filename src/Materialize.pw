@@ -72,7 +72,7 @@ impl SyntaxFile {
             projectionAssoc=self.materializeText(p: p, span: node.projectionAssoc) projectionAssocSpan=node.projectionAssoc
             isAny=node.isAny
             argLabels=self.materializeTexts(p: p, slice: node.argLabels) argLabelSpans=self.spanSlice(slice: node.argLabels)
-            isSendable=node.isSendable isRecord=node.isRecord
+            isSendable=node.isSendable isDiverging=node.isDiverging isRecord=node.isRecord
         />
     }
 
@@ -424,7 +424,7 @@ impl SyntaxFile {
             span=node.span isUnique=node.isUnique isNonsendable=node.isNonsendable fields=self.materializeFields(slice: node.fields, p: p)
             hasDeinit=node.hasDeinit deinitBody=deinitBody
             variants=self.materializeVariants(slice: node.variants, p: p)
-            params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAsync=node.isAsync isExposed=node.isExposed
+            params=self.materializeParams(slice: node.params, p: p) hasRet=node.hasRet ret=ret isAsync=node.isAsync isExposed=node.isExposed isDiverging=node.isDiverging
             whereParams=self.materializeWhereNames(slice: node.whereParams, p: p) whereTraits=self.materializeWhereNames(slice: node.whereTraits, p: p)
             whereTypes=self.materializeTypeSlice(slice: node.whereTypes, p: p) whereTraitTypes=self.materializeTypeSlice(slice: node.whereTraitTypes, p: p)
             body=body

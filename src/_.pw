@@ -304,6 +304,7 @@ pub enum Kind {
     Char
     Ident
     KwFn
+    KwDiverge
     KwExpose
     KwStruct
     KwEnum
@@ -538,6 +539,7 @@ fn identKind(bytes: Array[U8], start: U64, len: U64) -> Kind {
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "borrow") {
         return <Kind.KwBorrow />
     }
+    if rangeEquals(bytes: bytes, start: start, len: len, kw: "diverge") { return <Kind.KwDiverge /> }
     if rangeEquals(bytes: bytes, start: start, len: len, kw: "async") {
         return <Kind.KwAsync />
     }
@@ -995,6 +997,7 @@ pub fn kindCode(k: Kind) -> I64 {
         Kind.Ident => 4
         Kind.KwExpose => 88
         Kind.KwFn => 10
+        Kind.KwDiverge => 92
         Kind.KwStruct => 11
         Kind.KwEnum => 12
         Kind.KwMatch => 13
@@ -1247,6 +1250,7 @@ pub struct SyntaxType {
     pub val argLabels: SyntaxSlice
     pub val isSendable: Bool
     pub val isRecord: Bool
+    pub val isDiverging: Bool = false
 }
 
 pub struct SyntaxField {
@@ -1299,6 +1303,7 @@ pub struct SyntaxDecl {
     pub val whereTypes: SyntaxSlice
     pub val whereTraitTypes: SyntaxSlice
     pub val body: BlockId
+    pub val isDiverging: Bool = false
 }
 
 pub struct SyntaxMember {
@@ -1655,6 +1660,7 @@ pub struct TypeAst {
     // (parallel). `name` is empty. The type lowers to a synthetic struct keyed by its
     // sorted (name, type) set, so two records with the same fields are the same type.
     pub val isRecord: Bool = false
+    pub val isDiverging: Bool = false
 }
 
 // A struct field / enum-variant payload field. For a variant payload field,
@@ -1758,6 +1764,7 @@ pub struct DeclAst {
     // fn body (`kind == Func`): the parsed `{ ... }` block (empty for struct/enum
     // and for a body-less signature). Lets a macro read/transform a function body.
     pub val body: BlockAst
+    pub val isDiverging: Bool = false
 }
 
 // An empty type expression (placeholder for a missing/absent type position).
@@ -2287,6 +2294,31 @@ fn parseNameSegmentAst(p: inout P, name: String, nameSpan: Span) -> NameSegmentA
     return <NameSegmentAst name=name nameSpan=nameSpan args=args argLabels=argLabels argLabelSpans=argLabelSpans />
 }
 
+struct FunctionTypePrefix {
+    val start: U64
+    val transferable: Bool
+    val diverging: Bool
+}
+impl FunctionTypePrefix { factory }
+
+fn parseFunctionTypePrefix(p: inout P) -> FunctionTypePrefix {
+    val start = p.base + p.curTok().start
+    mut val transferable = false
+    mut val diverging = false
+    if p.curKind() == <Kind.KwSendable /> {
+        transferable = true
+        p.advance()
+    }
+    if p.curKind() == <Kind.KwDiverge /> {
+        diverging = true
+        p.advance()
+    }
+    if (transferable || diverging) && p.curKind() != <Kind.KwFn /> {
+        p.fail(off: p.base + p.curTok().start, msg: "function type modifiers must be followed by `fn`; write `sendable diverge fn` in that order")
+    }
+    return <FunctionTypePrefix start=start transferable=transferable diverging=diverging />
+}
+
 fn parseType(p: inout P) -> TypeAst {
     // an existential `any P` (spec/08): the lowercase `any` (never a type name —
     // types are PascalCase) followed by a trait type. Parse the trait type and tag
@@ -2314,22 +2346,15 @@ fn parseType(p: inout P) -> TypeAst {
             return <TypeAst name=inner.name nameSpan=inner.nameSpan namePath=inner.namePath args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView extViewSpan=inner.extViewSpan viewNames=inner.viewNames viewNameSpans=inner.viewNameSpans projectionTrait=inner.projectionTrait projectionTraitSpan=inner.projectionTraitSpan projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels projectionTraitArgLabelSpans=inner.projectionTraitArgLabelSpans projectionAssoc=inner.projectionAssoc projectionAssocSpan=inner.projectionAssocSpan isAny=true argLabels=inner.argLabels argLabelSpans=inner.argLabelSpans isSendable=isSendableAny isRecord=inner.isRecord />
         }
     }
-    mut val isSendableFn: Bool = false
-    mut val sendableStart: U64 = 0
-    match p.curKind() {
-        Kind.KwSendable => {
-            if p.peekKind(off: 1) == <Kind.KwFn /> {
-                sendableStart = p.base + p.curTok().start
-                p.advance()
-                isSendableFn = true
-            } else {
-                p.fail(off: p.base + p.curTok().start, msg: "`sendable` in type syntax is only valid before `fn` or after `any`")
-                p.advance()
-                return emptyTypeAst()
-            }
-        }
-        _ => {}
+    val prefix = parseFunctionTypePrefix(p: inout p)
+    if (prefix.transferable || prefix.diverging) && p.curKind() != <Kind.KwFn /> {
+        p.advance()
+        return emptyTypeAst()
     }
+    val isSendableFn = prefix.transferable
+    val isDivergingFn = prefix.diverging
+    val sendableStart = prefix.start
+
     // a labelled anonymous record type `(x: I32, y: I32)` / unit `()` (spec/02): a
     // structural record. Fields are `label: Type` pairs; `name` stays empty and the
     // field names/types ride in argLabels/args (isRecord marks it).
@@ -2376,7 +2401,7 @@ fn parseType(p: inout P) -> TypeAst {
     val name: String = p.text(t: head)
     val nameSpan: Span = p.spanOf(t: head)
     mut val sStart: U64 = p.base + head.start
-    if isSendableFn {
+    if isSendableFn || isDivergingFn {
         sStart = sendableStart
     }
     p.advance()
@@ -2428,6 +2453,7 @@ fn parseType(p: inout P) -> TypeAst {
             match p.curKind() {
                 Kind.Arrow => {
                     p.advance()
+                    if isDivergingFn { p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` types cannot declare a return type") }
                     fret = parseType(p: inout p)
                 }
                 _ => {}
@@ -2447,7 +2473,7 @@ fn parseType(p: inout P) -> TypeAst {
                 fargLabelSpans.append(flabelSpans[fk])
                 fk += 1
             }
-            return <TypeAst name=name nameSpan=nameSpan args=fargs argLabels=fargLabels argLabelSpans=fargLabelSpans span=<Span start=sStart end=p.prevEnd() /> isSendable=isSendableFn />
+            return <TypeAst name=name nameSpan=nameSpan args=fargs argLabels=fargLabels argLabelSpans=fargLabelSpans span=<Span start=sStart end=p.prevEnd() /> isSendable=isSendableFn isDiverging=isDivergingFn />
         }
         _ => {}
     }
@@ -4407,9 +4433,9 @@ inout fn parseSyntaxStructField(p: inout P) -> FieldId {
     return self.appendDirectSyntaxField(name: name, ty: ty, isMut: isMut, vis: vis, hasDefault: hasDefault, defaultVal: defaultVal, span: <Span start=start end=p.prevEnd() />)
 }
 
-inout fn appendDirectSyntaxDecl(kind: DeclKind, name: Span, typeParams: SyntaxSlice, typeParamSendable: SyntaxSlice, span: Span, isUnique: Bool, isNonsendable: Bool, fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasDeinit: Bool = false, deinitBody: BlockId = <BlockId raw=0U64 />, variants: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasRet: Bool = false, ret: TypeId = <TypeId raw=0U64 />, isAsync: Bool = false, isExposed: Bool = false, whereParams: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraitTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, body: BlockId = <BlockId raw=0U64 />) -> DeclId {
+inout fn appendDirectSyntaxDecl(kind: DeclKind, name: Span, typeParams: SyntaxSlice, typeParamSendable: SyntaxSlice, span: Span, isUnique: Bool, isNonsendable: Bool, fields: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasDeinit: Bool = false, deinitBody: BlockId = <BlockId raw=0U64 />, variants: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, params: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, hasRet: Bool = false, ret: TypeId = <TypeId raw=0U64 />, isAsync: Bool = false, isExposed: Bool = false, isDiverging: Bool = false, whereParams: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraits: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, whereTraitTypes: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />, body: BlockId = <BlockId raw=0U64 />) -> DeclId {
     val id: DeclId = <DeclId raw=self.decls.count() />
-    self.decls.append(<SyntaxDecl kind=kind name=name typeParams=typeParams typeParamSendable=typeParamSendable span=span isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=variants params=params hasRet=hasRet ret=ret isAsync=isAsync isExposed=isExposed whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />)
+    self.decls.append(<SyntaxDecl kind=kind name=name typeParams=typeParams typeParamSendable=typeParamSendable span=span isUnique=isUnique isNonsendable=isNonsendable fields=fields hasDeinit=hasDeinit deinitBody=deinitBody variants=variants params=params hasRet=hasRet ret=ret isAsync=isAsync isExposed=isExposed isDiverging=isDiverging whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />)
     return id
 }
 
@@ -4510,6 +4536,13 @@ inout fn parseSyntaxEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = f
 
 inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false) -> DeclId {
     val start: U64 = p.base + p.curTok().start
+    mut val isDiverging = false
+    if p.curKind() == <Kind.KwDiverge /> {
+        isDiverging = true
+        p.advance()
+        if p.curKind() != <Kind.KwFn /> { p.fail(off: p.base + p.curTok().start, msg: "expected `fn` after `diverge`") }
+        if isAsync { p.fail(off: p.base + p.curTok().start, msg: "`async diverge fn` is not allowed") }
+    }
     p.advance()
     val name: Span = p.spanOf(t: p.curTok())
     p.advance()
@@ -4523,6 +4556,7 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false)
         Kind.Arrow => { p.advance() ret = self.parseSyntaxType(p: inout p) hasRet = true }
         _ => {}
     }
+    if isDiverging && hasRet { p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type") }
     mut val whereParams: Array[Span] = []
     mut val whereTraits: Array[Span] = []
     mut val whereTypes: Array[TypeId] = []
@@ -4530,7 +4564,7 @@ inout fn parseSyntaxFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false)
     self.parseSyntaxWhere(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     p.skipNewlines()
     val body: BlockId = self.parseSyntaxBlock(p: inout p)
-    return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync isExposed: isExposed whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
+    return self.appendDirectSyntaxDecl(kind: <DeclKind.Func /> name: name typeParams: self.pushDirectSyntaxTexts(items: typeParams) typeParamSendable: self.pushDirectSyntaxBools(items: typeParamSendable) span: <Span start=start end=p.prevEnd() /> isUnique: false isNonsendable: false params: params hasRet: hasRet ret: ret isAsync: isAsync isExposed: isExposed isDiverging: isDiverging whereParams: self.pushDirectSyntaxTexts(items: whereParams) whereTraits: self.pushDirectSyntaxTexts(items: whereTraits) whereTypes: self.pushDirectSyntaxTypeIds(items: whereTypes) whereTraitTypes: self.pushDirectSyntaxTypeIds(items: whereTraitTypes) body: body)
 }
 
 inout fn parseSyntaxImport(p: inout P, isImport: Bool, isPublic: Bool = false) -> ImportId {
@@ -4776,22 +4810,15 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
         }
     }
 
-    mut val isSendableFn: Bool = false
-    mut val sendableStart: U64 = 0U64
-    match p.curKind() {
-        Kind.KwSendable => {
-            if p.peekKind(off: 1) == <Kind.KwFn /> {
-                sendableStart = p.base + p.curTok().start
-                p.advance()
-                isSendableFn = true
-            } else {
-                p.fail(off: p.base + p.curTok().start, msg: "`sendable` in type syntax is only valid before `fn` or after `any`")
-                p.advance()
-                return self.emptySyntaxType()
-            }
-        }
-        _ => {}
+    val prefix = parseFunctionTypePrefix(p: inout p)
+    if (prefix.transferable || prefix.diverging) && p.curKind() != <Kind.KwFn /> {
+        p.advance()
+        return self.emptySyntaxType()
     }
+    val isSendableFn = prefix.transferable
+    val isDivergingFn = prefix.diverging
+    val sendableStart = prefix.start
+
 
     match p.curKind() {
         Kind.LParen => {
@@ -4841,7 +4868,7 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
     }
     val nameSpan: Span = p.spanOf(t: head)
     mut val start: U64 = p.base + head.start
-    if isSendableFn { start = sendableStart }
+    if isSendableFn || isDivergingFn { start = sendableStart }
     p.advance()
 
     match head.kind {
@@ -4882,6 +4909,7 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
             match p.curKind() {
                 Kind.Arrow => {
                     p.advance()
+                    if isDivergingFn { p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` types cannot declare a return type") }
                     ret = self.parseSyntaxType(p: inout p)
                 }
                 _ => {}
@@ -4899,7 +4927,7 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
                 extView=<Span start=0U64 end=0U64 /> viewNames=self.directEmptySyntaxSlice()
                 projectionTrait=<Span start=0U64 end=0U64 /> projectionTraitArgs=self.directEmptySyntaxSlice()
                 projectionTraitArgLabels=self.directEmptySyntaxSlice() projectionAssoc=<Span start=0U64 end=0U64 />
-                isAny=false argLabels=self.pushDirectSyntaxTexts(items: argLabels) isSendable=isSendableFn isRecord=false
+                isAny=false argLabels=self.pushDirectSyntaxTexts(items: argLabels) isSendable=isSendableFn isDiverging=isDivergingFn isRecord=false
             />)
         }
         _ => {}
@@ -5714,7 +5742,7 @@ inout fn parseSyntaxDeclTop(p: inout P) -> TopItemId {
             val id: DeclId = self.parseSyntaxFuncDecl(p: inout p, isAsync: false, isExposed: true)
             return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
         }
-        Kind.KwFn => {
+        Kind.KwFn | Kind.KwDiverge => {
             val id: DeclId = self.parseSyntaxFuncDecl(p: inout p, isAsync: false)
             return self.pushDirectSyntaxDeclTop(id: id, span: self.decls[id.raw].span)
         }
@@ -5746,7 +5774,7 @@ inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
-        Kind.KwExpose | Kind.KwFn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+        Kind.KwExpose | Kind.KwDiverge | Kind.KwFn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
             val inner: TopItemId = self.parseSyntaxDeclTop(p: inout p)
             return self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: inner.raw span: <Span start=0U64 end=0U64 />)
         }
@@ -5817,7 +5845,7 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
     mut val items: Array[TopItemId] = []
     p.skipNewlines()
     match p.curKind() {
-        Kind.KwExpose | Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
+        Kind.KwExpose | Kind.KwDiverge | Kind.KwFn | Kind.KwSpawn | Kind.KwAsync | Kind.KwStruct | Kind.KwUnique | Kind.KwNonsendable | Kind.KwEnum => {
             items.append(self.parseSyntaxDeclTop(p: inout p))
         }
         Kind.KwExtern => {
@@ -6345,6 +6373,13 @@ fn parseWhereNames(p: inout P, params: inout Array[String], traits: inout Array[
 // as `isAsync`). The body is parsed; the where-bounds are captured.
 pub fn parseFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false) -> DeclAst {
     val sStart: U64 = p.base + p.curTok().start
+    mut val isDiverging = false
+    if p.curKind() == <Kind.KwDiverge /> {
+        isDiverging = true
+        p.advance()
+        if p.curKind() != <Kind.KwFn /> { p.fail(off: p.base + p.curTok().start, msg: "expected `fn` after `diverge`") }
+        if isAsync { p.fail(off: p.base + p.curTok().start, msg: "`async diverge fn` is not allowed") }
+    }
     p.advance()
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
@@ -6362,6 +6397,7 @@ pub fn parseFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false) -> Decl
         }
         _ => {}
     }
+    if isDiverging && hasRet { p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` cannot declare a return type") }
     mut val whereParams: Array[String] = []
     mut val whereTraits: Array[String] = []
     mut val whereTypes: Array[TypeAst] = []
@@ -6369,7 +6405,7 @@ pub fn parseFuncDecl(p: inout P, isAsync: Bool, isExposed: Bool = false) -> Decl
     parseWhereNames(p: inout p, params: inout whereParams, traits: inout whereTraits, types: inout whereTypes, traitTypes: inout whereTraitTypes)
     p.skipNewlines()
     val body: BlockAst = parseBlockAst(p: inout p)
-    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync isExposed=isExposed whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
+    return <DeclAst kind=<DeclKind.Func /> name=name nameSpan=nameSpan typeParams=tps.names typeParamSpans=tps.nameSpans typeParamSendable=tps.isSendable span=<Span start=sStart end=p.prevEnd() /> isUnique=false fields=[] hasDeinit=false deinitBody=emptyBlock() variants=[] params=params hasRet=hasRet ret=ret isAsync=isAsync isDiverging=isDiverging isExposed=isExposed whereParams=whereParams whereTraits=whereTraits whereTypes=whereTypes whereTraitTypes=whereTraitTypes body=body />
 }
 
 // Parse an item's source into a `DeclAst` (struct / enum / fn). `source` is the
@@ -6465,12 +6501,12 @@ pub fn parseDecl(p: inout P) -> DeclAst {
             }
             return parseFuncDecl(p: inout p, isAsync: false, isExposed: true)
         }
-        Kind.KwFn => { return parseFuncDecl(p: inout p, isAsync: false) }
+        Kind.KwFn | Kind.KwDiverge => { return parseFuncDecl(p: inout p, isAsync: false) }
         Kind.KwSpawn => {
             p.fail(off: p.base + p.curTok().start, msg: "`spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
             p.advance()
             match p.curKind() {
-                Kind.KwFn => { return parseFuncDecl(p: inout p, isAsync: false) }
+                Kind.KwFn | Kind.KwDiverge => { return parseFuncDecl(p: inout p, isAsync: false) }
                 _ => { return emptyDeclAst(off: p.base + p.curTok().start) }
             }
         }
@@ -7252,7 +7288,7 @@ fn parseDirectiveAst(p: inout P) -> DirectiveAst {
 fn parsePublishedItemAst(p: inout P) -> TopItemAst {
     match p.curKind() {
         Kind.KwExtern => { return <TopItemAst.Published inner=<TopItemAst.Extern e=parseExternDecl(p: inout p) /> /> }
-        Kind.KwExpose | Kind.KwFn => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
+        Kind.KwExpose | Kind.KwDiverge | Kind.KwFn => { return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> /> }
         Kind.KwSpawn => {
             p.fail(off: p.base + p.curTok().start, msg: "`pub spawn fn` is rejected in v1 until spawn-boundary sendability/effect checking is available")
             return <TopItemAst.Published inner=<TopItemAst.Decl d=parseDecl(p: inout p) /> />
@@ -7336,7 +7372,7 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
     mut val items: Array[TopItemAst] = []
     p.skipNewlines()
     match p.curKind() {
-            Kind.KwExpose | Kind.KwFn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
+            Kind.KwExpose | Kind.KwDiverge | Kind.KwFn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwSpawn => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwAsync => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }
             Kind.KwStruct => { items.append(<TopItemAst.Decl d=parseDecl(p: inout p) />) }

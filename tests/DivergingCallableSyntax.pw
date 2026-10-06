@@ -1,0 +1,49 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { assert }
+use @Std/Io only { print }
+
+fn inspect(file: Syntax.SyntaxFile, item: Syntax.TopItemId, divergent: Bool) {
+    val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    assert(declaration.isDiverging == divergent)
+    val parameter = Syntax.syntaxParam(file: file, id: Syntax.syntaxDeclParam(file: file, decl: declaration, index: 0U64))
+    val callable = Syntax.syntaxType(file: file, id: parameter.ty)
+    assert(callable.isDiverging)
+    assert(callable.isSendable)
+}
+
+fn accepted(source: String, divergent: Bool) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val direct = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    inspect(file: direct, item: Syntax.syntaxFileTopLevel(file: direct, index: 0U64), divergent: divergent)
+    val materialized = Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count())
+    mut val frozen = <Syntax.SyntaxFile.empty />
+    val root = frozen.freezeTopItem(ast: materialized)
+    inspect(file: frozen, item: root, divergent: divergent)
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val values = Syntax.parseProgramAst(p: inout valueParser)
+    assert(!valueParser.hasErr)
+    val valueRoot = frozen.freezeTopItem(ast: values[0U64])
+    inspect(file: frozen, item: valueRoot, divergent: divergent)
+}
+
+fn rejected(source: String) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(parser.hasErr)
+}
+
+fn main() {
+    accepted(source: "diverge fn stop(callback: sendable diverge fn()) {{ panic(\"stop\") }}", divergent: true)
+    accepted(source: "fn keep(callback: sendable diverge fn()) {{}}", divergent: false)
+    rejected(source: "diverge fn stop() -> I64 {{}}")
+    rejected(source: "async diverge fn stop() {{}}")
+    rejected(source: "fn keep(callback: diverge fn() -> I64) {{}}")
+    rejected(source: "fn keep(callback: diverge sendable fn()) {{}}")
+    rejected(source: "fn keep(callback: diverge I64) {{}}")
+    print("ok")
+}
