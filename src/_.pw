@@ -9094,8 +9094,8 @@ fn parseMatchStmtAst(p: inout P) -> StmtAst {
 
 // A value-position match-arm body. A bare expression `=> e` becomes a one-`give`
 // block; a diverging arm `=> panic …` / `=> return …` becomes a one-statement
-// block (no give); a `{ }` block is taken as-is (it ends in `give` or diverges).
-// The lowering distinguishes value vs diverging arms by the terminal statement.
+// block (no give); a `{ }` block is taken as-is. The compiler determines normal
+// completion from control flow; give exits its block regardless of its position.
 fn parseExprArmBodyAst(p: inout P, armStart: U64) -> BlockAst {
     match p.curKind() {
         Kind.LBrace => { return parseBlockAst(p: inout p) }
