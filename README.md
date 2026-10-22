@@ -25,6 +25,15 @@ exactly why it lives outside `@Std` (where everything must be single-version).
 `tests/` is a local consumer package whose manifest points to this checkout.
 `SupertraitConstraints.pw` checks complete supertrait types through both parsers,
 materialization and freezing; its expected output is `SupertraitConstraints.out`.
+`DeriveRootBindings.pw` checks that Hash and struct/enum Eq derives emit ordinary
+impl-only parts without adding imports; its expected output is `DeriveRootBindings.out`.
+
+## Derive consumer bindings
+
+Generated parts share their module root's imports and cannot declare `use` or
+`pub use`. A root using `@[Hash]` must explicitly import both `Hash` and `Hasher`
+from `@Std/Hash`; a root using `@[Eq]` must import `Eq` from `@Std/Core`.
+These are ordinary root bindings, not dependencies injected by the generator.
 
 ## Usage
 

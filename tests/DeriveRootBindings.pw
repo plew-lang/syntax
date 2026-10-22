@@ -1,0 +1,35 @@
+use @Plew/Syntax as Syntax
+use @Std/Core only { Eq, assert }
+use @Std/Hash only { Hash }
+use @Std/Io only { print }
+
+fn checkImplOnly(source: String) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    assert(!parser.hasErr)
+    mut val index = 0U64
+    while index < Syntax.syntaxFileTopLevelCount(file: file) {
+        val item = Syntax.syntaxFileTopLevel(file: file, index: index)
+        match Syntax.syntaxTopItemKind(file: file, item: item) {
+            Syntax.SyntaxTopItemKind.Impl => {}
+            _ => { panic "derive output must contain only impl blocks" }
+        }
+        index += 1U64
+    }
+    assert(index > 0U64)
+}
+
+fn main() {
+    val source = "struct Item {{ val number: I64 }}"
+    val item = Syntax.parseItem(source: source, start: 0U64, end: source.bytes().count())
+    // Output is an ordinary part. Hash and Hasher are supplied by its root.
+    val generated = Hash.derive(input: item)
+    assert(generated == "pub impl Item as Hash {{\n    fn hash[H](hasher: inout H) where H: Hasher {{\n        self.number.hash(hasher: inout hasher)\n    }}\n}}\n")
+    checkImplOnly(source: generated)
+    checkImplOnly(source: Eq.derive(input: item))
+    val enumSource = "enum Choice {{ First Second }}"
+    checkImplOnly(source: Eq.derive(input: Syntax.parseItem(source: enumSource, start: 0U64, end: enumSource.bytes().count())))
+    print("ok")
+}
