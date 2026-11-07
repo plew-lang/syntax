@@ -1,0 +1,49 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn retained(file: Syntax.SyntaxFile, item: Syntax.TopItemId, projection: Bool) -> Bool {
+    val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    val parameter = Syntax.syntaxParam(file: file, id: Syntax.syntaxDeclParam(file: file, decl: declaration, index: 0U64))
+    val target = Syntax.syntaxType(file: file, id: parameter.ty)
+    if projection {
+        return target.projectionTrait.end > target.projectionTrait.start && target.projectionAssoc.end > target.projectionAssoc.start
+    }
+    return Syntax.syntaxTypeViewNameCount(file: file, ty: target) == 1U64 && target.projectionAssoc.start == target.projectionAssoc.end
+}
+
+fn main() {
+    val scenario = argAt(1I64)
+    val projection = scenario == "projection"
+    val plain = scenario == "plain"
+    val source = if projection {
+        give "fn example(value: A#P[I64].Item) {{}}"
+    } else if plain {
+        give "fn example(value: A#P) {{}}"
+    } else {
+        give "fn example(value: A#P[I64]) {{}}"
+    }
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    if parser.hasErr { print("parse-error") return }
+    if scenario == "materialized" || scenario == "frozen" {
+        val item = Syntax.parseItem(source: source, start: 17U64, end: 17U64 + source.bytes().count())
+        if scenario == "frozen" {
+            mut val frozen = <Syntax.SyntaxFile.empty />
+            val root = frozen.freezeTopItem(ast: item)
+            print(if retained(file: frozen, item: root, projection: false) { give "1" } else { give "0" })
+            return
+        }
+        match item {
+            Syntax.TopItemAst.Decl(d: val declaration) => {
+                val target = declaration.params[0U64].ty
+                print(if target.viewNames.count() == 1U64 && target.projectionAssoc == "" { give "1" } else { give "0" })
+            }
+            _ => { print("wrong-declaration") }
+        }
+        return
+    }
+    print(if retained(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64), projection: projection) { give "1" } else { give "0" })
+}
