@@ -5592,7 +5592,7 @@ inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
 
 // Preserve the extension declaration, including an empty bundle, before its
 // tagged Impl roots. Binding admission owns name identity and collisions.
-inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
+inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId], isPublic: Bool = false) {
     val start = p.base + p.curTok().start
     p.advance()
     val name: Span = p.spanOf(t: p.curTok())
@@ -5604,6 +5604,7 @@ inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
     val extension = self.extensions.count()
     self.extensions.append(<SyntaxExtension name=name span=name />)
     val item = self.pushTopItem(kind: <SyntaxTopItemKind.Extension /> payload: extension span: name)
+    val itemIndex = items.count()
     items.append(item)
     mut val end = p.base + p.curTok().start
     while true {
@@ -5632,6 +5633,9 @@ inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
     val span = <Span start=start end=end />
     self.extensions[extension] = <SyntaxExtension name=name span=span />
     self.topItems[item.raw] = <SyntaxTopItem kind=<SyntaxTopItemKind.Extension /> payload=extension span=span />
+    if isPublic {
+        items[itemIndex] = self.pushTopItem(kind: <SyntaxTopItemKind.Published /> payload: item.raw span: span)
+    }
 }
 
 // Parse one source position to one or more top-level IDs.  Only extension
@@ -5667,6 +5671,8 @@ inout fn parseSyntaxTopItemsAt(p: inout P) -> Array[TopItemId] {
                 } else if curIs(p: inout p, kw: "use") {
                     val id = self.parseSyntaxImport(p: inout p, isImport: true, isPublic: true)
                     items.append(self.pushTopItem(kind: <SyntaxTopItemKind.Import /> payload: id.raw span: self.imports[id.raw].span))
+                } else if curIs(p: inout p, kw: "extension") {
+                    self.parseSyntaxExtensionInto(p: inout p, items: inout items, isPublic: true)
                 } else {
                     items.append(self.parseSyntaxPublishedItem(p: inout p))
                 }
@@ -7106,7 +7112,7 @@ fn parsePublishedItemAst(p: inout P) -> TopItemAst {
 // call-site `value#Name.member` view). The extension itself carries no other
 // state beyond its declaration name and source spans. Preserve that declaration
 // even without impls, so semantic binding can reject name collisions.
-fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
+fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst], isPublic: Bool = false) {
     val start = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
@@ -7148,7 +7154,8 @@ fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
             }
         }
     }
-    items[item] = <TopItemAst.Extension name=name nameSpan=nameSpan span=<Span start=start end=end /> />
+    val declaration = <TopItemAst.Extension name=name nameSpan=nameSpan span=<Span start=start end=end /> />
+    items[item] = if isPublic { give <TopItemAst.Published inner=declaration /> } else { give declaration }
 }
 
 
@@ -7189,6 +7196,8 @@ fn parseTopItemsAt(p: inout P) -> Array[TopItemAst] {
                                     items.append(<TopItemAst.Impl im=parseImplDecl(p: inout p, isPub: true) />)
                                 } else if curIs(p: inout p, kw: "use") {
                                     items.append(<TopItemAst.Import imp=parseImportAst(p: inout p, isImport: true, isPublic: true) />)
+                                } else if curIs(p: inout p, kw: "extension") {
+                                    parseExtensionInto(p: inout p, items: inout items, isPublic: true)
                                 } else {
                                     items.append(parsePublishedItemAst(p: inout p))
                                 }

@@ -1,0 +1,77 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn extensionMatches(item: Syntax.TopItemAst, public: Bool) -> Bool {
+    match item {
+        Syntax.TopItemAst.Published(inner: val inner) => {
+            if !public { return false }
+            return extensionMatches(item: inner, public: false)
+        }
+        Syntax.TopItemAst.Extension(val name, val nameSpan, val span) => {
+            return !public && name == "Extra" && nameSpan.end - nameSpan.start == 5U64 && span.start >= 17U64 && span.end > nameSpan.end
+        }
+        _ => { return false }
+    }
+}
+
+fn main() {
+    val scenario = argAt(1I64)
+    val mode = argAt(2I64)
+    val public = scenario == "publicPrivate" || scenario == "publicPublic" || scenario == "publicEmpty"
+    val publicMember = scenario == "privatePublic" || scenario == "publicPublic"
+    val empty = scenario == "publicEmpty" || scenario == "privateEmpty"
+    val member = if empty { give "" } else {
+        give (if publicMember { give "pub " } else { give "" }) + "impl S {{ fn value() -> I64 {{ return 1I64 }} }}"
+    }
+    val source = (if public { give "pub " } else { give "" }) + "extension Extra {{ " + member + " }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    mut val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    if parser.hasErr { print("parse-error") return }
+    val expected = if empty { give 1U64 } else { give 2U64 }
+    if Syntax.syntaxFileTopLevelCount(file: file) != expected { print("0") return }
+    if mode == "materialized" || mode == "frozen" {
+        mut val astParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+        val items = Syntax.parseProgramAst(p: inout astParser)
+        if astParser.hasErr || items.count() != expected || !extensionMatches(item: items[0U64], public: public) { print("0") return }
+        if !empty {
+            match items[1U64] {
+                Syntax.TopItemAst.Impl(im: val implementation) => {
+                    if implementation.isPub != publicMember || implementation.extName != "Extra" || implementation.members.count() != 1U64 { print("0") return }
+                }
+                _ => { print("0") return }
+            }
+        }
+        if mode == "frozen" {
+            mut val frozen = <Syntax.SyntaxFile.empty />
+            for val item in items { frozen.freezeTopItem(ast: item) }
+            file = frozen
+        }
+    }
+    mut val item = Syntax.syntaxFileTopLevel(file: file, index: 0U64)
+    match Syntax.syntaxTopItemKind(file: file, item: item) {
+        Syntax.SyntaxTopItemKind.Published => {
+            if !public { print("0") return }
+            item = <Syntax.TopItemId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />
+        }
+        _ => { if public { print("0") return } }
+    }
+    match Syntax.syntaxTopItemKind(file: file, item: item) {
+        Syntax.SyntaxTopItemKind.Extension => {}
+        _ => { print("0") return }
+    }
+    val extension = Syntax.syntaxExtension(file: file, id: <Syntax.ExtensionId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    if extension.name.end - extension.name.start != 5U64 || extension.span.end != 17U64 + source.bytes().count() { print("0") return }
+    if !empty {
+        val implementationItem = Syntax.syntaxFileTopLevel(file: file, index: 1U64)
+        match Syntax.syntaxTopItemKind(file: file, item: implementationItem) {
+            Syntax.SyntaxTopItemKind.Impl => {}
+            _ => { print("0") return }
+        }
+        val implementation = Syntax.syntaxImpl(file: file, id: <Syntax.ImplId raw=Syntax.syntaxTopItemPayload(file: file, item: implementationItem) />)
+        if implementation.isPub != publicMember || implementation.members.count != 1U64 { print("0") return }
+    }
+    print("1")
+}
