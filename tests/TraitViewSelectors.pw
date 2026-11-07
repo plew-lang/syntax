@@ -2,24 +2,109 @@ use @Plew/Syntax as Syntax
 use @Std/Io only { print }
 use @Std/Process only { argAt }
 
-fn retained(file: Syntax.SyntaxFile, item: Syntax.TopItemId, projection: Bool) -> Bool {
+fn spanMatches(source: String, span: Syntax.Span, expected: String) -> Bool {
+    if span.start < 17U64 || span.end < span.start || span.end > 17U64 + source.bytes().count() { return false }
+    return Syntax.rangeEquals(bytes: source.bytes(), start: span.start - 17U64, len: span.end - span.start, kw: expected)
+}
+
+fn retainedType(sourceText: String, file: Syntax.SyntaxFile, target: Syntax.SyntaxType, projection: Bool, plain: Bool, nested: Bool, existential: Bool, multiple: Bool, labelled: Bool) -> Bool {
+    if target.isAny != existential { return false }
+    if projection {
+        if !spanMatches(source: sourceText, span: target.projectionTrait, expected: "P") || !spanMatches(source: sourceText, span: target.projectionAssoc, expected: "Item") || Syntax.syntaxTypeProjectionTraitArgCount(file: file, ty: target) != 1U64 { return false }
+        val argument = Syntax.syntaxType(file: file, id: Syntax.syntaxTypeProjectionTraitArg(file: file, ty: target, index: 0U64))
+        return spanMatches(source: sourceText, span: argument.name, expected: "I64")
+    }
+    // Preserve the original RED assertion as well as inspecting the full source.
+    if Syntax.syntaxTypeViewNameCount(file: file, ty: target) != (if nested { give 2U64 } else { give 1U64 }) || target.projectionAssoc.start != target.projectionAssoc.end { return false }
+    if target.viewSources.count != Syntax.syntaxTypeViewNameCount(file: file, ty: target) { return false }
+    val source = Syntax.syntaxTypeViewSource(file: file, ty: target, index: 0U64)
+    if source.path.count != 1U64 || source.span.start < 17U64 { return false }
+    val segment = Syntax.syntaxViewSourceSegment(file: file, source: source, index: 0U64)
+    if segment.name.start != source.span.start || !spanMatches(source: sourceText, span: segment.name, expected: "P") { return false }
+    val expectedSource = if plain { give "P" } else if nested { give "P[Array[I64#Inner[Bool]]]" } else if labelled { give "P[I64, Item=Bool]" } else if multiple { give "P[I64, Bool]" } else { give "P[I64]" }
+    if !spanMatches(source: sourceText, span: source.span, expected: expectedSource) { return false }
+    if plain { return segment.args.count == 0U64 }
+    if segment.args.count != (if multiple { give 2U64 } else { give 1U64 }) { return false }
+    val firstLabel = Syntax.syntaxNameSegmentArgLabel(file: file, segment: segment, index: 0U64)
+    if firstLabel.start != firstLabel.end { return false }
+    if multiple {
+        val second = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: segment, index: 1U64))
+        if !spanMatches(source: sourceText, span: second.name, expected: "Bool") { return false }
+        val label = Syntax.syntaxNameSegmentArgLabel(file: file, segment: segment, index: 1U64)
+        if labelled {
+            if !spanMatches(source: sourceText, span: label, expected: "Item") { return false }
+        } else if label.start != label.end { return false }
+    }
+    val argument = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: segment, index: 0U64))
+    if !nested { return spanMatches(source: sourceText, span: argument.name, expected: "I64") && argument.viewSources.count == 0U64 }
+    if !spanMatches(source: sourceText, span: argument.name, expected: "Array") || Syntax.syntaxTypeArgCount(file: file, ty: argument) != 1U64 { return false }
+    val inner = Syntax.syntaxType(file: file, id: Syntax.syntaxTypeArg(file: file, ty: argument, index: 0U64))
+    if !spanMatches(source: sourceText, span: inner.name, expected: "I64") || inner.viewSources.count != 1U64 { return false }
+    val innerSource = Syntax.syntaxTypeViewSource(file: file, ty: inner, index: 0U64)
+    val innerSegment = Syntax.syntaxViewSourceSegment(file: file, source: innerSource, index: 0U64)
+    if !spanMatches(source: sourceText, span: innerSegment.name, expected: "Inner") || innerSegment.args.count != 1U64 { return false }
+    val innerArgument = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: innerSegment, index: 0U64))
+    val extra = Syntax.syntaxTypeViewSource(file: file, ty: target, index: 1U64)
+    val extraSegment = Syntax.syntaxViewSourceSegment(file: file, source: extra, index: 0U64)
+    return spanMatches(source: sourceText, span: innerArgument.name, expected: "Bool") && extraSegment.args.count == 0U64 && spanMatches(source: sourceText, span: extraSegment.name, expected: "Extra")
+}
+
+fn retained(sourceText: String, file: Syntax.SyntaxFile, item: Syntax.TopItemId, projection: Bool, plain: Bool, nested: Bool, existential: Bool, multiple: Bool, labelled: Bool) -> Bool {
     val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
     val parameter = Syntax.syntaxParam(file: file, id: Syntax.syntaxDeclParam(file: file, decl: declaration, index: 0U64))
-    val target = Syntax.syntaxType(file: file, id: parameter.ty)
-    if projection {
-        return target.projectionTrait.end > target.projectionTrait.start && target.projectionAssoc.end > target.projectionAssoc.start
+    return retainedType(sourceText: sourceText, file: file, target: Syntax.syntaxType(file: file, id: parameter.ty), projection: projection, plain: plain, nested: nested, existential: existential, multiple: multiple, labelled: labelled)
+}
+
+fn retainedValue(sourceText: String, target: Syntax.TypeAst, plain: Bool, nested: Bool, existential: Bool, multiple: Bool, labelled: Bool) -> Bool {
+    if target.isAny != existential { return false }
+    if target.viewNames.count() != (if nested { give 2U64 } else { give 1U64 }) || target.projectionAssoc != "" { return false }
+    if target.viewSources.count() != target.viewNames.count() { return false }
+    val source = target.viewSources[0U64]
+    if source.span.start < 17U64 || source.path.count() != 1U64 { return false }
+    val segment = source.path[0U64]
+    if segment.name != "P" || segment.nameSpan.start != source.span.start { return false }
+    val expectedSource = if plain { give "P" } else if nested { give "P[Array[I64#Inner[Bool]]]" } else if labelled { give "P[I64, Item=Bool]" } else if multiple { give "P[I64, Bool]" } else { give "P[I64]" }
+    if !spanMatches(source: sourceText, span: source.span, expected: expectedSource) || !spanMatches(source: sourceText, span: segment.nameSpan, expected: "P") { return false }
+    if plain { return segment.args.count() == 0U64 }
+    if segment.args.count() != (if multiple { give 2U64 } else { give 1U64 }) { return false }
+    if segment.argLabels[0U64] != "" || segment.argLabelSpans[0U64].start != segment.argLabelSpans[0U64].end { return false }
+    if multiple {
+        if segment.args[1U64].name != "Bool" { return false }
+        if labelled {
+            if segment.argLabels[1U64] != "Item" || !spanMatches(source: sourceText, span: segment.argLabelSpans[1U64], expected: "Item") { return false }
+        } else if segment.argLabels[1U64] != "" { return false }
     }
-    return Syntax.syntaxTypeViewNameCount(file: file, ty: target) == 1U64 && target.projectionAssoc.start == target.projectionAssoc.end
+    val argument = segment.args[0U64]
+    if !nested { return argument.name == "I64" && argument.viewSources.count() == 0U64 }
+    if argument.name != "Array" || argument.args.count() != 1U64 { return false }
+    val inner = argument.args[0U64]
+    if inner.name != "I64" || inner.viewSources.count() != 1U64 { return false }
+    val innerSource = inner.viewSources[0U64]
+    if innerSource.path.count() != 1U64 { return false }
+    val innerSegment = innerSource.path[0U64]
+    return innerSegment.name == "Inner" && innerSegment.args.count() == 1U64 && innerSegment.args[0U64].name == "Bool" && target.viewSources[1U64].path[0U64].name == "Extra"
 }
 
 fn main() {
     val scenario = argAt(1I64)
     val projection = scenario == "projection"
     val plain = scenario == "plain"
+    val nested = scenario == "nested" || scenario == "materializedNested" || scenario == "frozenNested"
+    val existential = scenario == "any" || scenario == "materializedAny" || scenario == "frozenAny"
+    val labelled = scenario == "labelled" || scenario == "materializedLabelled" || scenario == "frozenLabelled"
+    val multiple = labelled || scenario == "multiple" || scenario == "materializedMultiple" || scenario == "frozenMultiple"
     val source = if projection {
         give "fn example(value: A#P[I64].Item) {{}}"
     } else if plain {
         give "fn example(value: A#P) {{}}"
+    } else if nested {
+        give "fn example(value: A#P[Array[I64#Inner[Bool]]]#Extra) {{}}"
+    } else if labelled {
+        give "fn example(value: A#P[I64, Item=Bool]) {{}}"
+    } else if multiple {
+        give "fn example(value: A#P[I64, Bool]) {{}}"
+    } else if existential {
+        give "fn example(value: any A#P[I64]) {{}}"
     } else {
         give "fn example(value: A#P[I64]) {{}}"
     }
@@ -28,22 +113,22 @@ fn main() {
     mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
     val file = Syntax.parseProgramSyntaxFile(p: inout parser)
     if parser.hasErr { print("parse-error") return }
-    if scenario == "materialized" || scenario == "frozen" {
+    if scenario == "materialized" || scenario == "frozen" || scenario == "materializedNested" || scenario == "frozenNested" || scenario == "materializedAny" || scenario == "frozenAny" || scenario == "materializedMultiple" || scenario == "frozenMultiple" || scenario == "materializedLabelled" || scenario == "frozenLabelled" {
         val item = Syntax.parseItem(source: source, start: 17U64, end: 17U64 + source.bytes().count())
-        if scenario == "frozen" {
+        if scenario == "frozen" || scenario == "frozenNested" || scenario == "frozenAny" || scenario == "frozenMultiple" || scenario == "frozenLabelled" {
             mut val frozen = <Syntax.SyntaxFile.empty />
             val root = frozen.freezeTopItem(ast: item)
-            print(if retained(file: frozen, item: root, projection: false) { give "1" } else { give "0" })
+            print(if retained(sourceText: source, file: frozen, item: root, projection: false, plain: false, nested: nested, existential: existential, multiple: multiple, labelled: labelled) { give "1" } else { give "0" })
             return
         }
         match item {
             Syntax.TopItemAst.Decl(d: val declaration) => {
                 val target = declaration.params[0U64].ty
-                print(if target.viewNames.count() == 1U64 && target.projectionAssoc == "" { give "1" } else { give "0" })
+                print(if retainedValue(sourceText: source, target: target, plain: false, nested: nested, existential: existential, multiple: multiple, labelled: labelled) { give "1" } else { give "0" })
             }
             _ => { print("wrong-declaration") }
         }
         return
     }
-    print(if retained(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64), projection: projection) { give "1" } else { give "0" })
+    print(if retained(sourceText: source, file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64), projection: projection, plain: plain, nested: nested, existential: existential, multiple: multiple, labelled: labelled) { give "1" } else { give "0" })
 }

@@ -28,6 +28,16 @@ materialization and freezing; its expected output is `SupertraitConstraints.out`
 `DeriveRootBindings.pw` checks that Hash and struct/enum Eq derives emit ordinary
 impl-only parts without adding imports; its expected output is `DeriveRootBindings.out`.
 
+## Type-view syntax
+
+`SyntaxType.viewSources` and `TypeAst.viewSources` retain written source paths,
+their type arguments and original spans. The parser leaves trait-versus-extension
+classification to name resolution. Projection arguments remain separate from
+memberless view arguments. `viewNames` / `extView` are compatibility mirrors;
+clients consuming the rich rows must not independently infer identity from them.
+Value-position argument/index disambiguation and qualified selector parsing are
+separate from this type-position representation increment.
+
 ## Derive consumer bindings
 
 Generated parts share their module root's imports and cannot declare `use` or

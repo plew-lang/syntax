@@ -1,0 +1,23 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn main() {
+    val scenario = argAt(1I64)
+    val source = if scenario == "missingSource" {
+        give "newtype Alias = A#"
+    } else if scenario == "missingBracket" {
+        give "newtype Alias = A#P[I64"
+    } else if scenario == "missingMember" {
+        give "newtype Alias = A#P[I64]."
+    } else {
+        give "newtype Alias = A#P[Item=]"
+    }
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    Syntax.parseProgramSyntaxFile(p: inout parser)
+    mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    Syntax.parseProgramAst(p: inout valueParser)
+    print(if parser.hasErr && valueParser.hasErr && parser.errOff >= 17U64 && parser.errOff <= 17U64 + source.bytes().count() { give "1" } else { give "0" })
+}

@@ -59,12 +59,20 @@ impl SyntaxFile {
             projectionArgs.append(self.materializeType(id: self.typeIds[node.projectionTraitArgs.start + i], p: p))
             i += 1U64
         }
+        mut val sources: Array[ViewSourceAst] = []
+        i = 0U64
+        while i < node.viewSources.count {
+            val source = self.viewSources[node.viewSources.start + i]
+            sources.append(<ViewSourceAst path=self.materializeNamePath(path: source.path, p: p) span=source.span />)
+            i += 1U64
+        }
         return <TypeAst
             name=self.materializeText(p: p, span: node.name) nameSpan=node.name
             namePath=self.materializeNamePath(path: node.namePath, p: p)
             args=args span=node.span
             extView=self.materializeText(p: p, span: node.extView) extViewSpan=node.extView
             viewNames=self.materializeTexts(p: p, slice: node.viewNames) viewNameSpans=self.spanSlice(slice: node.viewNames)
+            viewSources=sources
             projectionTrait=self.materializeText(p: p, span: node.projectionTrait) projectionTraitSpan=node.projectionTrait
             projectionTraitArgs=projectionArgs
             projectionTraitArgLabels=self.materializeTexts(p: p, slice: node.projectionTraitArgLabels)

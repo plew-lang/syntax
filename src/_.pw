@@ -1162,6 +1162,7 @@ pub struct SyntaxFile {
     mut val newtypes: Array[SyntaxNewtype] = []
     mut val types: Array[SyntaxType] = []
     mut val nameSegments: Array[SyntaxNameSegment] = []
+    mut val viewSources: Array[SyntaxViewSource] = []
     mut val fields: Array[SyntaxField] = []
     mut val variants: Array[SyntaxVariant] = []
     mut val params: Array[SyntaxParam] = []
@@ -1231,6 +1232,21 @@ pub struct NameSegmentAst {
 pub impl SyntaxNameSegment { factory }
 pub impl NameSegmentAst { factory }
 
+// A written view source owns a complete name path and its type arguments.
+// The parser does not decide whether that source denotes a trait or extension.
+pub struct SyntaxViewSource {
+    pub val path: SyntaxSlice
+    pub val span: Span
+}
+
+pub struct ViewSourceAst {
+    pub val path: Array[NameSegmentAst]
+    pub val span: Span
+}
+
+pub impl SyntaxViewSource { factory }
+pub impl ViewSourceAst { factory }
+
 pub struct SyntaxType {
     // Empty for an unqualified head; otherwise includes every path segment.
     pub val namePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
@@ -1239,6 +1255,7 @@ pub struct SyntaxType {
     pub val span: Span
     pub val extView: Span
     pub val viewNames: SyntaxSlice
+    pub val viewSources: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val projectionTrait: Span
     pub val projectionTraitArgs: SyntaxSlice
     pub val projectionTraitArgLabels: SyntaxSlice
@@ -1627,6 +1644,9 @@ pub struct TypeAst {
     // assigning extension/trait meaning before declarations are available.
     pub val viewNames: Array[String] = []
     pub val viewNameSpans: Array[Span] = []
+    // Rich source rows are authoritative when present; viewNames/extView are
+    // compatibility mirrors for clients migrating from argument-free views.
+    pub val viewSources: Array[ViewSourceAst] = []
     // Associated-type projection (spec/08): `T#Trait[Args].Item` stores the
     // resolved source spelling and its positional instance arguments.  The
     // short form `T.Item` leaves projectionTrait empty.
@@ -2338,316 +2358,9 @@ fn parseFunctionTypePrefix(p: inout P) -> FunctionTypePrefix {
 }
 
 fn parseType(p: inout P) -> TypeAst {
-    // an existential `any P` (spec/08): the lowercase `any` (never a type name —
-    // types are PascalCase) followed by a trait type. Parse the trait type and tag
-    // it `isAny`. Unambiguous because `any` cannot head a real type.
-    if curIs(p: inout p, kw: "any") {
-        if p.peekKind(off: 1) == <Kind.Ident /> || p.peekKind(off: 1) == <Kind.KwSendable /> {
-            val anyStart: U64 = p.base + p.curTok().start
-            p.advance()
-            mut val isSendableAny: Bool = false
-            match p.curKind() {
-                Kind.KwSendable => {
-                    p.advance()
-                    isSendableAny = true
-                    match p.curKind() {
-                        Kind.Ident => {}
-                        _ => {
-                            p.fail(off: p.base + p.curTok().start, msg: "`any sendable` must be followed by a trait type")
-                            return emptyTypeAst()
-                        }
-                    }
-                }
-                _ => {}
-            }
-            val inner: TypeAst = parseType(p: inout p)
-            return <TypeAst name=inner.name nameSpan=inner.nameSpan namePath=inner.namePath args=inner.args span=<Span start=anyStart end=p.prevEnd() /> extView=inner.extView extViewSpan=inner.extViewSpan viewNames=inner.viewNames viewNameSpans=inner.viewNameSpans projectionTrait=inner.projectionTrait projectionTraitSpan=inner.projectionTraitSpan projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels projectionTraitArgLabelSpans=inner.projectionTraitArgLabelSpans projectionAssoc=inner.projectionAssoc projectionAssocSpan=inner.projectionAssocSpan isAny=true argLabels=inner.argLabels argLabelSpans=inner.argLabelSpans isSendable=isSendableAny isRecord=inner.isRecord />
-        }
-    }
-    val prefix = parseFunctionTypePrefix(p: inout p)
-    if (prefix.transferable || prefix.diverging) && p.curKind() != <Kind.KwFn /> {
-        p.advance()
-        return emptyTypeAst()
-    }
-    val isSendableFn = prefix.transferable
-    val isDivergingFn = prefix.diverging
-    val sendableStart = prefix.start
-
-    // a labelled anonymous record type `(x: I32, y: I32)` / unit `()` (spec/02): a
-    // structural record. Fields are `label: Type` pairs; `name` stays empty and the
-    // field names/types ride in argLabels/args (isRecord marks it).
-    match p.curKind() {
-        Kind.LParen => {
-            val recStart: U64 = p.base + p.curTok().start
-            p.advance()
-            mut val fieldTypes: Array[TypeAst] = []
-            mut val fieldNames: Array[String] = []
-            mut val fieldNameSpans: Array[Span] = []
-            while true {
-                match p.curKind() {
-                    Kind.RParen => { p.advance()  break }
-                    Kind.Eof => { break }
-                    Kind.Comma => { p.advance() }
-                    _ => {
-                        val labelTok: Tok = p.curTok()
-                        val label: String = p.text(t: labelTok)
-                        p.advance()
-                        match p.curKind() {
-                            Kind.Colon => { p.advance() }
-                            _ => { p.fail(off: p.base + p.curTok().start, msg: "an anonymous record field needs a `label: Type` (every field is labelled)") }
-                        }
-                        fieldNames.append(label)
-                        fieldNameSpans.append(p.spanOf(t: labelTok))
-                        fieldTypes.append(parseType(p: inout p))
-                    }
-                }
-            }
-            return <TypeAst name="" args=fieldTypes span=<Span start=recStart end=p.prevEnd() /> argLabels=fieldNames argLabelSpans=fieldNameSpans isRecord=true />
-        }
-        _ => {}
-    }
-    val head: Tok = p.curTok()
-    match head.kind {
-        Kind.Ident => {}
-        Kind.KwFn => {}
-        _ => {
-            p.fail(off: p.base + head.start, msg: "expected a type name")
-            p.advance()
-            return emptyTypeAst()
-        }
-    }
-    val name: String = p.text(t: head)
-    val nameSpan: Span = p.spanOf(t: head)
-    mut val sStart: U64 = p.base + head.start
-    if isSendableFn || isDivergingFn {
-        sStart = sendableStart
-    }
-    p.advance()
-    match head.kind {
-        Kind.KwFn => {
-            mut val fparams: Array[TypeAst] = []
-            // parameter labels (spec/04: labels are part of a function type's identity);
-            // "" for an unlabeled position. Captured parallel to fparams.
-            mut val flabels: Array[String] = []
-            mut val flabelSpans: Array[Span] = []
-            match p.curKind() {
-                Kind.LParen => { p.advance() }
-                _ => {}
-            }
-            while true {
-                match p.curKind() {
-                    Kind.RParen => {
-                        p.advance()
-                        break
-                    }
-                    Kind.Eof => { break }
-                    Kind.Comma => { p.advance() }
-                    _ => {
-                        // optional `label:` (or `label~:`) before the type.
-                        mut val lbl: String = ""
-                        mut val lblSpan: Span = <Span start=0 end=0 />
-                        match p.curKind() {
-                            Kind.Ident => {
-                                if p.peekKind(off: 1) == <Kind.Colon /> {
-                                    lbl = p.text(t: p.curTok())
-                                    lblSpan = p.spanOf(t: p.curTok())
-                                    p.advance()
-                                    p.advance()
-                                }
-                            }
-                            _ => {}
-                        }
-                        match p.curKind() {
-                            Kind.KwInout => { p.advance() }
-                            _ => {}
-                        }
-                        flabels.append(lbl)
-                        flabelSpans.append(lblSpan)
-                        fparams.append(parseType(p: inout p))
-                    }
-                }
-            }
-            mut val fret: TypeAst = emptyTypeAst()
-            match p.curKind() {
-                Kind.Arrow => {
-                    p.advance()
-                    if isDivergingFn { p.fail(off: p.base + p.curTok().start, msg: "`diverge fn` types cannot declare a return type") }
-                    fret = parseType(p: inout p)
-                }
-                _ => {}
-            }
-            mut val fargs: Array[TypeAst] = []
-            fargs.append(fret)
-            // argLabels parallel to fargs: slot 0 is the return type (no label, ""),
-            // slots 1.. carry each parameter's label.
-            mut val fargLabels: Array[String] = []
-            mut val fargLabelSpans: Array[Span] = []
-            fargLabels.append("")
-            fargLabelSpans.append(<Span start=0 end=0 />)
-            mut val fk: U64 = 0
-            while fk < fparams.count() {
-                fargs.append(fparams[fk])
-                fargLabels.append(flabels[fk])
-                fargLabelSpans.append(flabelSpans[fk])
-                fk += 1
-            }
-            return <TypeAst name=name nameSpan=nameSpan args=fargs argLabels=fargLabels argLabelSpans=fargLabelSpans span=<Span start=sStart end=p.prevEnd() /> isSendable=isSendableFn isDiverging=isDivergingFn />
-        }
-        _ => {}
-    }
-    mut val args: Array[TypeAst] = []
-    // binding labels parallel to args: a named associated-type / type-parameter
-    // binding `Name=Type` (spec/08,12 — used by `any P[Item=I32]`) records its name;
-    // an ordinary positional type argument records "".
-    mut val argLabels: Array[String] = []
-    mut val argLabelSpans: Array[Span] = []
-    match p.curKind() {
-        Kind.LBracket => {
-            p.advance()
-            while true {
-                match p.curKind() {
-                    Kind.RBracket => {
-                        p.advance()
-                        break
-                    }
-                    Kind.Eof => { break }
-                    Kind.Comma => { p.advance() }
-                    _ => {
-                        // a named binding `Name = Type` (an Ident immediately followed
-                        // by `=`): record the label and parse the bound type.
-                        mut val lbl: String = ""
-                        mut val lblSpan: Span = <Span start=0 end=0 />
-                        match p.curKind() {
-                            Kind.Ident => {
-                                if p.peekKind(off: 1) == <Kind.Eq /> {
-                                    lbl = p.text(t: p.curTok())
-                                    lblSpan = p.spanOf(t: p.curTok())
-                                    p.advance()
-                                    p.advance()
-                                }
-                            }
-                            _ => {}
-                        }
-                        args.append(parseType(p: inout p))
-                        argLabels.append(lbl)
-                        argLabelSpans.append(lblSpan)
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    mut val pathSegments: Array[NameSegmentAst] = []
-    while p.curKind() == <Kind.Dot /> {
-        if pathSegments.count() == 0U64 { pathSegments.append(<NameSegmentAst name=name nameSpan=nameSpan args=args argLabels=argLabels argLabelSpans=argLabelSpans />) }
-        p.advance()
-        val member = p.curTok()
-        p.advance()
-        pathSegments.append(parseNameSegmentAst(p: inout p, name: p.text(t: member), nameSpan: p.spanOf(t: member)))
-    }
-    // an extension-view refinement `Person#Ext` (spec/09), or an associated-type
-    // projection `T#Trait.Item` / `T.Item` (spec/08). A `#Name` followed by `.Item`
-    // is a projection source, not a value/extension view.
-    mut val extView: String = ""
-    mut val extViewSpan: Span = <Span start=0 end=0 />
-    mut val viewNames: Array[String] = []
-    mut val viewNameSpans: Array[Span] = []
-    mut val projectionTrait: String = ""
-    mut val projectionTraitSpan: Span = <Span start=0 end=0 />
-    mut val projectionTraitArgs: Array[TypeAst] = []
-    mut val projectionTraitArgLabels: Array[String] = []
-    mut val projectionTraitArgLabelSpans: Array[Span] = []
-    mut val projectionAssoc: String = ""
-    mut val projectionAssocSpan: Span = <Span start=0 end=0 />
-    mut val parsingViews: Bool = true
-    while parsingViews {
-        match p.curKind() {
-        Kind.Hash => {
-            p.advance()
-            val hashNameTok: Tok = p.curTok()
-            val hashName: String = p.text(t: hashNameTok)
-            val hashNameSpan: Span = p.spanOf(t: hashNameTok)
-            p.advance()
-            match p.curKind() {
-                Kind.LBracket => {
-                    p.advance()
-                    while true {
-                        match p.curKind() {
-                            Kind.RBracket => {
-                                p.advance()
-                                break
-                            }
-                            Kind.Eof => { break }
-                            Kind.Comma => { p.advance() }
-                            _ => {
-                                mut val lbl: String = ""
-                                mut val lblSpan: Span = <Span start=0 end=0 />
-                                match p.curKind() {
-                                    Kind.Ident => {
-                                        if p.peekKind(off: 1) == <Kind.Eq /> {
-                                            lbl = p.text(t: p.curTok())
-                                            lblSpan = p.spanOf(t: p.curTok())
-                                            p.advance()
-                                            p.advance()
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                                projectionTraitArgs.append(parseType(p: inout p))
-                                projectionTraitArgLabels.append(lbl)
-                                projectionTraitArgLabelSpans.append(lblSpan)
-                            }
-                        }
-                    }
-                    match p.curKind() {
-                        Kind.Dot => {
-                            p.advance()
-                            projectionTrait = hashName
-                            projectionTraitSpan = hashNameSpan
-                            val assocTok: Tok = p.curTok()
-                            projectionAssoc = p.text(t: assocTok)
-                            projectionAssocSpan = p.spanOf(t: assocTok)
-                            p.advance()
-                        }
-                        _ => {}
-                    }
-                }
-                Kind.Dot => {
-                    p.advance()
-                    projectionTrait = hashName
-                    projectionTraitSpan = hashNameSpan
-                    val assocTok: Tok = p.curTok()
-                    projectionAssoc = p.text(t: assocTok)
-                    projectionAssocSpan = p.spanOf(t: assocTok)
-                    p.advance()
-                }
-                _ => {
-                    extView = hashName
-                    extViewSpan = hashNameSpan
-                    viewNames.append(hashName)
-                    viewNameSpans.append(hashNameSpan)
-                }
-            }
-        }
-        _ => { parsingViews = false }
-        }
-        if projectionAssoc.bytes().count() > 0 {
-            parsingViews = false
-        }
-    }
-    if projectionAssoc.bytes().count() == 0 {
-        match p.curKind() {
-            Kind.Dot => {
-                p.advance()
-                val assocTok: Tok = p.curTok()
-                projectionAssoc = p.text(t: assocTok)
-                projectionAssocSpan = p.spanOf(t: assocTok)
-                p.advance()
-            }
-            _ => {}
-        }
-    }
-    return <TypeAst name=name nameSpan=nameSpan namePath=pathSegments args=args span=<Span start=sStart end=p.prevEnd() /> extView=extView extViewSpan=extViewSpan viewNames=viewNames viewNameSpans=viewNameSpans projectionTrait=projectionTrait projectionTraitSpan=projectionTraitSpan projectionTraitArgs=projectionTraitArgs projectionTraitArgLabels=projectionTraitArgLabels projectionTraitArgLabelSpans=projectionTraitArgLabelSpans projectionAssoc=projectionAssoc projectionAssocSpan=projectionAssocSpan argLabels=argLabels argLabelSpans=argLabelSpans />
+    mut val file = <SyntaxFile.empty />
+    val id = file.parseSyntaxType(p: inout p)
+    return file.materializeType(id: id, p: p)
 }
 
 // A condition-chain clause is deliberately only a set of arena IDs.  Unlike the
@@ -4774,7 +4487,7 @@ inout fn parseSyntaxNameSegment(p: inout P, name: Span) -> SyntaxNameSegment {
             while true {
                 match p.curKind() {
                     Kind.RBracket => { p.advance() break }
-                    Kind.Eof => { break }
+                    Kind.Eof => { p.fail(off: p.base + p.curTok().start, msg: "expected `]` to close type arguments") break }
                     Kind.Comma => { p.advance() }
                     _ => {
                         mut val label: Span = <Span start=0U64 end=0U64 />
@@ -4824,7 +4537,7 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
             val inner: SyntaxType = self.types[innerId.raw]
             return self.appendDirectSyntaxType(node: <SyntaxType
                 name=inner.name namePath=inner.namePath args=inner.args span=<Span start=anyStart end=p.prevEnd() />
-                extView=inner.extView viewNames=inner.viewNames projectionTrait=inner.projectionTrait
+                extView=inner.extView viewNames=inner.viewNames viewSources=inner.viewSources projectionTrait=inner.projectionTrait
                 projectionTraitArgs=inner.projectionTraitArgs projectionTraitArgLabels=inner.projectionTraitArgLabels
                 projectionAssoc=inner.projectionAssoc isAny=true argLabels=inner.argLabels
                 isSendable=isSendableAny isRecord=inner.isRecord
@@ -4998,67 +4711,36 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
     }
     mut val extView: Span = <Span start=0U64 end=0U64 />
     mut val viewNames: Array[Span] = []
+    mut val viewSources: Array[SyntaxViewSource] = []
     mut val projectionTrait: Span = <Span start=0U64 end=0U64 />
-    mut val projectionArgs: Array[TypeId] = []
-    mut val projectionArgLabels: Array[Span] = []
+    mut val projectionArgs = self.directEmptySyntaxSlice()
+    mut val projectionArgLabels = self.directEmptySyntaxSlice()
     mut val projectionAssoc: Span = <Span start=0U64 end=0U64 />
-    mut val parsingViews: Bool = true
-    while parsingViews {
-        match p.curKind() {
-            Kind.Hash => {
-                p.advance()
-                val selector: Span = p.spanOf(t: p.curTok())
-                p.advance()
-                match p.curKind() {
-                    Kind.LBracket => {
-                        p.advance()
-                        while true {
-                            match p.curKind() {
-                                Kind.RBracket => { p.advance() break }
-                                Kind.Eof => { break }
-                                Kind.Comma => { p.advance() }
-                                _ => {
-                                    mut val label: Span = <Span start=0U64 end=0U64 />
-                                    match p.curKind() {
-                                        Kind.Ident => {
-                                            if p.peekKind(off: 1) == <Kind.Eq /> {
-                                                label = p.spanOf(t: p.curTok())
-                                                p.advance()
-                                                p.advance()
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    projectionArgs.append(self.parseSyntaxType(p: inout p))
-                                    projectionArgLabels.append(label)
-                                }
-                            }
-                        }
-                        match p.curKind() {
-                            Kind.Dot => {
-                                p.advance()
-                                projectionTrait = selector
-                                projectionAssoc = p.spanOf(t: p.curTok())
-                                p.advance()
-                            }
-                            _ => {}
-                        }
-                    }
-                    Kind.Dot => {
-                        p.advance()
-                        projectionTrait = selector
-                        projectionAssoc = p.spanOf(t: p.curTok())
-                        p.advance()
-                    }
-                    _ => {
-                        extView = selector
-                        viewNames.append(selector)
-                    }
-                }
-            }
-            _ => { parsingViews = false }
+    while p.curKind() == <Kind.Hash /> {
+        p.advance()
+        if p.curKind() != <Kind.Ident /> {
+            p.fail(off: p.base + p.curTok().start, msg: "expected a source name after `#`")
+            break
         }
-        if projectionAssoc.end > projectionAssoc.start { parsingViews = false }
+        val selector = p.spanOf(t: p.curTok())
+        p.advance()
+        val segment = self.parseSyntaxNameSegment(p: inout p, name: selector)
+        if p.curKind() == <Kind.Dot /> {
+            p.advance()
+            if p.curKind() != <Kind.Ident /> {
+                p.fail(off: p.base + p.curTok().start, msg: "expected an associated-type name after `.`")
+                break
+            }
+            projectionTrait = selector
+            projectionArgs = segment.args
+            projectionArgLabels = segment.argLabels
+            projectionAssoc = p.spanOf(t: p.curTok())
+            p.advance()
+            break
+        }
+        extView = selector
+        viewNames.append(selector)
+        viewSources.append(<SyntaxViewSource path=self.pushNameSegments(items: [segment]) span=<Span start=selector.start end=p.prevEnd() /> />)
     }
     if projectionAssoc.end == projectionAssoc.start {
         match p.curKind() {
@@ -5072,9 +4754,9 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
     }
     return self.appendDirectSyntaxType(node: <SyntaxType
         name=nameSpan namePath=self.pushNameSegments(items: pathSegments) args=self.pushDirectSyntaxTypeIds(items: args) span=<Span start=start end=p.prevEnd() />
-        extView=extView viewNames=self.pushDirectSyntaxTexts(items: viewNames) projectionTrait=projectionTrait
-        projectionTraitArgs=self.pushDirectSyntaxTypeIds(items: projectionArgs)
-        projectionTraitArgLabels=self.pushDirectSyntaxTexts(items: projectionArgLabels)
+        extView=extView viewNames=self.pushDirectSyntaxTexts(items: viewNames) viewSources=self.pushViewSources(items: viewSources) projectionTrait=projectionTrait
+        projectionTraitArgs=projectionArgs
+        projectionTraitArgLabels=projectionArgLabels
         projectionAssoc=projectionAssoc isAny=false argLabels=self.pushDirectSyntaxTexts(items: argLabels)
         isSendable=false isRecord=false
     />)
@@ -8044,6 +7726,14 @@ pub fn syntaxTypeArgLabel(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span 
 
 pub fn syntaxTypeViewNameCount(file: SyntaxFile, ty: SyntaxType) -> U64 {
     return file.typeViewNameCount(ty: ty)
+}
+
+pub fn syntaxTypeViewSource(file: SyntaxFile, ty: SyntaxType, index: U64) -> SyntaxViewSource {
+    return file.typeViewSource(ty: ty, index: index)
+}
+
+pub fn syntaxViewSourceSegment(file: SyntaxFile, source: SyntaxViewSource, index: U64) -> SyntaxNameSegment {
+    return file.nameSegmentAt(path: source.path, index: index)
 }
 
 pub fn syntaxTypeViewName(file: SyntaxFile, ty: SyntaxType, index: U64) -> Span {

@@ -336,6 +336,9 @@ pub impl SyntaxFile {
         return self.typeIds[expr.typeArgs.start + index]
     }
     fn typeViewNameCount(ty: SyntaxType) -> U64 { return ty.viewNames.count }
+    fn typeViewSource(ty: SyntaxType, index: U64) -> SyntaxViewSource {
+        return self.viewSources[ty.viewSources.start + index]
+    }
     fn typeViewName(ty: SyntaxType, index: U64) -> Span {
         return self.texts[ty.viewNames.start + index]
     }
@@ -566,14 +569,24 @@ impl SyntaxFile {
             projectionArgIds.append(self.freezeTypeAst(ast: ast.projectionTraitArgs[i]))
             i += 1U64
         }
+        val path = self.freezeNamePath(items: ast.namePath)
+        mut val sources: Array[SyntaxViewSource] = []
+        i = 0U64
+        while i < ast.viewSources.count() {
+            val source = ast.viewSources[i]
+            sources.append(<SyntaxViewSource path=self.freezeNamePath(items: source.path) span=source.span />)
+            i += 1U64
+        }
+        val sourceRange = self.pushViewSources(items: sources)
         val id: TypeId = <TypeId raw=self.types.count() />
         self.types.append(<SyntaxType
             name=ast.nameSpan
-            namePath=self.freezeNamePath(items: ast.namePath)
+            namePath=path
             args=self.pushTypeIdSlice(items: argIds)
             span=ast.span
             extView=ast.extViewSpan
             viewNames=self.pushTextSlice(items: ast.viewNameSpans)
+            viewSources=sourceRange
             projectionTrait=ast.projectionTraitSpan
             projectionTraitArgs=self.pushTypeIdSlice(items: projectionArgIds)
             projectionTraitArgLabels=self.pushTextSlice(items: ast.projectionTraitArgLabelSpans)
@@ -1048,6 +1061,15 @@ impl SyntaxFile {
 }
 
 impl SyntaxFile {
+    inout fn pushViewSources(items: Array[SyntaxViewSource]) -> SyntaxSlice {
+        val start = self.viewSources.count()
+        mut val index = 0U64
+        while index < items.count() {
+            self.viewSources.append(items[index])
+            index += 1U64
+        }
+        return <SyntaxSlice start=start count=items.count() />
+    }
     fn nameSegmentAt(path: SyntaxSlice, index: U64) -> SyntaxNameSegment {
         return self.nameSegments[path.start + index]
     }
