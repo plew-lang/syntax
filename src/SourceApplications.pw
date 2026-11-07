@@ -1,0 +1,232 @@
+// Shared source-application parsing and its explicit value-AST adapters.
+impl SyntaxFile {
+    fn syntaxCheckpoint() -> SyntaxCheckpoint {
+        return <SyntaxCheckpoint
+            topLevel=self.topLevel.count()
+            topItems=self.topItems.count()
+            decls=self.decls.count()
+            impls=self.impls.count()
+            traits=self.traits.count()
+            associatedTypes=self.associatedTypes.count()
+            externs=self.externs.count()
+            imports=self.imports.count()
+            directives=self.directives.count()
+            newtypes=self.newtypes.count()
+            types=self.types.count()
+            nameSegments=self.nameSegments.count()
+            viewSources=self.viewSources.count()
+            fields=self.fields.count()
+            variants=self.variants.count()
+            params=self.params.count()
+            members=self.members.count()
+            sigs=self.sigs.count()
+            stmts=self.stmts.count()
+            exprs=self.exprs.count()
+            sourceApplications=self.sourceApplications.count()
+            blocks=self.blocks.count()
+            patterns=self.patterns.count()
+            matchArms=self.matchArms.count()
+            conditionClauses=self.conditionClauses.count()
+            args=self.args.count()
+            makeFields=self.makeFields.count()
+            binds=self.binds.count()
+            deriveReqs=self.deriveReqs.count()
+            typeIds=self.typeIds.count()
+            fieldIds=self.fieldIds.count()
+            variantIds=self.variantIds.count()
+            paramIds=self.paramIds.count()
+            memberIds=self.memberIds.count()
+            sigIds=self.sigIds.count()
+            stmtIds=self.stmtIds.count()
+            exprIds=self.exprIds.count()
+            patternIds=self.patternIds.count()
+            matchArmIds=self.matchArmIds.count()
+            argIds=self.argIds.count()
+            makeFieldIds=self.makeFieldIds.count()
+            bindIds=self.bindIds.count()
+            deriveReqIds=self.deriveReqIds.count()
+            directiveIds=self.directiveIds.count()
+            slices=self.slices.count()
+            texts=self.texts.count()
+            bools=self.bools.count()
+        />
+    }
+    inout fn rollbackSyntax(checkpoint: SyntaxCheckpoint) {
+        while self.topLevel.count() > checkpoint.topLevel { self.topLevel.removeLast() }
+        while self.topItems.count() > checkpoint.topItems { self.topItems.removeLast() }
+        while self.decls.count() > checkpoint.decls { self.decls.removeLast() }
+        while self.impls.count() > checkpoint.impls { self.impls.removeLast() }
+        while self.traits.count() > checkpoint.traits { self.traits.removeLast() }
+        while self.associatedTypes.count() > checkpoint.associatedTypes { self.associatedTypes.removeLast() }
+        while self.externs.count() > checkpoint.externs { self.externs.removeLast() }
+        while self.imports.count() > checkpoint.imports { self.imports.removeLast() }
+        while self.directives.count() > checkpoint.directives { self.directives.removeLast() }
+        while self.newtypes.count() > checkpoint.newtypes { self.newtypes.removeLast() }
+        while self.types.count() > checkpoint.types { self.types.removeLast() }
+        while self.nameSegments.count() > checkpoint.nameSegments { self.nameSegments.removeLast() }
+        while self.viewSources.count() > checkpoint.viewSources { self.viewSources.removeLast() }
+        while self.fields.count() > checkpoint.fields { self.fields.removeLast() }
+        while self.variants.count() > checkpoint.variants { self.variants.removeLast() }
+        while self.params.count() > checkpoint.params { self.params.removeLast() }
+        while self.members.count() > checkpoint.members { self.members.removeLast() }
+        while self.sigs.count() > checkpoint.sigs { self.sigs.removeLast() }
+        while self.stmts.count() > checkpoint.stmts { self.stmts.removeLast() }
+        while self.exprs.count() > checkpoint.exprs { self.exprs.removeLast() }
+        while self.sourceApplications.count() > checkpoint.sourceApplications { self.sourceApplications.removeLast() }
+        while self.blocks.count() > checkpoint.blocks { self.blocks.removeLast() }
+        while self.patterns.count() > checkpoint.patterns { self.patterns.removeLast() }
+        while self.matchArms.count() > checkpoint.matchArms { self.matchArms.removeLast() }
+        while self.conditionClauses.count() > checkpoint.conditionClauses { self.conditionClauses.removeLast() }
+        while self.args.count() > checkpoint.args { self.args.removeLast() }
+        while self.makeFields.count() > checkpoint.makeFields { self.makeFields.removeLast() }
+        while self.binds.count() > checkpoint.binds { self.binds.removeLast() }
+        while self.deriveReqs.count() > checkpoint.deriveReqs { self.deriveReqs.removeLast() }
+        while self.typeIds.count() > checkpoint.typeIds { self.typeIds.removeLast() }
+        while self.fieldIds.count() > checkpoint.fieldIds { self.fieldIds.removeLast() }
+        while self.variantIds.count() > checkpoint.variantIds { self.variantIds.removeLast() }
+        while self.paramIds.count() > checkpoint.paramIds { self.paramIds.removeLast() }
+        while self.memberIds.count() > checkpoint.memberIds { self.memberIds.removeLast() }
+        while self.sigIds.count() > checkpoint.sigIds { self.sigIds.removeLast() }
+        while self.stmtIds.count() > checkpoint.stmtIds { self.stmtIds.removeLast() }
+        while self.exprIds.count() > checkpoint.exprIds { self.exprIds.removeLast() }
+        while self.patternIds.count() > checkpoint.patternIds { self.patternIds.removeLast() }
+        while self.matchArmIds.count() > checkpoint.matchArmIds { self.matchArmIds.removeLast() }
+        while self.argIds.count() > checkpoint.argIds { self.argIds.removeLast() }
+        while self.makeFieldIds.count() > checkpoint.makeFieldIds { self.makeFieldIds.removeLast() }
+        while self.bindIds.count() > checkpoint.bindIds { self.bindIds.removeLast() }
+        while self.deriveReqIds.count() > checkpoint.deriveReqIds { self.deriveReqIds.removeLast() }
+        while self.directiveIds.count() > checkpoint.directiveIds { self.directiveIds.removeLast() }
+        while self.slices.count() > checkpoint.slices { self.slices.removeLast() }
+        while self.texts.count() > checkpoint.texts { self.texts.removeLast() }
+        while self.bools.count() > checkpoint.bools { self.bools.removeLast() }
+    }
+
+    inout fn parseSyntaxSourceApplication(p: inout P, source: Span) -> SourceApplicationId {
+        val start = p.base + p.curTok().start
+        // Frame the packet lexically once; neither speculative grammar may
+        // consume another bracket's closer and call that a successful branch.
+        mut val closing = 0U64
+        mut val depth = 0U64
+        mut val cursor = p.pos
+        while cursor < p.toks.count() {
+            match p.toks[cursor].kind {
+                Kind.LBracket => { depth += 1U64 }
+                Kind.RBracket => {
+                    depth -= 1U64
+                    if depth == 0U64 { closing = cursor + 1U64 break }
+                }
+                Kind.Eof => { break }
+                _ => {}
+            }
+            cursor += 1U64
+        }
+        if closing == 0U64 {
+            p.fail(off: start, msg: "expected `]` to close a source application")
+            return <SourceApplicationId raw=0U64 />
+        }
+        val first = self.syntaxCheckpoint()
+        mut val typeParser = <P bytes=p.bytes toks=p.toks pos=p.pos base=p.base />
+        val segment = self.parseSyntaxNameSegment(p: inout typeParser, name: source)
+        if !typeParser.hasErr && typeParser.pos != closing {
+            typeParser.fail(off: typeParser.base + typeParser.curTok().start, msg: "expected `]` to close source arguments")
+        }
+        val types = if typeParser.hasErr {
+            self.rollbackSyntax(checkpoint: first)
+            give <SyntaxSourceTypes.Invalid offset=typeParser.errOff message=typeParser.errMsg />
+        } else { give <SyntaxSourceTypes.Parsed args=segment.args labels=segment.argLabels /> }
+        // Retain successful A before taking B's transaction checkpoint.
+        val second = self.syntaxCheckpoint()
+        mut val indexParser = <P bytes=p.bytes toks=p.toks pos=p.pos base=p.base />
+        indexParser.advance()
+        val expression = self.parseSyntaxExpr(p: inout indexParser)
+        if indexParser.curKind() == <Kind.RBracket /> { indexParser.advance() }
+        else { indexParser.fail(off: indexParser.base + indexParser.curTok().start, msg: "expected ']' to close an index") }
+        if !indexParser.hasErr && indexParser.pos != closing { indexParser.fail(off: start, msg: "index does not end at this source application's closing bracket") }
+        val index = if indexParser.hasErr {
+            self.rollbackSyntax(checkpoint: second)
+            give <SyntaxSourceIndex.Invalid offset=indexParser.errOff message=indexParser.errMsg />
+        } else { give <SyntaxSourceIndex.Parsed expression=expression /> }
+        if typeParser.hasErr && indexParser.hasErr {
+            // Neither grammar accepts the packet; preserve the outer first error.
+            p.fail(off: typeParser.errOff, msg: typeParser.errMsg)
+            return <SourceApplicationId raw=0U64 />
+        }
+        if !typeParser.hasErr && !indexParser.hasErr && typeParser.pos != indexParser.pos {
+            self.rollbackSyntax(checkpoint: first)
+            p.fail(off: start, msg: "source application alternatives disagree on the closing bracket")
+            return <SourceApplicationId raw=0U64 />
+        }
+        p.pos = if typeParser.hasErr { give indexParser.pos } else { give typeParser.pos }
+        // Nested packets have already been appended. Allocate this identity last.
+        self.sourceApplications.append(<SyntaxSourceApplication types=types index=index span=<Span start=start end=p.prevEnd() /> />)
+        return <SourceApplicationId raw=self.sourceApplications.count() />
+    }
+
+    inout fn parseSyntaxSourceSelection(p: inout P, receiver: ExprId, start: U64) -> ExprId {
+        p.advance()
+        mut val strip = false
+        if p.curKind() == <Kind.Bang /> { strip = true p.advance() }
+        val sourceStart = p.base + p.curTok().start
+        mut val segments: Array[SyntaxNameSegment] = []
+        while true {
+            if p.curKind() != <Kind.Ident /> {
+                p.fail(off: p.base + p.curTok().start, msg: "expected a source name after `#`")
+                break
+            }
+            val name = p.spanOf(t: p.curTok())
+            p.advance()
+            segments.append(<SyntaxNameSegment name=name args=self.directEmptySyntaxSlice() argLabels=self.directEmptySyntaxSlice() />)
+            if p.curKind() != <Kind.Dot /> || p.peekKind(off: 1U64) != <Kind.Ident /> || p.peekKind(off: 2U64) == <Kind.LParen /> { break }
+            p.advance()
+        }
+        mut val application = <SourceApplicationId raw=0U64 />
+        if !p.hasErr && p.curKind() == <Kind.LBracket /> { application = self.parseSyntaxSourceApplication(p: inout p, source: segments[segments.count() - 1U64].name) }
+        return self.pushExprNode(kind: <SyntaxExprKind.SourceSelection /> span: <Span start=start end=p.prevEnd() /> text: <Span start=sourceStart end=p.prevEnd() /> flag0: strip child0: receiver typePath: self.pushNameSegments(items: segments) application: application)
+    }
+
+    inout fn freezeSourceApplication(ast: SourceApplicationAst) -> SourceApplicationId {
+        val types = match ast.types {
+            SourceTypesAst.Parsed(args: val args, labels: _, labelSpans: val labels) => <SyntaxSourceTypes.Parsed args=self.freezeTypeAstSlice(items: args) labels=self.pushTextSlice(items: labels) />
+            SourceTypesAst.Invalid(offset: val offset, message: val message) => <SyntaxSourceTypes.Invalid offset=offset message=message />
+        }
+        val index = match ast.index {
+            SourceIndexAst.Parsed(expression: val expression) => <SyntaxSourceIndex.Parsed expression=self.freezeExprAst(ast: expression) />
+            SourceIndexAst.Invalid(offset: val offset, message: val message) => <SyntaxSourceIndex.Invalid offset=offset message=message />
+        }
+        self.sourceApplications.append(<SyntaxSourceApplication types=types index=index span=ast.span />)
+        return <SourceApplicationId raw=self.sourceApplications.count() />
+    }
+    fn materializeSourceApplication(id: SourceApplicationId, p: P) -> SourceApplicationAst {
+        val packet = self.sourceApplications[id.raw - 1U64]
+        val types = match packet.types {
+            SyntaxSourceTypes.Parsed(args: val args, labels: val labels) => {
+                mut val spans: Array[Span] = []
+                mut val index = 0U64
+                while index < labels.count { spans.append(self.texts[labels.start + index]) index += 1U64 }
+                give <SourceTypesAst.Parsed args=self.materializeTypeSlice(slice: args, p: p) labels=self.materializeTexts(p: p, slice: labels) labelSpans=spans />
+            }
+            SyntaxSourceTypes.Invalid(offset: val offset, message: val message) => <SourceTypesAst.Invalid offset=offset message=message />
+        }
+        val index = match packet.index {
+            SyntaxSourceIndex.Parsed(expression: val expression) => <SourceIndexAst.Parsed expression=self.materializeExpr(id: expression, p: p) />
+            SyntaxSourceIndex.Invalid(offset: val offset, message: val message) => <SourceIndexAst.Invalid offset=offset message=message />
+        }
+        return <SourceApplicationAst types=types index=index span=packet.span />
+    }
+}
+
+pub impl SyntaxFile {
+    fn sourceApplication(id: SourceApplicationId) -> SyntaxSourceApplication { return self.sourceApplications[id.raw - 1U64] }
+    fn sourceApplicationTypeArg(application: SyntaxSourceApplication, index: U64) -> Optional[TypeId] {
+        match application.types {
+            SyntaxSourceTypes.Parsed(args: val args, labels: _) => { return <Optional.Some v=self.typeIds[args.start + index] /> }
+            SyntaxSourceTypes.Invalid(offset: _, message: _) => { return <Optional.None /> }
+        }
+    }
+    fn sourceApplicationTypeLabel(application: SyntaxSourceApplication, index: U64) -> Optional[Span] {
+        match application.types {
+            SyntaxSourceTypes.Parsed(args: _, labels: val labels) => { return <Optional.Some v=self.texts[labels.start + index] /> }
+            SyntaxSourceTypes.Invalid(offset: _, message: _) => { return <Optional.None /> }
+        }
+    }
+}

@@ -1,0 +1,260 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn matches(source: String, span: Syntax.Span, text: String) -> Bool {
+    if span.start < 17U64 || span.end < span.start || span.end > 17U64 + source.bytes().count() { return false }
+    return Syntax.rangeEquals(bytes: source.bytes(), start: span.start - 17U64, len: span.end - span.start, kw: text)
+}
+
+fn packetText(scenario: String) -> String {
+    if scenario == "multiple" || scenario == "method" { return "[I64, Bool]" }
+    if scenario == "typeOnly" { return "[fn() -> I64]" }
+    if scenario == "indexOnly" || scenario == "fieldIndex" { return "[0U64]" }
+    if scenario == "expressionOnly" { return "[if flag {{ give 0U64 }} else {{ give 1U64 }}]" }
+    if scenario == "labelled" { return "[K=I64]" }
+    if scenario == "nested" { return "[I64#Other[Bool]]" }
+    if scenario == "strip" || scenario == "grouped" { return "" }
+    return "[I64]"
+}
+fn pathText(scenario: String) -> String {
+    if scenario == "qualified" || scenario == "postfix" { return "Types.P" }
+    if scenario == "fieldIndex" { return "Ext.field" }
+    if scenario == "indexOnly" || scenario == "expressionOnly" || scenario == "strip" || scenario == "grouped" { return "Ext" }
+    return "P"
+}
+fn viewStart(scenario: String) -> U64 {
+    return 17U64 + "fn example() {{ val selected = ".bytes().count() + (if scenario == "grouped" { give 1U64 } else { give 0U64 })
+}
+fn sourceStart(scenario: String) -> U64 { return viewStart(scenario: scenario) + (if scenario == "strip" { give "value#!".bytes().count() } else { give "value#".bytes().count() }) }
+fn packetStart(scenario: String) -> U64 { return sourceStart(scenario: scenario) + pathText(scenario: scenario).bytes().count() }
+fn exact(span: Syntax.Span, start: U64, count: U64) -> Bool { return span.start == start && span.end == start + count }
+fn validIndexReceipt(scenario: String, offset: U64, message: String) -> Bool {
+    if scenario == "typeOnly" { return offset == packetStart(scenario: scenario) + packetText(scenario: scenario).bytes().count() - 1U64 && message == "expected `{{` to open a block" }
+    return offset == packetStart(scenario: scenario) + (if scenario == "labelled" { give "[K".bytes().count() } else { give "[I64".bytes().count() }) && message == "expected ']' to close an index"
+}
+
+fn rootExpression(file: Syntax.SyntaxFile, root: Syntax.TopItemId) -> Syntax.ExprId {
+    val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: root) />)
+    val body = Syntax.syntaxBlock(file: file, id: declaration.body)
+    val statement = Syntax.syntaxStmt(file: file, id: Syntax.syntaxBlockStmt(file: file, block: body, index: 0U64))
+    return statement.child0
+}
+
+fn retained(file: Syntax.SyntaxFile, root: Syntax.TopItemId, source: String, scenario: String) -> Bool {
+    mut val node = Syntax.syntaxExpr(file: file, id: rootExpression(file: file, root: root))
+    if scenario == "postfix" {
+        match node.kind { Syntax.SyntaxExprKind.Index => {} _ => { return false } }
+        val field = Syntax.syntaxExpr(file: file, id: node.child0)
+        match field.kind { Syntax.SyntaxExprKind.Field => {} _ => { return false } }
+        if !matches(source: source, span: field.name, text: "field") { return false }
+        node = Syntax.syntaxExpr(file: file, id: field.child0)
+    } else if scenario == "method" || scenario == "strip" {
+        match node.kind { Syntax.SyntaxExprKind.Method => {} _ => { return false } }
+        if !matches(source: source, span: node.name, text: "method") { return false }
+        node = Syntax.syntaxExpr(file: file, id: node.child0)
+    } else if scenario == "grouped" {
+        match node.kind { Syntax.SyntaxExprKind.Index => {} _ => { return false } }
+        node = Syntax.syntaxExpr(file: file, id: node.child0)
+    }
+    match node.kind { Syntax.SyntaxExprKind.SourceSelection => {} _ => { return false } }
+    if node.flag0 != (scenario == "strip") { return false }
+    if !exact(span: node.span, start: viewStart(scenario: scenario), count: packetStart(scenario: scenario) + packetText(scenario: scenario).bytes().count() - viewStart(scenario: scenario)) || !exact(span: node.text, start: sourceStart(scenario: scenario), count: pathText(scenario: scenario).bytes().count() + packetText(scenario: scenario).bytes().count()) { return false }
+    val receiver = Syntax.syntaxExpr(file: file, id: node.child0)
+    match receiver.kind { Syntax.SyntaxExprKind.Ident => {} _ => { return false } }
+    if !matches(source: source, span: receiver.name, text: "value") || !exact(span: receiver.span, start: viewStart(scenario: scenario), count: 5U64) { return false }
+    val qualified = scenario == "qualified" || scenario == "postfix" || scenario == "fieldIndex"
+    if node.typePath.count != (if qualified { give 2U64 } else { give 1U64 }) { return false }
+    val segment = Syntax.syntaxExprTypeSegment(file: file, expr: node, index: 0U64)
+    val expectedHead = if scenario == "fieldIndex" || scenario == "indexOnly" || scenario == "expressionOnly" || scenario == "grouped" || scenario == "strip" { give "Ext" } else if qualified { give "Types" } else { give "P" }
+    if !matches(source: source, span: segment.name, text: expectedHead) { return false }
+    if qualified {
+        val second = Syntax.syntaxExprTypeSegment(file: file, expr: node, index: 1U64)
+        val name = if scenario == "fieldIndex" { give "field" } else { give "P" }
+        if !matches(source: source, span: second.name, text: name) || !exact(span: second.name, start: sourceStart(scenario: scenario) + (if scenario == "fieldIndex" { give 4U64 } else { give 6U64 }), count: name.bytes().count()) { return false }
+    }
+    if scenario == "strip" || scenario == "grouped" { return node.application.raw == 0U64 }
+    if node.application.raw == 0U64 { return false }
+    val packet = Syntax.syntaxSourceApplication(file: file, id: node.application)
+    if !exact(span: packet.span, start: packetStart(scenario: scenario), count: packetText(scenario: scenario).bytes().count()) { return false }
+    val hasTypes = scenario != "indexOnly" && scenario != "expressionOnly" && scenario != "fieldIndex"
+    val hasIndex = scenario != "multiple" && scenario != "typeOnly" && scenario != "labelled" && scenario != "method"
+    match packet.types {
+        Syntax.SyntaxSourceTypes.Parsed(args: val arguments, labels: val labels) => {
+            if !hasTypes || arguments.count != (if scenario == "multiple" || scenario == "method" { give 2U64 } else { give 1U64 }) || labels.count != arguments.count { return false }
+            val argument = Syntax.syntaxType(file: file, id: Syntax.syntaxSourceApplicationTypeArg(file: file, application: packet, index: 0U64).unwrap())
+            if !matches(source: source, span: argument.name, text: if scenario == "typeOnly" { give "fn" } else { give "I64" }) { return false }
+            if !exact(span: argument.name, start: packetStart(scenario: scenario) + (if scenario == "labelled" { give 3U64 } else { give 1U64 }), count: if scenario == "typeOnly" { give 2U64 } else { give 3U64 }) { return false }
+            if arguments.count == 2U64 {
+                val second = Syntax.syntaxType(file: file, id: Syntax.syntaxSourceApplicationTypeArg(file: file, application: packet, index: 1U64).unwrap())
+                if !matches(source: source, span: second.name, text: "Bool") || !exact(span: second.name, start: packetStart(scenario: scenario) + 6U64, count: 4U64) { return false }
+            }
+            if scenario == "nested" {
+                if argument.viewSources.count != 1U64 { return false }
+                val selected = Syntax.syntaxTypeViewSource(file: file, ty: argument, index: 0U64)
+                val head = Syntax.syntaxViewSourceSegment(file: file, source: selected, index: 0U64)
+                if !matches(source: source, span: head.name, text: "Other") || head.args.count != 1U64 { return false }
+                val nested = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: head, index: 0U64))
+                if !matches(source: source, span: nested.name, text: "Bool") || !exact(span: nested.name, start: packetStart(scenario: scenario) + "[I64#Other[".bytes().count(), count: 4U64) { return false }
+            }
+            val label = Syntax.syntaxSourceApplicationTypeLabel(file: file, application: packet, index: 0U64).unwrap()
+            if scenario == "labelled" {
+                if !matches(source: source, span: label, text: "K") { return false }
+            } else if label.start != label.end { return false }
+        }
+        Syntax.SyntaxSourceTypes.Invalid(offset: val offset, message: val message) => {
+            if hasTypes || message != "expected a type name" || offset != packetStart(scenario: scenario) + 1U64 { return false }
+            if Syntax.syntaxSourceApplicationTypeArg(file: file, application: packet, index: 0U64).isSome() { return false }
+        }
+    }
+    match packet.index {
+        Syntax.SyntaxSourceIndex.Parsed(expression: val index) => {
+            if !hasIndex { return false }
+            val child = Syntax.syntaxExpr(file: file, id: index)
+            if child.span.start <= packet.span.start || child.span.end >= packet.span.end { return false }
+            if scenario == "nested" {
+                match child.kind { Syntax.SyntaxExprKind.SourceSelection => {} _ => { return false } }
+                if child.application.raw == 0U64 || child.application.raw == node.application.raw { return false }
+                val inner = Syntax.syntaxSourceApplication(file: file, id: child.application)
+                val argument = Syntax.syntaxType(file: file, id: Syntax.syntaxSourceApplicationTypeArg(file: file, application: inner, index: 0U64).unwrap())
+                if !matches(source: source, span: argument.name, text: "Bool") { return false }
+            }
+        }
+        Syntax.SyntaxSourceIndex.Invalid(offset: val offset, message: val message) => {
+            if hasIndex || !validIndexReceipt(scenario: scenario, offset: offset, message: message) { return false }
+        }
+    }
+    return true
+}
+
+fn astRetained(expression: Syntax.ExprAst, source: String, scenario: String) -> Bool {
+    match expression {
+        Syntax.ExprAst.Method(recv: val receiver, name: _, nameSpan: _, args: _, span: _) => { return astRetained(expression: receiver, source: source, scenario: scenario) }
+        Syntax.ExprAst.Field(base: val receiver, name: _, nameSpan: _, span: _) => { return astRetained(expression: receiver, source: source, scenario: scenario) }
+        Syntax.ExprAst.Index(base: val receiver, index: _, span: _) => { return astRetained(expression: receiver, source: source, scenario: scenario) }
+        Syntax.ExprAst.SourceSelection(recv: val receiver, path: val path, application: val supplied, strip: val strip, sourceSpan: val sourceSpan, span: val span) => {
+            if !exact(span: span, start: viewStart(scenario: scenario), count: packetStart(scenario: scenario) + packetText(scenario: scenario).bytes().count() - viewStart(scenario: scenario)) || !exact(span: sourceSpan, start: sourceStart(scenario: scenario), count: pathText(scenario: scenario).bytes().count() + packetText(scenario: scenario).bytes().count()) { return false }
+            match receiver {
+                Syntax.ExprAst.Ident(name: val name, span: val receiverSpan) => { if name != "value" || !exact(span: receiverSpan, start: viewStart(scenario: scenario), count: 5U64) { return false } }
+                _ => { return false }
+            }
+            if strip != (scenario == "strip") { return false }
+            val qualified = scenario == "qualified" || scenario == "postfix" || scenario == "fieldIndex"
+            if path.count() != (if qualified { give 2U64 } else { give 1U64 }) { return false }
+            val expectedHead = if scenario == "fieldIndex" || scenario == "indexOnly" || scenario == "expressionOnly" || scenario == "grouped" || scenario == "strip" { give "Ext" } else if qualified { give "Types" } else { give "P" }
+            if path[0U64].name != expectedHead || !matches(source: source, span: path[0U64].nameSpan, text: expectedHead) { return false }
+            if qualified {
+                val name = if scenario == "fieldIndex" { give "field" } else { give "P" }
+                if path[1U64].name != name || !exact(span: path[1U64].nameSpan, start: sourceStart(scenario: scenario) + (if scenario == "fieldIndex" { give 4U64 } else { give 6U64 }), count: name.bytes().count()) { return false }
+            }
+            if scenario == "strip" || scenario == "grouped" { return supplied.isNone() }
+            val packet = match supplied { Optional.Some(v: val value) => value Optional.None => { return false } }
+            if !exact(span: packet.span, start: packetStart(scenario: scenario), count: packetText(scenario: scenario).bytes().count()) { return false }
+            val hasTypes = scenario != "indexOnly" && scenario != "expressionOnly" && scenario != "fieldIndex"
+            val hasIndex = scenario != "multiple" && scenario != "typeOnly" && scenario != "labelled" && scenario != "method"
+            match packet.types {
+                Syntax.SourceTypesAst.Parsed(args: val args, labels: val labels, labelSpans: val spans) => {
+                    if !hasTypes || args.count() != (if scenario == "multiple" || scenario == "method" { give 2U64 } else { give 1U64 }) || labels.count() != args.count() || spans.count() != args.count() { return false }
+                    if args[0U64].name != (if scenario == "typeOnly" { give "fn" } else { give "I64" }) { return false }
+                    if !exact(span: args[0U64].nameSpan, start: packetStart(scenario: scenario) + (if scenario == "labelled" { give 3U64 } else { give 1U64 }), count: if scenario == "typeOnly" { give 2U64 } else { give 3U64 }) { return false }
+                    if args.count() == 2U64 && (args[1U64].name != "Bool" || !exact(span: args[1U64].nameSpan, start: packetStart(scenario: scenario) + 6U64, count: 4U64)) { return false }
+                    if scenario == "nested" {
+                        if args[0U64].viewSources.count() != 1U64 { return false }
+                        val head = args[0U64].viewSources[0U64].path[0U64]
+                        if head.name != "Other" || head.args.count() != 1U64 || head.args[0U64].name != "Bool" || !exact(span: head.args[0U64].nameSpan, start: packetStart(scenario: scenario) + "[I64#Other[".bytes().count(), count: 4U64) { return false }
+                    }
+                    if labels[0U64] != (if scenario == "labelled" { give "K" } else { give "" }) { return false }
+                    if scenario == "labelled" && !matches(source: source, span: spans[0U64], text: "K") { return false }
+                }
+                Syntax.SourceTypesAst.Invalid(offset: val offset, message: val message) => { if hasTypes || message != "expected a type name" || offset != packetStart(scenario: scenario) + 1U64 { return false } }
+            }
+            match packet.index {
+                Syntax.SourceIndexAst.Parsed(expression: val child) => {
+                    if !hasIndex { return false }
+                    if scenario == "nested" {
+                        match child {
+                            Syntax.ExprAst.SourceSelection(recv: _, path: val innerPath, application: val innerPacket, strip: _, sourceSpan: _, span: _) => {
+                                if innerPath[0U64].name != "Other" { return false }
+                                val inner = match innerPacket { Optional.Some(v: val value) => value Optional.None => { return false } }
+                                match inner.types {
+                                    Syntax.SourceTypesAst.Parsed(args: val args, labels: _, labelSpans: _) => { if args.count() != 1U64 || args[0U64].name != "Bool" { return false } }
+                                    _ => { return false }
+                                }
+                            }
+                            _ => { return false }
+                        }
+                    }
+                }
+                Syntax.SourceIndexAst.Invalid(offset: val offset, message: val message) => { if hasIndex || !validIndexReceipt(scenario: scenario, offset: offset, message: message) { return false } }
+            }
+            return true
+        }
+        _ => { return false }
+    }
+}
+
+fn prefixRetained() -> Bool {
+    val first = "fn example() {{ val selected = value#P[I64] }}"
+    val second = "fn extra() {{ val selected = value#Ext[if flag {{ give 0U64 }} else {{ give 1U64 }}] }}"
+    val third = "fn last() {{ val selected = value#P[fn() -> I64] }}"
+    mut val file = <Syntax.SyntaxFile.empty />
+    mut val total = ""
+    mut val firstRoot = <Syntax.TopItemId raw=0U64 />
+    for val source in [first, second, third] {
+        mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout lexer)
+        mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 + total.bytes().count() />
+        val roots = Syntax.parseProgramSyntaxInto(p: inout parser, file: inout file)
+        if parser.hasErr || roots.count != 1U64 { return false }
+        if total == "" { firstRoot = Syntax.syntaxFileTopLevel(file: file, index: 0U64) }
+        total = total + source
+        if Syntax.syntaxFileTopLevel(file: file, index: 0U64).raw != firstRoot.raw || !retained(file: file, root: firstRoot, source: total, scenario: "single") { return false }
+    }
+    return Syntax.syntaxFileTopLevelCount(file: file) == 3U64
+}
+
+fn main() {
+    val scenario = argAt(1I64)
+    if scenario == "prefix" { print(prefixRetained()) return }
+    val frozen = argAt(2I64) == "frozen"
+    val materialized = argAt(2I64) == "materialized"
+    val expression = if scenario == "multiple" { give "value#P[I64, Bool]" }
+        else if scenario == "typeOnly" { give "value#P[fn() -> I64]" }
+        else if scenario == "indexOnly" { give "value#Ext[0U64]" }
+        else if scenario == "expressionOnly" { give "value#Ext[if flag {{ give 0U64 }} else {{ give 1U64 }}]" }
+        else if scenario == "labelled" { give "value#P[K=I64]" }
+        else if scenario == "nested" { give "value#P[I64#Other[Bool]]" }
+        else if scenario == "qualified" { give "value#Types.P[I64]" }
+        else if scenario == "postfix" { give "value#Types.P[I64].field[0U64]" }
+        else if scenario == "fieldIndex" { give "value#Ext.field[0U64]" }
+        else if scenario == "method" { give "value#P[I64, Bool].method()" }
+        else if scenario == "strip" { give "value#!Ext.method()" }
+        else if scenario == "grouped" { give "(value#Ext)[0U64]" }
+        else { give "value#P[I64]" }
+    val source = "fn example() {{ val selected = " + expression + " }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    if parser.hasErr { print("parse-error") return }
+    if frozen || materialized {
+        val ast = file.materializeMacroTopItem(id: Syntax.syntaxFileTopLevel(file: file, index: 0U64), p: parser)
+        if materialized {
+            match ast {
+                Syntax.TopItemAst.Decl(d: val declaration) => {
+                    match declaration.body.stmts[0U64] {
+                        Syntax.StmtAst.Let(mutable: _, name: _, nameSpan: _, hasTy: _, ty: _, init: val expression, span: _) => { print(astRetained(expression: expression, source: source, scenario: scenario)) }
+                        _ => { print("0") }
+                    }
+                }
+                _ => { print("0") }
+            }
+            return
+        }
+        mut val copy = <Syntax.SyntaxFile.empty />
+        val root = copy.freezeTopItem(ast: ast)
+        print(retained(file: copy, root: root, source: source, scenario: scenario))
+        return
+    }
+    print(retained(file: file, root: Syntax.syntaxFileTopLevel(file: file, index: 0U64), source: source, scenario: scenario))
+}

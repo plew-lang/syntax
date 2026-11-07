@@ -25,6 +25,7 @@ part ./Parser
 part ./Build
 part ./Arena
 part ./Materialize
+part ./SourceApplications
 
 // A derive is anything that implements a derive interface; `@[X]` is valid when X
 // does (spec/16). The single axis is whether the derive carries configuration:
@@ -1112,6 +1113,7 @@ pub struct MemberId { pub val raw: U64 }
 pub struct SigId { pub val raw: U64 }
 pub struct StmtId { pub val raw: U64 }
 pub struct ExprId { pub val raw: U64 }
+pub struct SourceApplicationId { pub val raw: U64 }
 pub struct BlockId { pub val raw: U64 }
 pub struct PatternId { pub val raw: U64 }
 pub struct MatchArmId { pub val raw: U64 }
@@ -1170,6 +1172,7 @@ pub struct SyntaxFile {
     mut val sigs: Array[SyntaxSig] = []
     mut val stmts: Array[SyntaxStmt] = []
     mut val exprs: Array[SyntaxExpr] = []
+    mut val sourceApplications: Array[SyntaxSourceApplication] = []
     mut val blocks: Array[SyntaxBlock] = []
     mut val patterns: Array[SyntaxPattern] = []
     mut val matchArms: Array[SyntaxMatchArm] = []
@@ -1200,6 +1203,57 @@ pub struct SyntaxFile {
     mut val slices: Array[SyntaxSlice] = []
     mut val texts: Array[Span] = []
     mut val bools: Array[Bool] = []
+}
+
+// Parser-only transaction lengths; all published prefixes remain untouched.
+struct SyntaxCheckpoint {
+    val topLevel: U64
+    val topItems: U64
+    val decls: U64
+    val impls: U64
+    val traits: U64
+    val associatedTypes: U64
+    val externs: U64
+    val imports: U64
+    val directives: U64
+    val newtypes: U64
+    val types: U64
+    val nameSegments: U64
+    val viewSources: U64
+    val fields: U64
+    val variants: U64
+    val params: U64
+    val members: U64
+    val sigs: U64
+    val stmts: U64
+    val exprs: U64
+    val sourceApplications: U64
+    val blocks: U64
+    val patterns: U64
+    val matchArms: U64
+    val conditionClauses: U64
+    val args: U64
+    val makeFields: U64
+    val binds: U64
+    val deriveReqs: U64
+    val typeIds: U64
+    val fieldIds: U64
+    val variantIds: U64
+    val paramIds: U64
+    val memberIds: U64
+    val sigIds: U64
+    val stmtIds: U64
+    val exprIds: U64
+    val patternIds: U64
+    val matchArmIds: U64
+    val argIds: U64
+    val makeFieldIds: U64
+    val bindIds: U64
+    val deriveReqIds: U64
+    val directiveIds: U64
+    val slices: U64
+    val texts: U64
+    val bools: U64
 }
 
 // `SyntaxFile` is the public empty root used by a compiler client before the
@@ -1246,6 +1300,37 @@ pub struct ViewSourceAst {
 
 pub impl SyntaxViewSource { factory }
 pub impl ViewSourceAst { factory }
+
+// Both interpretations belong to shared syntax until lexical source binding.
+// A failure receipt owns no malformed speculative child.
+pub enum SyntaxSourceTypes {
+    Parsed(args: SyntaxSlice, labels: SyntaxSlice)
+    Invalid(offset: U64, message: String)
+}
+pub enum SyntaxSourceIndex {
+    Parsed(expression: ExprId)
+    Invalid(offset: U64, message: String)
+}
+pub struct SyntaxSourceApplication {
+    pub val types: SyntaxSourceTypes
+    pub val index: SyntaxSourceIndex
+    pub val span: Span
+}
+pub enum SourceTypesAst {
+    Parsed(args: Array[TypeAst], labels: Array[String], labelSpans: Array[Span])
+    Invalid(offset: U64, message: String)
+}
+pub enum SourceIndexAst {
+    Parsed(expression: ExprAst)
+    Invalid(offset: U64, message: String)
+}
+pub struct SourceApplicationAst {
+    pub val types: SourceTypesAst
+    pub val index: SourceIndexAst
+    pub val span: Span
+}
+pub impl SyntaxSourceApplication { factory }
+pub impl SourceApplicationAst { factory }
 
 pub struct SyntaxType {
     // Empty for an unqualified head; otherwise includes every path segment.
@@ -1462,6 +1547,7 @@ pub enum SyntaxExprKind {
     Method
     ExtMethod
     ExtView
+    SourceSelection
     Index
     Make
     ArrayLit
@@ -1487,6 +1573,9 @@ pub enum SyntaxExprKind {
 }
 
 pub struct SyntaxExpr {
+    // SourceSelection: typePath is the written source path, text its source-only
+    // span, child0 the receiver, flag0 strip, application an optional packet.
+    pub val application: SourceApplicationId = <SourceApplicationId raw=0U64 />
     pub val conditions: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val typePath: SyntaxSlice = <SyntaxSlice start=0U64 count=0U64 />
     pub val kind: SyntaxExprKind
@@ -2138,6 +2227,7 @@ pub enum ExprAst {
     // removes it (`#!Ext`, the "super" form — a following `.method()` resolves the
     // shadowed bare method). The value is unchanged either way.
     ExtView(recv: ExprAst, src: String, srcSpan: Span, strip: Bool, span: Span)
+    SourceSelection(recv: ExprAst, path: Array[NameSegmentAst], application: Optional[SourceApplicationAst], strip: Bool, sourceSpan: Span, span: Span)
     Index(base: ExprAst, index: ExprAst, span: Span)
     Make(typeName: String, typeNameSpan: Span, typePath: Array[NameSegmentAst], typeArgs: Array[TypeAst], variant: String, variantSpan: Span, isEnum: Bool, fields: Array[MakeFieldAst], span: Span)
     ArrayLit(elems: Array[ExprAst], span: Span)
@@ -2186,6 +2276,7 @@ pub fn exprAstSpan(e: ExprAst) -> Span {
         ExprAst.Method(recv: _, name: _, nameSpan: _, args: _, val span) => { return span }
         ExprAst.ExtMethod(recv: _, src: _, srcSpan: _, name: _, nameSpan: _, args: _, val span) => { return span }
         ExprAst.ExtView(recv: _, src: _, srcSpan: _, strip: _, val span) => { return span }
+        ExprAst.SourceSelection(recv: _, path: _, application: _, strip: _, sourceSpan: _, val span) => { return span }
         ExprAst.Index(base: _, index: _, val span) => { return span }
         ExprAst.Make(typeName: _, typeNameSpan: _, typePath: _, typeArgs: _, variant: _, variantSpan: _, isEnum: _, fields: _, val span) => { return span }
         ExprAst.ArrayLit(elems: _, val span) => { return span }
@@ -3058,36 +3149,7 @@ inout fn parseSyntaxPostfix(p: inout P) -> ExprId {
                 val cont: ExprId = self.parseSyntaxOptChainCont(p: inout p)
                 value = self.pushExprNode(kind: <SyntaxExprKind.OptChain /> span: <Span start=start end=p.prevEnd() /> text: member child0: value child1: cont)
             }
-            Kind.Hash => {
-                p.advance()
-                mut val strip: Bool = false
-                match p.curKind() {
-                    Kind.Bang => { strip = true p.advance() }
-                    _ => {}
-                }
-                val source: Span = p.spanOf(t: p.curTok())
-                p.advance()
-                mut val isMethod: Bool = false
-                match p.curKind() {
-                    Kind.Dot => {
-                        if p.peekKind(off: 1) == <Kind.Ident /> && p.peekKind(off: 2) == <Kind.LParen /> { isMethod = true }
-                    }
-                    _ => {}
-                }
-                if isMethod {
-                    if strip {
-                        value = self.pushExprNode(kind: <SyntaxExprKind.ExtView /> span: <Span start=start end=p.prevEnd() /> text: source flag0: true child0: value)
-                    } else {
-                        p.advance()
-                        val name: Span = p.spanOf(t: p.curTok())
-                        p.advance()
-                        p.advance()
-                        value = self.pushExprNode(kind: <SyntaxExprKind.ExtMethod /> span: <Span start=start end=p.prevEnd() /> text: source name: name child0: value args: self.parseSyntaxCallArgs(p: inout p))
-                    }
-                } else {
-                    value = self.pushExprNode(kind: <SyntaxExprKind.ExtView /> span: <Span start=start end=p.prevEnd() /> text: source flag0: strip child0: value)
-                }
-            }
+            Kind.Hash => { value = self.parseSyntaxSourceSelection(p: inout p, receiver: value, start: start) }
             Kind.LBracket => {
                 p.advance()
                 val index: ExprId = self.parseSyntaxExpr(p: inout p)
@@ -9697,4 +9759,14 @@ fn srcDigitByte(d: U64) -> U8 {
 // Condition ranges address the flat clause pool, not expression or arm pools.
 pub fn syntaxConditionClause(file: SyntaxFile, conditions: SyntaxSlice, index: U64) -> SyntaxCondClause {
     return file.conditionClause(conditions: conditions, index: index)
+}
+
+pub fn syntaxSourceApplication(file: SyntaxFile, id: SourceApplicationId) -> SyntaxSourceApplication {
+    return file.sourceApplication(id: id)
+}
+pub fn syntaxSourceApplicationTypeArg(file: SyntaxFile, application: SyntaxSourceApplication, index: U64) -> Optional[TypeId] {
+    return file.sourceApplicationTypeArg(application: application, index: index)
+}
+pub fn syntaxSourceApplicationTypeLabel(file: SyntaxFile, application: SyntaxSourceApplication, index: U64) -> Optional[Span] {
+    return file.sourceApplicationTypeLabel(application: application, index: index)
 }

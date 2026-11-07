@@ -1,0 +1,55 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn main() {
+    val scenario = argAt(1I64)
+    val expression = if scenario == "multiple" {
+        give "value#P[I64, Bool]"
+    } else if scenario == "typeOnly" {
+        give "value#P[fn() -> I64]"
+    } else if scenario == "indexOnly" {
+        give "value#Ext[0U64]"
+    } else if scenario == "parenthesized" {
+        give "(value#Ext)[0U64]"
+    } else if scenario == "method" {
+        give "value#P[I64, Bool].method()"
+    } else if scenario == "qualified" {
+        give "value#Types.P[I64, Bool]"
+    } else if scenario == "nested" {
+        give "value#P[Array[I64], Box[Bool]]"
+    } else if scenario == "followIndex" {
+        give "value#P[I64, Bool][0U64]"
+    } else if scenario == "missingClose" {
+        give "value#P[I64"
+    } else if scenario == "missingName" {
+        give "value#"
+    } else if scenario == "bothInvalid" {
+        give "value#P[)]"
+    } else if scenario == "invalid" {
+        give "value#P[)"
+    } else {
+        give "value#P[I64]"
+    }
+    if scenario == "outerError" {
+        val source = "value#P[)]"
+        mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout lexer)
+        mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 hasErr=true errOff=19U64 errMsg="prior syntax error" />
+        mut val file = <Syntax.SyntaxFile.empty />
+        val root = file.parseExpressionSyntaxDirect(p: inout parser)
+        print(parser.hasErr && parser.errOff == 19U64 && parser.errMsg == "prior syntax error")
+        return
+    }
+    val source = "fn example() {{ val selected = " + expression + " }}"
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    if scenario == "bothInvalid" {
+        print(parser.hasErr && parser.errOff == 17U64 + "fn example() {{ val selected = value#P[".bytes().count() && parser.errMsg == "expected a type name")
+        return
+    }
+    if scenario == "invalid" || scenario == "missingClose" || scenario == "missingName" { print(parser.hasErr) return }
+    print(!parser.hasErr && Syntax.syntaxFileTopLevelCount(file: file) == 1U64)
+}

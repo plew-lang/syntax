@@ -297,6 +297,11 @@ impl SyntaxFile {
             SyntaxExprKind.Method => { return <ExprAst.Method recv=self.materializeExpr(id: node.child0, p: p) name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
             SyntaxExprKind.ExtMethod => { return <ExprAst.ExtMethod recv=self.materializeExpr(id: node.child0, p: p) src=self.materializeText(p: p, span: node.text) srcSpan=node.text name=self.materializeText(p: p, span: node.name) nameSpan=node.name args=self.materializeArgs(slice: node.args, p: p) span=node.span /> }
             SyntaxExprKind.ExtView => { return <ExprAst.ExtView recv=self.materializeExpr(id: node.child0, p: p) src=self.materializeText(p: p, span: node.text) srcSpan=node.text strip=node.flag0 span=node.span /> }
+            SyntaxExprKind.SourceSelection => {
+                mut val application: Optional[SourceApplicationAst] = <Optional.None />
+                if node.application.raw != 0U64 { application = <Optional.Some v=self.materializeSourceApplication(id: node.application, p: p) /> }
+                return <ExprAst.SourceSelection recv=self.materializeExpr(id: node.child0, p: p) path=self.materializeNamePath(path: node.typePath, p: p) application=application strip=node.flag0 sourceSpan=node.text span=node.span />
+            }
             SyntaxExprKind.Index => { return <ExprAst.Index base=self.materializeExpr(id: node.child0, p: p) index=self.materializeExpr(id: node.child1, p: p) span=node.span /> }
             SyntaxExprKind.Make => { return <ExprAst.Make typePath=self.materializeNamePath(path: node.typePath, p: p) typeName=self.materializeText(p: p, span: node.name) typeNameSpan=node.name typeArgs=self.materializeTypeSlice(slice: node.typeArgs, p: p) variant=self.materializeText(p: p, span: node.nameSpan) variantSpan=node.nameSpan isEnum=node.flag0 fields=self.materializeMakeFields(slice: node.fields, p: p) span=node.span /> }
             SyntaxExprKind.ArrayLit => { return <ExprAst.ArrayLit elems=self.materializeExprs(slice: node.elems, p: p) span=node.span /> }
