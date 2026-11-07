@@ -12,6 +12,7 @@ impl SyntaxFile {
             imports=self.imports.count()
             directives=self.directives.count()
             newtypes=self.newtypes.count()
+            extensions=self.extensions.count()
             types=self.types.count()
             nameSegments=self.nameSegments.count()
             viewSources=self.viewSources.count()
@@ -62,6 +63,7 @@ impl SyntaxFile {
         while self.imports.count() > checkpoint.imports { self.imports.removeLast() }
         while self.directives.count() > checkpoint.directives { self.directives.removeLast() }
         while self.newtypes.count() > checkpoint.newtypes { self.newtypes.removeLast() }
+        while self.extensions.count() > checkpoint.extensions { self.extensions.removeLast() }
         while self.types.count() > checkpoint.types { self.types.removeLast() }
         while self.nameSegments.count() > checkpoint.nameSegments { self.nameSegments.removeLast() }
         while self.viewSources.count() > checkpoint.viewSources { self.viewSources.removeLast() }

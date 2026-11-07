@@ -11,6 +11,7 @@ pub impl ExternId { factory }
 pub impl ImportId { factory }
 pub impl DirectiveId { factory }
 pub impl NewtypeId { factory }
+pub impl ExtensionId { factory }
 pub impl TypeId { factory }
 pub impl FieldId { factory }
 pub impl VariantId { factory }
@@ -43,6 +44,7 @@ pub impl SyntaxImport { factory }
 pub impl SyntaxDeriveReq { factory }
 pub impl SyntaxDirective { factory }
 pub impl SyntaxNewtype { factory }
+pub impl SyntaxExtension { factory }
 pub impl SyntaxExpr { factory }
 pub impl SyntaxArg { factory }
 pub impl SyntaxMakeField { factory }
@@ -68,6 +70,7 @@ pub impl SyntaxFile {
     fn topItemKind(item: TopItemId) -> SyntaxTopItemKind { return self.topItems[item.raw].kind }
     fn topItemSpan(item: TopItemId) -> Span { return self.topItems[item.raw].span }
     fn topItemPayload(item: TopItemId) -> U64 { return self.topItems[item.raw].payload }
+    fn extensionNode(id: ExtensionId) -> SyntaxExtension { return self.extensions[id.raw] }
     fn importNode(id: ImportId) -> SyntaxImport { return self.imports[id.raw] }
     fn declNode(id: DeclId) -> SyntaxDecl { return self.decls[id.raw] }
     fn fieldNode(id: FieldId) -> SyntaxField { return self.fields[id.raw] }
@@ -1050,6 +1053,11 @@ impl SyntaxFile {
 
     inout fn freezeTopItemAst(ast: TopItemAst) -> TopItemId {
         match ast {
+            TopItemAst.Extension(name: _, nameSpan: val name, span: val span) => {
+                val index = self.extensions.count()
+                self.extensions.append(<SyntaxExtension name=name span=span />)
+                return self.pushTopItem(kind: <SyntaxTopItemKind.Extension /> payload: index span: span)
+            }
             TopItemAst.Decl(d: val d) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Decl /> payload: self.freezeDeclAst(ast: d).raw span: d.span) }
             TopItemAst.Impl(im: val im) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Impl /> payload: self.freezeImplAst(ast: im).raw span: im.span) }
             TopItemAst.Trait(t: val t) => { return self.pushTopItem(kind: <SyntaxTopItemKind.Trait /> payload: self.freezeTraitAst(ast: t).raw span: t.span) }

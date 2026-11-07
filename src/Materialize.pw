@@ -504,6 +504,10 @@ impl SyntaxFile {
     fn materializeTopItem(id: TopItemId, p: P) -> TopItemAst {
         val node: SyntaxTopItem = self.topItems[id.raw]
         match node.kind {
+            SyntaxTopItemKind.Extension => {
+                val extension = self.extensions[node.payload]
+                return <TopItemAst.Extension name=self.materializeText(p: p, span: extension.name) nameSpan=extension.name span=extension.span />
+            }
             SyntaxTopItemKind.Decl => { return <TopItemAst.Decl d=self.materializeDecl(id: <DeclId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.Impl => { return <TopItemAst.Impl im=self.materializeImpl(id: <ImplId raw=node.payload />, p: p) /> }
             SyntaxTopItemKind.Trait => { return <TopItemAst.Trait t=self.materializeTrait(id: <TraitId raw=node.payload />, p: p) /> }

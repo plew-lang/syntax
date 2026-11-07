@@ -1,0 +1,96 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn matches(source: String, span: Syntax.Span, expected: String) -> Bool {
+    if span.start < 17U64 || span.end < span.start || span.end > 17U64 + source.bytes().count() { return false }
+    return Syntax.rangeEquals(bytes: source.bytes(), start: span.start - 17U64, len: span.end - span.start, kw: expected)
+}
+
+fn retained(source: String, file: Syntax.SyntaxFile, index: U64, name: String, text: String) -> Bool {
+    val item = Syntax.syntaxFileTopLevel(file: file, index: index)
+    match Syntax.syntaxTopItemKind(file: file, item: item) {
+        Syntax.SyntaxTopItemKind.Extension => {}
+        _ => { return false }
+    }
+    val extension = Syntax.syntaxExtension(file: file, id: <Syntax.ExtensionId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    val span = Syntax.syntaxTopItemSpan(file: file, item: item)
+    return matches(source: source, span: extension.name, expected: name) && matches(source: source, span: extension.span, expected: text) && span.start == extension.span.start && span.end == extension.span.end
+}
+
+fn retainedImpl(source: String, file: Syntax.SyntaxFile, index: U64, name: String, public: Bool) -> Bool {
+    val item = Syntax.syntaxFileTopLevel(file: file, index: index)
+    match Syntax.syntaxTopItemKind(file: file, item: item) {
+        Syntax.SyntaxTopItemKind.Impl => {}
+        _ => { return false }
+    }
+    val implementation = Syntax.syntaxImpl(file: file, id: <Syntax.ImplId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    val receiver = Syntax.syntaxType(file: file, id: implementation.recvType)
+    return matches(source: source, span: implementation.extName, expected: name) && matches(source: source, span: receiver.name, expected: "S") && implementation.isPub == public && implementation.members.count == 1U64
+}
+
+fn main() {
+    val scenario = argAt(1I64)
+    val mode = argAt(2I64)
+    val first = "extension Empty {{}}"
+    val populated = "extension Extra {{ pub impl S {{ fn value() -> I64 {{ return 1I64 }} }} impl S {{ fn other() -> I64 {{ return 2I64 }} }} }}"
+    val repeated = "extension Empty {{}}\nextension Empty {{}}"
+    val source = if scenario == "populated" { give populated } else if scenario == "multiple" { give first + "\n" + populated } else if scenario == "repeated" { give repeated } else { give first }
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    mut val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    if parser.hasErr { print("parse-error") return }
+    if mode == "materialized" || mode == "frozen" {
+        mut val valueParser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+        val items = Syntax.parseProgramAst(p: inout valueParser)
+        if valueParser.hasErr || items.count() != Syntax.syntaxFileTopLevelCount(file: file) { print("0") return }
+        mut val frozen = <Syntax.SyntaxFile.empty />
+        mut val index = 0U64
+        while index < items.count() {
+            val extensionItem = index == 0U64 || ((scenario == "multiple" || scenario == "repeated") && index == 1U64)
+            val emptyItem = scenario != "populated" && (index == 0U64 || scenario == "repeated")
+            match items[index] {
+                Syntax.TopItemAst.Extension(val name, val nameSpan, val span) => {
+                    val expectedName = if emptyItem { give "Empty" } else { give "Extra" }
+                    val expectedText = if emptyItem { give first } else { give populated }
+                    if !extensionItem || name != expectedName || !matches(source: source, span: nameSpan, expected: expectedName) || !matches(source: source, span: span, expected: expectedText) { print("0") return }
+                }
+                Syntax.TopItemAst.Impl(im: val implementation) => {
+                    val expectedPublic = index == (if scenario == "multiple" { give 2U64 } else { give 1U64 })
+                    if extensionItem || implementation.extName != "Extra" || !matches(source: source, span: implementation.extNameSpan, expected: "Extra") || implementation.recvType.name != "S" || implementation.isPub != expectedPublic || implementation.members.count() != 1U64 { print("0") return }
+                }
+                _ => { print("0") return }
+            }
+            if mode == "frozen" { frozen.freezeTopItem(ast: items[index]) }
+            index += 1U64
+        }
+        // Inspect the explicit macro adapter as well as its roundtrip. The
+        // checks below validate full spans, ordering and retained impl members.
+        if mode == "frozen" { file = frozen }
+    }
+    val expected = if scenario == "multiple" { give 4U64 } else if scenario == "populated" { give 3U64 } else if scenario == "repeated" { give 2U64 } else { give 1U64 }
+    if Syntax.syntaxFileTopLevelCount(file: file) != expected { print("0") return }
+    val hasPopulated = scenario == "multiple" || scenario == "populated"
+    val populatedIndex = if scenario == "multiple" { give 1U64 } else { give 0U64 }
+    if scenario != "populated" && !retained(source: source, file: file, index: 0U64, name: "Empty", text: first) { print("0") return }
+    if scenario == "repeated" {
+        if !retained(source: source, file: file, index: 1U64, name: "Empty", text: first) { print("0") return }
+        val a = Syntax.syntaxFileTopLevel(file: file, index: 0U64)
+        val b = Syntax.syntaxFileTopLevel(file: file, index: 1U64)
+        if Syntax.syntaxTopItemPayload(file: file, item: a) == Syntax.syntaxTopItemPayload(file: file, item: b) || Syntax.syntaxTopItemSpan(file: file, item: a).start == Syntax.syntaxTopItemSpan(file: file, item: b).start { print("0") return }
+    }
+    if hasPopulated && (!retained(source: source, file: file, index: populatedIndex, name: "Extra", text: populated) || !retainedImpl(source: source, file: file, index: populatedIndex + 1U64, name: "Extra", public: true) || !retainedImpl(source: source, file: file, index: populatedIndex + 2U64, name: "Extra", public: false)) { print("0") return }
+    if scenario == "prefix" {
+        val prefix = Syntax.syntaxFileTopLevel(file: file, index: 0U64)
+        val added = "extension Second {{}}"
+        mut val addedLexer = <Syntax.Lexer bytes=added.bytes() pos=0U64 toks=[] depth=0I64 />
+        Syntax.lex(lx: inout addedLexer)
+        mut val addedParser = <Syntax.P bytes=added.bytes() toks=addedLexer.toks pos=0U64 base=113U64 />
+        val roots = Syntax.parseProgramSyntaxInto(p: inout addedParser, file: inout file)
+        if addedParser.hasErr || roots.start != 1U64 || roots.count != 1U64 || Syntax.syntaxFileTopLevelCount(file: file) != 2U64 || Syntax.syntaxFileTopLevel(file: file, index: 0U64).raw != prefix.raw || !retained(source: source, file: file, index: 0U64, name: "Empty", text: first) { print("0") return }
+        val next = Syntax.syntaxExtension(file: file, id: <Syntax.ExtensionId raw=Syntax.syntaxTopItemPayload(file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 1U64)) />)
+        if next.span.start != 113U64 || next.span.end != 113U64 + added.bytes().count() || next.name.start != 123U64 || next.name.end != 129U64 { print("0") return }
+    }
+    print("1")
+}

@@ -1105,6 +1105,7 @@ pub struct ExternId { pub val raw: U64 }
 pub struct ImportId { pub val raw: U64 }
 pub struct DirectiveId { pub val raw: U64 }
 pub struct NewtypeId { pub val raw: U64 }
+pub struct ExtensionId { pub val raw: U64 }
 pub struct TypeId { pub val raw: U64 }
 pub struct FieldId { pub val raw: U64 }
 pub struct VariantId { pub val raw: U64 }
@@ -1126,6 +1127,7 @@ pub struct DeriveReqId { pub val raw: U64 }
 // declaration kind.  A compiler load pass can decide use/predeclare/lower order
 // without materializing a TopItemAst value.
 pub enum SyntaxTopItemKind {
+    Extension
     Decl
     Impl
     Trait
@@ -1162,6 +1164,7 @@ pub struct SyntaxFile {
     mut val imports: Array[SyntaxImport] = []
     mut val directives: Array[SyntaxDirective] = []
     mut val newtypes: Array[SyntaxNewtype] = []
+    mut val extensions: Array[SyntaxExtension] = []
     mut val types: Array[SyntaxType] = []
     mut val nameSegments: Array[SyntaxNameSegment] = []
     mut val viewSources: Array[SyntaxViewSource] = []
@@ -1217,6 +1220,7 @@ struct SyntaxCheckpoint {
     val imports: U64
     val directives: U64
     val newtypes: U64
+    val extensions: U64
     val types: U64
     val nameSegments: U64
     val viewSources: U64
@@ -1519,6 +1523,11 @@ pub struct SyntaxDeriveReq {
 
 pub struct SyntaxDirective {
     pub val reqs: SyntaxSlice
+}
+
+pub struct SyntaxExtension {
+    pub val name: Span
+    pub val span: Span
 }
 
 pub struct SyntaxNewtype {
@@ -2092,6 +2101,7 @@ pub struct DirectiveAst {
 // published inner item (recursive — auto-boxed). Public imports use Import
 // with isPublic set, sharing both local binding and publication semantics.
 pub enum TopItemAst {
+    Extension(name: String, nameSpan: Span, span: Span)
     Decl(d: DeclAst)
     Impl(im: ImplAst)
     Trait(t: TraitAst)
@@ -5580,9 +5590,10 @@ inout fn parseSyntaxPublishedItem(p: inout P) -> TopItemId {
     return self.parseSyntaxDeclTop(p: inout p)
 }
 
-// An extension expands to ordinary direct Impl top items tagged by one extension
-// name.  No extension AST is retained: source order is the order of returned IDs.
+// Preserve the extension declaration, including an empty bundle, before its
+// tagged Impl roots. Binding admission owns name identity and collisions.
 inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
+    val start = p.base + p.curTok().start
     p.advance()
     val name: Span = p.spanOf(t: p.curTok())
     p.advance()
@@ -5590,10 +5601,15 @@ inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
         Kind.LBrace => { p.advance() }
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after `extension Name`") }
     }
+    val extension = self.extensions.count()
+    self.extensions.append(<SyntaxExtension name=name span=name />)
+    val item = self.pushTopItem(kind: <SyntaxTopItemKind.Extension /> payload: extension span: name)
+    items.append(item)
+    mut val end = p.base + p.curTok().start
     while true {
         p.skipNewlines()
         match p.curKind() {
-            Kind.RBrace => { p.advance() break }
+            Kind.RBrace => { end = p.base + p.curTok().start + p.curTok().len p.advance() break }
             Kind.Eof => { break }
             _ => {
                 if curIs(p: inout p, kw: "impl") {
@@ -5613,6 +5629,9 @@ inout fn parseSyntaxExtensionInto(p: inout P, items: inout Array[TopItemId]) {
             }
         }
     }
+    val span = <Span start=start end=end />
+    self.extensions[extension] = <SyntaxExtension name=name span=span />
+    self.topItems[item.raw] = <SyntaxTopItem kind=<SyntaxTopItemKind.Extension /> payload=extension span=span />
 }
 
 // Parse one source position to one or more top-level IDs.  Only extension
@@ -7085,8 +7104,10 @@ fn parsePublishedItemAst(p: inout P) -> TopItemAst {
 // bundle of impl blocks. Each impl is emitted as an ordinary TopItemAst.Impl
 // tagged with the extension name (so its members reach resolution only through a
 // call-site `value#Name.member` view). The extension itself carries no other
-// state — it is purely a label on its impls.
+// state beyond its declaration name and source spans. Preserve that declaration
+// even without impls, so semantic binding can reject name collisions.
 fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
+    val start = p.base + p.curTok().start
     p.advance()
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
@@ -7096,11 +7117,15 @@ fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
         Kind.LBrace => { p.advance() }
         _ => { p.fail(off: p.base + p.curTok().start, msg: "expected `{{` after `extension Name`") }
     }
+    val item = items.count()
+    items.append(<TopItemAst.Extension name=name nameSpan=nameSpan span=nameSpan />)
+    mut val end = p.base + p.curTok().start
     mut val cont: Bool = true
     while cont {
         p.skipNewlines()
         match p.curKind() {
             Kind.RBrace => {
+                end = p.base + p.curTok().start + p.curTok().len
                 p.advance()
                 cont = false
             }
@@ -7123,7 +7148,9 @@ fn parseExtensionInto(p: inout P, items: inout Array[TopItemAst]) {
             }
         }
     }
+    items[item] = <TopItemAst.Extension name=name nameSpan=nameSpan span=<Span start=start end=end /> />
 }
+
 
 // Parse exactly one top-level source position. An extension is deliberately one
 // source position but expands to several Impl items, hence the small returned
@@ -9769,4 +9796,8 @@ pub fn syntaxSourceApplicationTypeArg(file: SyntaxFile, application: SyntaxSourc
 }
 pub fn syntaxSourceApplicationTypeLabel(file: SyntaxFile, application: SyntaxSourceApplication, index: U64) -> Optional[Span] {
     return file.sourceApplicationTypeLabel(application: application, index: index)
+}
+
+pub fn syntaxExtension(file: SyntaxFile, id: ExtensionId) -> SyntaxExtension {
+    return file.extensionNode(id: id)
 }
