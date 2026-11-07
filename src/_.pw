@@ -4784,10 +4784,10 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
     mut val extView: Span = <Span start=0U64 end=0U64 />
     mut val viewNames: Array[Span] = []
     mut val viewSources: Array[SyntaxViewSource] = []
-    mut val projectionTrait: Span = <Span start=0U64 end=0U64 />
-    mut val projectionArgs = self.directEmptySyntaxSlice()
-    mut val projectionArgLabels = self.directEmptySyntaxSlice()
-    mut val projectionAssoc: Span = <Span start=0U64 end=0U64 />
+    val projectionTrait: Span = <Span start=0U64 end=0U64 />
+    val projectionArgs = self.directEmptySyntaxSlice()
+    val projectionArgLabels = self.directEmptySyntaxSlice()
+    val projectionAssoc: Span = <Span start=0U64 end=0U64 />
     while p.curKind() == <Kind.Hash /> {
         p.advance()
         if p.curKind() != <Kind.Ident /> {
@@ -4796,33 +4796,24 @@ inout fn parseSyntaxType(p: inout P) -> TypeId {
         }
         val selector = p.spanOf(t: p.curTok())
         p.advance()
-        val segment = self.parseSyntaxNameSegment(p: inout p, name: selector)
-        if p.curKind() == <Kind.Dot /> {
+        mut val segments: Array[SyntaxNameSegment] = [self.parseSyntaxNameSegment(p: inout p, name: selector)]
+        // Binding, not the first dot, separates namespaces, a source head and
+        // an optional associated member. Preserve every segment and argument.
+        while p.curKind() == <Kind.Dot /> {
             p.advance()
             if p.curKind() != <Kind.Ident /> {
-                p.fail(off: p.base + p.curTok().start, msg: "expected an associated-type name after `.`")
+                p.fail(off: p.base + p.curTok().start, msg: "expected a name after `.` in a type source path")
                 break
             }
-            projectionTrait = selector
-            projectionArgs = segment.args
-            projectionArgLabels = segment.argLabels
-            projectionAssoc = p.spanOf(t: p.curTok())
+            val member = p.spanOf(t: p.curTok())
             p.advance()
-            break
+            segments.append(self.parseSyntaxNameSegment(p: inout p, name: member))
         }
-        extView = selector
-        viewNames.append(selector)
-        viewSources.append(<SyntaxViewSource path=self.pushNameSegments(items: [segment]) span=<Span start=selector.start end=p.prevEnd() /> />)
-    }
-    if projectionAssoc.end == projectionAssoc.start {
-        match p.curKind() {
-            Kind.Dot => {
-                p.advance()
-                projectionAssoc = p.spanOf(t: p.curTok())
-                p.advance()
-            }
-            _ => {}
+        if segments.count() == 1U64 {
+            extView = selector
+            viewNames.append(selector)
         }
+        viewSources.append(<SyntaxViewSource path=self.pushNameSegments(items: segments) span=<Span start=selector.start end=p.prevEnd() /> />)
     }
     return self.appendDirectSyntaxType(node: <SyntaxType
         name=nameSpan namePath=self.pushNameSegments(items: pathSegments) args=self.pushDirectSyntaxTypeIds(items: args) span=<Span start=start end=p.prevEnd() />

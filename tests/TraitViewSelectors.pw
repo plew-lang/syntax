@@ -10,8 +10,13 @@ fn spanMatches(source: String, span: Syntax.Span, expected: String) -> Bool {
 fn retainedType(sourceText: String, file: Syntax.SyntaxFile, target: Syntax.SyntaxType, projection: Bool, plain: Bool, nested: Bool, existential: Bool, multiple: Bool, labelled: Bool) -> Bool {
     if target.isAny != existential { return false }
     if projection {
-        if !spanMatches(source: sourceText, span: target.projectionTrait, expected: "P") || !spanMatches(source: sourceText, span: target.projectionAssoc, expected: "Item") || Syntax.syntaxTypeProjectionTraitArgCount(file: file, ty: target) != 1U64 { return false }
-        val argument = Syntax.syntaxType(file: file, id: Syntax.syntaxTypeProjectionTraitArg(file: file, ty: target, index: 0U64))
+        if target.viewSources.count != 1U64 || target.projectionAssoc.start != target.projectionAssoc.end { return false }
+        val source = Syntax.syntaxTypeViewSource(file: file, ty: target, index: 0U64)
+        if source.path.count != 2U64 { return false }
+        val head = Syntax.syntaxViewSourceSegment(file: file, source: source, index: 0U64)
+        val member = Syntax.syntaxViewSourceSegment(file: file, source: source, index: 1U64)
+        if !spanMatches(source: sourceText, span: head.name, expected: "P") || !spanMatches(source: sourceText, span: member.name, expected: "Item") || head.args.count != 1U64 { return false }
+        val argument = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: head, index: 0U64))
         return spanMatches(source: sourceText, span: argument.name, expected: "I64")
     }
     // Preserve the original RED assertion as well as inspecting the full source.

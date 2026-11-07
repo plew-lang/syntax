@@ -57,3 +57,8 @@ Depend on it from a `Plew.toml`:
 then `use @Plew/Syntax only { ... }`.
 
 See the Plew spec (`spec/04-execution/16-metaprogramming.md`) for the derive model.
+
+`tests/QualifiedTypeSources.pw` additionally runs with `materialized` and
+`frozen` (default is direct parsing). Each prints its companion golden. It
+checks qualified source/projection paths, nested argument children, original
+spans and adjacent source ranges before semantic binding.

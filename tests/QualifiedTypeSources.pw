@@ -1,0 +1,70 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+use @Std/Process only { argAt }
+
+fn text(source: String, span: Syntax.Span, expected: String) -> Bool {
+    if span.start < 17U64 || span.end < span.start || span.end > source.bytes().count() + 17U64 { return false }
+    return Syntax.rangeEquals(bytes: source.bytes(), start: span.start - 17U64, len: span.end - span.start, kw: expected)
+}
+fn direct(source: String, file: Syntax.SyntaxFile, item: Syntax.TopItemId) -> Bool {
+    val declaration = Syntax.syntaxDecl(file: file, id: <Syntax.DeclId raw=Syntax.syntaxTopItemPayload(file: file, item: item) />)
+    val parameter = Syntax.syntaxParam(file: file, id: Syntax.syntaxDeclParam(file: file, decl: declaration, index: 0U64))
+    val type = Syntax.syntaxType(file: file, id: parameter.ty)
+    if type.viewSources.count != 1U64 || type.projectionTrait.end != type.projectionTrait.start || type.projectionAssoc.end != type.projectionAssoc.start { return false }
+    val selected = Syntax.syntaxTypeViewSource(file: file, ty: type, index: 0U64)
+    if selected.path.count != 3U64 || !text(source: source, span: selected.span, expected: "Ns.P[Array[B#Ns.Inner[Bool]]].Item") { return false }
+    val namespace = Syntax.syntaxViewSourceSegment(file: file, source: selected, index: 0U64)
+    val trait = Syntax.syntaxViewSourceSegment(file: file, source: selected, index: 1U64)
+    val member = Syntax.syntaxViewSourceSegment(file: file, source: selected, index: 2U64)
+    if !text(source: source, span: namespace.name, expected: "Ns") || namespace.args.count != 0U64 || !text(source: source, span: trait.name, expected: "P") || trait.args.count != 1U64 || !text(source: source, span: member.name, expected: "Item") || member.args.count != 0U64 { return false }
+    val array = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: trait, index: 0U64))
+    val nested = Syntax.syntaxType(file: file, id: Syntax.syntaxTypeArg(file: file, ty: array, index: 0U64))
+    if !text(source: source, span: array.name, expected: "Array") || nested.viewSources.count != 1U64 { return false }
+    val inner = Syntax.syntaxTypeViewSource(file: file, ty: nested, index: 0U64)
+    if inner.path.count != 2U64 { return false }
+    val innerHead = Syntax.syntaxViewSourceSegment(file: file, source: inner, index: 1U64)
+    val boolean = Syntax.syntaxType(file: file, id: Syntax.syntaxNameSegmentArg(file: file, segment: innerHead, index: 0U64))
+    if !text(source: source, span: innerHead.name, expected: "Inner") || !text(source: source, span: boolean.name, expected: "Bool") { return false }
+    val other = Syntax.syntaxType(file: file, id: Syntax.syntaxParam(file: file, id: Syntax.syntaxDeclParam(file: file, decl: declaration, index: 1U64)).ty)
+    val zero = Syntax.syntaxTypeViewSource(file: file, ty: other, index: 0U64)
+    if zero.path.count != 2U64 || !text(source: source, span: zero.span, expected: "Ns.Zero") { return false }
+    val prior = Syntax.syntaxType(file: file, id: Syntax.syntaxParam(file: file, id: Syntax.syntaxDeclParam(file: file, decl: declaration, index: 2U64)).ty)
+    if prior.viewSources.count != 2U64 { return false }
+    val extension = Syntax.syntaxTypeViewSource(file: file, ty: prior, index: 0U64)
+    val projection = Syntax.syntaxTypeViewSource(file: file, ty: prior, index: 1U64)
+    return extension.path.count == 1U64 && text(source: source, span: extension.span, expected: "E") && projection.path.count == 3U64 && text(source: source, span: projection.span, expected: "Ns.P[I64].Item")
+}
+fn materialized(source: String, type: Syntax.TypeAst, other: Syntax.TypeAst, prior: Syntax.TypeAst) -> Bool {
+    if type.viewSources.count() != 1U64 || type.projectionTrait != "" || type.projectionAssoc != "" { return false }
+    val selected = type.viewSources[0U64]
+    if selected.path.count() != 3U64 || !text(source: source, span: selected.span, expected: "Ns.P[Array[B#Ns.Inner[Bool]]].Item") { return false }
+    if selected.path[0U64].name != "Ns" || selected.path[1U64].name != "P" || selected.path[2U64].name != "Item" || selected.path[1U64].args.count() != 1U64 { return false }
+    val array = selected.path[1U64].args[0U64]
+    val nested = array.args[0U64]
+    if array.name != "Array" || nested.viewSources.count() != 1U64 || nested.viewSources[0U64].path.count() != 2U64 || nested.viewSources[0U64].path[1U64].name != "Inner" || nested.viewSources[0U64].path[1U64].args[0U64].name != "Bool" { return false }
+    return other.viewSources.count() == 1U64 && other.viewSources[0U64].path.count() == 2U64 && other.viewSources[0U64].path[1U64].name == "Zero" && prior.viewSources.count() == 2U64 && prior.viewSources[0U64].path[0U64].name == "E" && prior.viewSources[1U64].path.count() == 3U64 && prior.viewSources[1U64].path[1U64].args[0U64].name == "I64"
+}
+fn main() {
+    val source = "fn target(value: A#Ns.P[Array[B#Ns.Inner[Bool]]].Item, other: A#Ns.Zero, prior: A#E#Ns.P[I64].Item) {{}}"
+    val mode = argAt(1I64)
+    if mode == "materialized" || mode == "frozen" {
+        val item = Syntax.parseItem(source: source, start: 17U64, end: 17U64 + source.bytes().count())
+        if mode == "frozen" {
+            mut val file = <Syntax.SyntaxFile.empty />
+            val root = file.freezeTopItem(ast: item)
+            print(direct(source: source, file: file, item: root))
+            return
+        }
+        match item {
+            Syntax.TopItemAst.Decl(d: val declaration) => { print(materialized(source: source, type: declaration.params[0U64].ty, other: declaration.params[1U64].ty, prior: declaration.params[2U64].ty)) }
+            _ => { print("0") }
+        }
+        return
+    }
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0 />
+    Syntax.lex(lx: inout lexer)
+    mut val parser = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=17U64 />
+    val file = Syntax.parseProgramSyntaxFile(p: inout parser)
+    if parser.hasErr { print("0") return }
+    print(direct(source: source, file: file, item: Syntax.syntaxFileTopLevel(file: file, index: 0U64)))
+}
