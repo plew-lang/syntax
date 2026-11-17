@@ -3331,9 +3331,13 @@ inout fn parseSyntaxParams(p: inout P) -> SyntaxSlice {
                         break
                     }
                     Kind.Comma => { p.advance() }
-                    _ => {
+                    Kind.Ident => {
                         ids.append(self.parseSyntaxParam(p: inout p))
                         if !checkParameterBoundary(p: inout p) { break }
+                    }
+                    _ => {
+                        p.fail(off: p.base + p.curTok().start, msg: "expected a parameter name")
+                        break
                     }
                 }
             }
@@ -6118,9 +6122,13 @@ fn parseParamAsts(p: inout P) -> Array[ParamAst] {
                         break
                     }
                     Kind.Comma => { p.advance() }
-                    _ => {
+                    Kind.Ident => {
                         params.append(parseParamAst(p: inout p))
                         if !checkParameterBoundary(p: inout p) { break }
+                    }
+                    _ => {
+                        p.fail(off: p.base + p.curTok().start, msg: "expected a parameter name")
+                        break
                     }
                 }
             }

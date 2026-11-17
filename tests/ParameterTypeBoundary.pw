@@ -1,23 +1,34 @@
 use @Plew/Syntax as Syntax
 use @Std/Io only { print }
 
-fn expectParse(source: String, succeeds: Bool) {
+fn expectParse(source: String, succeeds: Bool, function: Bool = true, badOffset: U64 = 0U64) {
     mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
     Syntax.lex(lx: inout lexer)
     mut val direct = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
-    mut val legacy = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    mut val materialized = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
     Syntax.parseProgramSyntaxFile(p: inout direct)
-    Syntax.parseProgramAst(p: inout legacy)
-    if direct.hasErr == succeeds || legacy.hasErr == succeeds { panic(source) }
+    Syntax.parseProgramAst(p: inout materialized)
+    if direct.hasErr == succeeds || materialized.hasErr == succeeds { panic(source) }
+    if badOffset != 0U64 && (direct.errOff != badOffset || materialized.errOff != badOffset) { panic("unexpected diagnostic offset") }
+    if function {
+        mut val legacy = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+        Syntax.parseFuncDecl(p: inout legacy, isAsync: false)
+        if legacy.hasErr == succeeds { panic("legacy function parser: {source}") }
+        if badOffset != 0U64 && legacy.errOff != badOffset { panic("unexpected legacy diagnostic offset") }
+    }
 }
 
 fn main() {
-    expectParse(source: "fn inspect(value: (x: I64)#Projection.First) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64)#Projection.First) {{}}", succeeds: false, badOffset: 26U64)
     expectParse(source: "fn inspect(value: (x: I64)#Projection.First, other: I64) {{}}", succeeds: false)
     expectParse(source: "fn inspect(value: (x: I64)#Projection.Projection) {{}}", succeeds: false)
     expectParse(source: "fn inspect(value: (x: I64).First) {{}}", succeeds: false)
-    expectParse(source: "newtype Alias = (x: I64)#Projection.First", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64), #: I64) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(#) {{}}", succeeds: false)
+    expectParse(source: "fn main() {{ val closure = fn(value, #) {{}} }}", succeeds: false)
+    expectParse(source: "newtype Alias = (x: I64)#Projection.First", succeeds: false, function: false)
     expectParse(source: "fn inspect(value: (x: I64), other: Item#Projection.First) {{}}", succeeds: true)
     expectParse(source: "fn main() {{ val closure = fn(value, other) {{}} }}", succeeds: true)
+    expectParse(source: "fn inspect(\nuse: I64 = 1I64,\nonly: fn(I64, value: I64),\n) {{}}", succeeds: true)
     print("parameter boundaries")
 }
