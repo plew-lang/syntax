@@ -26,6 +26,7 @@ fn main() {
     expectParse(source: "fn inspect(value: (x: I64)?First) {{}}", succeeds: false)
     expectParse(source: "fn inspect(value: (x: I64), #: I64) {{}}", succeeds: false)
     expectParse(source: "fn inspect(#) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(value) {{}}", succeeds: false)
     expectParse(source: "fn main() {{ val closure = fn(value, #) {{}} }}", succeeds: false)
     expectParse(source: "newtype Alias = (x: I64)#Projection.First", succeeds: false, function: false)
     expectParse(source: "fn inspect(value: (x: I64), other: Item#Projection.First) {{}}", succeeds: true)

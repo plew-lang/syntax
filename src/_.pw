@@ -2914,7 +2914,7 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
         }
         Kind.KwFn | Kind.KwDiverge => {
             val diverging = parseCallableHead(p: inout p)
-            val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+            val params: SyntaxSlice = self.parseSyntaxParams(p: inout p, allowsInferredTypes: true)
             mut val hasRet: Bool = false
             mut val ret: TypeId = self.emptySyntaxType()
             match p.curKind() {
@@ -2937,7 +2937,7 @@ inout fn parseSyntaxPrimary(p: inout P) -> ExprId {
                 p.fail(off: start, msg: "`sendable fn` literals are rejected in v1 until sendable capture/effect checking is available")
                 p.advance()
                 p.advance()
-                val params: SyntaxSlice = self.parseSyntaxParams(p: inout p)
+                val params: SyntaxSlice = self.parseSyntaxParams(p: inout p, allowsInferredTypes: true)
                 mut val hasRet: Bool = false
                 mut val ret: TypeId = self.emptySyntaxType()
                 match p.curKind() {
@@ -3271,7 +3271,7 @@ inout fn parseSyntaxExpr(p: inout P) -> ExprId {
 // Parameter rows are shared by function declarations, method declarations,
 // signatures, and closures.  Defaults recurse through the same direct
 // expression parser rather than reopening the value AST path.
-inout fn parseSyntaxParam(p: inout P) -> ParamId {
+inout fn parseSyntaxParam(p: inout P, allowsInferredTypes: Bool) -> ParamId {
     val start: U64 = p.base + p.curTok().start
     val name: Span = p.spanOf(t: p.curTok())
     p.advance()
@@ -3300,7 +3300,9 @@ inout fn parseSyntaxParam(p: inout P) -> ParamId {
             }
             ty = self.parseSyntaxType(p: inout p)
         }
-        _ => {}
+        _ => {
+            if !allowsInferredTypes { p.fail(off: p.base + p.curTok().start, msg: "expected a parameter type annotation") }
+        }
     }
     mut val hasDefault: Bool = false
     mut val defaultVal: ExprId = self.emptySyntaxExpr()
@@ -3317,7 +3319,7 @@ inout fn parseSyntaxParam(p: inout P) -> ParamId {
     return id
 }
 
-inout fn parseSyntaxParams(p: inout P) -> SyntaxSlice {
+inout fn parseSyntaxParams(p: inout P, allowsInferredTypes: Bool = false) -> SyntaxSlice {
     mut val ids: Array[ParamId] = []
     match p.curKind() {
         Kind.LParen => {
@@ -3333,7 +3335,7 @@ inout fn parseSyntaxParams(p: inout P) -> SyntaxSlice {
                     Kind.Comma => { p.advance() }
                     _ => {
                         if !checkParameterName(p: inout p) { break }
-                        ids.append(self.parseSyntaxParam(p: inout p))
+                        ids.append(self.parseSyntaxParam(p: inout p, allowsInferredTypes: allowsInferredTypes))
                         if !checkParameterBoundary(p: inout p) { break }
                     }
                 }
@@ -6033,7 +6035,7 @@ pub fn parseEnumDecl(p: inout P, isUnique: Bool, isNonsendable: Bool = false) ->
 
 // A function parameter `name[~]: [inout|move|borrow] Type [= expr]`. The cursor is
 // at the parameter name.
-fn parseParamAst(p: inout P) -> ParamAst {
+fn parseParamAst(p: inout P, allowsInferredTypes: Bool) -> ParamAst {
     val pStart: U64 = p.base + p.curTok().start
     val nameTok: Tok = p.curTok()
     val name: String = p.text(t: nameTok)
@@ -6072,7 +6074,9 @@ fn parseParamAst(p: inout P) -> ParamAst {
             }
             ty = parseType(p: inout p)
         }
-        _ => {}
+        _ => {
+            if !allowsInferredTypes { p.fail(off: p.base + p.curTok().start, msg: "expected a parameter type annotation") }
+        }
     }
     mut val hasDefault: Bool = false
     mut val defaultVal: ExprAst = emptyExpr()
@@ -6108,7 +6112,7 @@ fn checkParameterBoundary(p: inout P) -> Bool {
 
 // A parenthesized parameter list `( params )`. The cursor is at `(` (or anything
 // else for a zero-arg fn with no list).
-fn parseParamAsts(p: inout P) -> Array[ParamAst] {
+fn parseParamAsts(p: inout P, allowsInferredTypes: Bool = false) -> Array[ParamAst] {
     mut val params: Array[ParamAst] = []
     match p.curKind() {
         Kind.LParen => {
@@ -6129,7 +6133,7 @@ fn parseParamAsts(p: inout P) -> Array[ParamAst] {
                     Kind.Comma => { p.advance() }
                     _ => {
                         if !checkParameterName(p: inout p) { break }
-                        params.append(parseParamAst(p: inout p))
+                        params.append(parseParamAst(p: inout p, allowsInferredTypes: allowsInferredTypes))
                         if !checkParameterBoundary(p: inout p) { break }
                     }
                 }
@@ -8336,7 +8340,7 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
         }
         Kind.KwFn | Kind.KwDiverge => {
             val diverging = parseCallableHead(p: inout p)
-            val params: Array[ParamAst] = parseParamAsts(p: inout p)
+            val params: Array[ParamAst] = parseParamAsts(p: inout p, allowsInferredTypes: true)
             mut val hasRet: Bool = false
             mut val ret: TypeAst = emptyTypeAst()
             match p.curKind() {
@@ -8359,7 +8363,7 @@ fn parsePrimaryAst(p: inout P) -> ExprAst {
                 p.fail(off: sStart, msg: "`sendable fn` literals are rejected in v1 until sendable capture/effect checking is available")
                 p.advance()
                 p.advance()
-                val params: Array[ParamAst] = parseParamAsts(p: inout p)
+                val params: Array[ParamAst] = parseParamAsts(p: inout p, allowsInferredTypes: true)
                 mut val hasRet: Bool = false
                 mut val ret: TypeAst = emptyTypeAst()
                 match p.curKind() {
