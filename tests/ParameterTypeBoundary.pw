@@ -23,6 +23,7 @@ fn main() {
     expectParse(source: "fn inspect(value: (x: I64)#Projection.First, other: I64) {{}}", succeeds: false)
     expectParse(source: "fn inspect(value: (x: I64)#Projection.Projection) {{}}", succeeds: false)
     expectParse(source: "fn inspect(value: (x: I64).First) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64)?First) {{}}", succeeds: false)
     expectParse(source: "fn inspect(value: (x: I64), #: I64) {{}}", succeeds: false)
     expectParse(source: "fn inspect(#) {{}}", succeeds: false)
     expectParse(source: "fn main() {{ val closure = fn(value, #) {{}} }}", succeeds: false)
@@ -30,5 +31,6 @@ fn main() {
     expectParse(source: "fn inspect(value: (x: I64), other: Item#Projection.First) {{}}", succeeds: true)
     expectParse(source: "fn main() {{ val closure = fn(value, other) {{}} }}", succeeds: true)
     expectParse(source: "fn inspect(\nuse: I64 = 1I64,\nonly: fn(I64, value: I64),\n) {{}}", succeeds: true)
+    expectParse(source: "fn inspect[T](type: T#Projection.First, val~: I64) where T: Projection {{}}", succeeds: true)
     print("parameter boundaries")
 }

@@ -3331,13 +3331,10 @@ inout fn parseSyntaxParams(p: inout P) -> SyntaxSlice {
                         break
                     }
                     Kind.Comma => { p.advance() }
-                    Kind.Ident => {
+                    _ => {
+                        if !checkParameterName(p: inout p) { break }
                         ids.append(self.parseSyntaxParam(p: inout p))
                         if !checkParameterBoundary(p: inout p) { break }
-                    }
-                    _ => {
-                        p.fail(off: p.base + p.curTok().start, msg: "expected a parameter name")
-                        break
                     }
                 }
             }
@@ -6090,6 +6087,14 @@ fn parseParamAst(p: inout P) -> ParamAst {
     return <ParamAst name=name nameSpan=p.spanOf(t: nameTok) ty=ty isInout=isInout isMove=isMove isBorrow=isBorrow noLabel=noLabel hasDefault=hasDefault defaultVal=defaultVal span=<Span start=pStart end=p.prevEnd() /> />
 }
 
+fn checkParameterName(p: inout P) -> Bool {
+    val token = p.curTok()
+    // Parameter labels already accept keyword spellings such as `type`.
+    if token.start < p.bytes.count() && isAlpha(b: p.bytes[token.start]) { return true }
+    p.fail(off: p.base + token.start, msg: "expected a parameter name")
+    return false
+}
+
 fn checkParameterBoundary(p: inout P) -> Bool {
     p.skipNewlines()
     match p.curKind() {
@@ -6122,13 +6127,10 @@ fn parseParamAsts(p: inout P) -> Array[ParamAst] {
                         break
                     }
                     Kind.Comma => { p.advance() }
-                    Kind.Ident => {
+                    _ => {
+                        if !checkParameterName(p: inout p) { break }
                         params.append(parseParamAst(p: inout p))
                         if !checkParameterBoundary(p: inout p) { break }
-                    }
-                    _ => {
-                        p.fail(off: p.base + p.curTok().start, msg: "expected a parameter name")
-                        break
                     }
                 }
             }
