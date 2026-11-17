@@ -3331,7 +3331,10 @@ inout fn parseSyntaxParams(p: inout P) -> SyntaxSlice {
                         break
                     }
                     Kind.Comma => { p.advance() }
-                    _ => { ids.append(self.parseSyntaxParam(p: inout p)) }
+                    _ => {
+                        ids.append(self.parseSyntaxParam(p: inout p))
+                        if !checkParameterBoundary(p: inout p) { break }
+                    }
                 }
             }
         }
@@ -6083,6 +6086,17 @@ fn parseParamAst(p: inout P) -> ParamAst {
     return <ParamAst name=name nameSpan=p.spanOf(t: nameTok) ty=ty isInout=isInout isMove=isMove isBorrow=isBorrow noLabel=noLabel hasDefault=hasDefault defaultVal=defaultVal span=<Span start=pStart end=p.prevEnd() /> />
 }
 
+fn checkParameterBoundary(p: inout P) -> Bool {
+    p.skipNewlines()
+    match p.curKind() {
+        Kind.Comma | Kind.RParen | Kind.Eof => { return true }
+        _ => {
+            p.fail(off: p.base + p.curTok().start, msg: "expected `,` or `)` after parameter")
+            return false
+        }
+    }
+}
+
 // A parenthesized parameter list `( params )`. The cursor is at `(` (or anything
 // else for a zero-arg fn with no list).
 fn parseParamAsts(p: inout P) -> Array[ParamAst] {
@@ -6106,6 +6120,7 @@ fn parseParamAsts(p: inout P) -> Array[ParamAst] {
                     Kind.Comma => { p.advance() }
                     _ => {
                         params.append(parseParamAst(p: inout p))
+                        if !checkParameterBoundary(p: inout p) { break }
                     }
                 }
             }

@@ -1,0 +1,23 @@
+use @Plew/Syntax as Syntax
+use @Std/Io only { print }
+
+fn expectParse(source: String, succeeds: Bool) {
+    mut val lexer = <Syntax.Lexer bytes=source.bytes() pos=0U64 toks=[] depth=0I64 />
+    Syntax.lex(lx: inout lexer)
+    mut val direct = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    mut val legacy = <Syntax.P bytes=source.bytes() toks=lexer.toks pos=0U64 base=0U64 />
+    Syntax.parseProgramSyntaxFile(p: inout direct)
+    Syntax.parseProgramAst(p: inout legacy)
+    if direct.hasErr == succeeds || legacy.hasErr == succeeds { panic(source) }
+}
+
+fn main() {
+    expectParse(source: "fn inspect(value: (x: I64)#Projection.First) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64)#Projection.First, other: I64) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64)#Projection.Projection) {{}}", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64).First) {{}}", succeeds: false)
+    expectParse(source: "newtype Alias = (x: I64)#Projection.First", succeeds: false)
+    expectParse(source: "fn inspect(value: (x: I64), other: Item#Projection.First) {{}}", succeeds: true)
+    expectParse(source: "fn main() {{ val closure = fn(value, other) {{}} }}", succeeds: true)
+    print("parameter boundaries")
+}
